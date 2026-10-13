@@ -32,6 +32,12 @@ ROLE_IDS = {
 
 
 def test_software_company_role_templates_are_complete_and_discoverable() -> None:
+    from octop.infra.agents.experts.catalog import ExpertCatalog
+
+    catalog = ExpertCatalog(ROLE_ROOT)
+    catalog.refresh()
+    assert ROLE_IDS.issubset({expert.id for expert in catalog.list_summaries()})
+
     for role_id in ROLE_IDS:
         role_dir = ROLE_ROOT / role_id
         manifest = json.loads((role_dir / "manifest.json").read_text(encoding="utf-8"))

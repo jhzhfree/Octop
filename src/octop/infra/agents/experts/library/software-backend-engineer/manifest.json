@@ -6,7 +6,7 @@
   },
   "description": {
     "zh": "研发岗位 Agent 模板。设计和实现服务端 API、领域逻辑、数据库访问、任务处理与集成；补充测试、日志、指标、错误处理和技术文档；按代码规范评审实现方案。",
-    "en": "Backend Engineer role template for 研发. 设计和实现服务端 API、领域逻辑、数据库访问、任务处理与集成；补充测试、日志、指标、错误处理和技术文档；按代码规范评审实现方案。"
+    "en": "Backend Engineer role template. Defines core responsibilities, work method, evidence-based deliverables, and least-privilege boundaries."
   },
   "welcome_message": {
     "zh": "我是后端工程师岗位助手。请告诉我目标、背景材料、交付要求和权限范围。",
@@ -29,7 +29,7 @@
       },
       "prompt": {
         "zh": "先确认仓库结构、需求和约束，再提出可测试的后端实现步骤/API与数据变化；指出未验证假设，不虚构已运行的测试。",
-        "en": "先确认仓库结构、需求和约束，再提出可测试的后端实现步骤/API与数据变化；指出未验证假设，不虚构已运行的测试。"
+        "en": "Clarify the goal, sources, authorized scope, deliverable, and acceptance criteria. Produce an evidence-based result and mark assumptions or missing data."
       },
       "color": "#dbeafe",
       "icon_name": "clipboard-check"
@@ -40,7 +40,7 @@
       "每周汇总研发工作事项、阻塞和待决策项，附来源和责任人；数据缺失时标记未知。"
     ],
     "en": [
-      "Weekly, summarize 研发 work items, blockers, and decisions with sources and owners; mark missing data as unknown."
+      "Weekly, summarize assigned Backend Engineer work, blockers, evidence sources, and decisions needed. Mark missing information as unknown."
     ]
   }
 }

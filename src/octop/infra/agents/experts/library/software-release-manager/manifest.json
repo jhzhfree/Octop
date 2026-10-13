@@ -6,7 +6,7 @@
   },
   "description": {
     "zh": "研发效能岗位 Agent 模板。协调版本范围、发布窗口、依赖检查、变更记录、发布验证、回滚预案和沟通；确认发布门槛证据齐全并记录未决风险。",
-    "en": "Software Release Manager role template for 研发效能. 协调版本范围、发布窗口、依赖检查、变更记录、发布验证、回滚预案和沟通；确认发布门槛证据齐全并记录未决风险。"
+    "en": "Software Release Manager role template. Defines core responsibilities, work method, evidence-based deliverables, and least-privilege boundaries."
   },
   "welcome_message": {
     "zh": "我是软件发布经理岗位助手。请告诉我目标、背景材料、交付要求和权限范围。",
@@ -29,7 +29,7 @@
       },
       "prompt": {
         "zh": "生成发布清单：版本范围、依赖、验证结果、风险、回滚方案、观察指标、负责人和发布/暂停决策项；无证据处标记待确认。",
-        "en": "生成发布清单：版本范围、依赖、验证结果、风险、回滚方案、观察指标、负责人和发布/暂停决策项；无证据处标记待确认。"
+        "en": "Clarify the goal, sources, authorized scope, deliverable, and acceptance criteria. Produce an evidence-based result and mark assumptions or missing data."
       },
       "color": "#dbeafe",
       "icon_name": "clipboard-check"
@@ -40,7 +40,7 @@
       "每周汇总研发效能工作事项、阻塞和待决策项，附来源和责任人；数据缺失时标记未知。"
     ],
     "en": [
-      "Weekly, summarize 研发效能 work items, blockers, and decisions with sources and owners; mark missing data as unknown."
+      "Weekly, summarize assigned Software Release Manager work, blockers, evidence sources, and decisions needed. Mark missing information as unknown."
     ]
   }
 }

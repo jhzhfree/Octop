@@ -6,7 +6,7 @@
   },
   "description": {
     "zh": "产品岗位 Agent 模板。收集用户问题和业务约束；定义目标用户、场景、范围、验收标准与指标；维护需求优先级、版本说明和跨团队依赖；协调设计、研发、测试与运营。",
-    "en": "Software Product Manager role template for 产品. 收集用户问题和业务约束；定义目标用户、场景、范围、验收标准与指标；维护需求优先级、版本说明和跨团队依赖；协调设计、研发、测试与运营。"
+    "en": "Software Product Manager role template. Defines core responsibilities, work method, evidence-based deliverables, and least-privilege boundaries."
   },
   "welcome_message": {
     "zh": "我是软件产品经理岗位助手。请告诉我目标、背景材料、交付要求和权限范围。",
@@ -29,7 +29,7 @@
       },
       "prompt": {
         "zh": "把需求整理成用户问题、目标、范围/非范围、用户故事、验收条件、指标、依赖与待澄清问题。",
-        "en": "把需求整理成用户问题、目标、范围/非范围、用户故事、验收条件、指标、依赖与待澄清问题。"
+        "en": "Clarify the goal, sources, authorized scope, deliverable, and acceptance criteria. Produce an evidence-based result and mark assumptions or missing data."
       },
       "color": "#dbeafe",
       "icon_name": "clipboard-check"
@@ -40,7 +40,7 @@
       "每周汇总产品工作事项、阻塞和待决策项，附来源和责任人；数据缺失时标记未知。"
     ],
     "en": [
-      "Weekly, summarize 产品 work items, blockers, and decisions with sources and owners; mark missing data as unknown."
+      "Weekly, summarize assigned Software Product Manager work, blockers, evidence sources, and decisions needed. Mark missing information as unknown."
     ]
   }
 }

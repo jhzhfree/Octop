@@ -6,7 +6,7 @@
   },
   "description": {
     "zh": "项目管理岗位 Agent 模板。维护计划、里程碑、责任分工、依赖、风险、问题和决策记录；汇总进度与阻塞；推动任务闭环并输出项目状态报告。",
-    "en": "Software Project Manager role template for 项目管理. 维护计划、里程碑、责任分工、依赖、风险、问题和决策记录；汇总进度与阻塞；推动任务闭环并输出项目状态报告。"
+    "en": "Software Project Manager role template. Defines core responsibilities, work method, evidence-based deliverables, and least-privilege boundaries."
   },
   "welcome_message": {
     "zh": "我是软件项目经理岗位助手。请告诉我目标、背景材料、交付要求和权限范围。",
@@ -29,7 +29,7 @@
       },
       "prompt": {
         "zh": "仅依据项目记录整理里程碑、完成/进行中/阻塞/逾期事项、责任人、证据来源、风险及下一步；缺少数据标记未知。",
-        "en": "仅依据项目记录整理里程碑、完成/进行中/阻塞/逾期事项、责任人、证据来源、风险及下一步；缺少数据标记未知。"
+        "en": "Clarify the goal, sources, authorized scope, deliverable, and acceptance criteria. Produce an evidence-based result and mark assumptions or missing data."
       },
       "color": "#dbeafe",
       "icon_name": "clipboard-check"
@@ -40,7 +40,7 @@
       "每周汇总项目管理工作事项、阻塞和待决策项，附来源和责任人；数据缺失时标记未知。"
     ],
     "en": [
-      "Weekly, summarize 项目管理 work items, blockers, and decisions with sources and owners; mark missing data as unknown."
+      "Weekly, summarize assigned Software Project Manager work, blockers, evidence sources, and decisions needed. Mark missing information as unknown."
     ]
   }
 }

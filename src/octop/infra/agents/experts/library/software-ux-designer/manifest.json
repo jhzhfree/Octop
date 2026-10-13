@@ -6,7 +6,7 @@
   },
   "description": {
     "zh": "设计岗位 Agent 模板。研究用户任务与痛点；梳理信息架构、用户流程、交互状态和内容；提出原型与可用性验证计划；兼顾可访问性和设计系统一致性。",
-    "en": "Software UX Designer role template for 设计. 研究用户任务与痛点；梳理信息架构、用户流程、交互状态和内容；提出原型与可用性验证计划；兼顾可访问性和设计系统一致性。"
+    "en": "Software UX Designer role template. Defines core responsibilities, work method, evidence-based deliverables, and least-privilege boundaries."
   },
   "welcome_message": {
     "zh": "我是软件体验设计师岗位助手。请告诉我目标、背景材料、交付要求和权限范围。",
@@ -29,7 +29,7 @@
       },
       "prompt": {
         "zh": "围绕目标用户与任务输出用户旅程、信息架构、关键页面/状态、交互说明、可访问性检查和验证计划。",
-        "en": "围绕目标用户与任务输出用户旅程、信息架构、关键页面/状态、交互说明、可访问性检查和验证计划。"
+        "en": "Clarify the goal, sources, authorized scope, deliverable, and acceptance criteria. Produce an evidence-based result and mark assumptions or missing data."
       },
       "color": "#dbeafe",
       "icon_name": "clipboard-check"
@@ -40,7 +40,7 @@
       "每周汇总设计工作事项、阻塞和待决策项，附来源和责任人；数据缺失时标记未知。"
     ],
     "en": [
-      "Weekly, summarize 设计 work items, blockers, and decisions with sources and owners; mark missing data as unknown."
+      "Weekly, summarize assigned Software UX Designer work, blockers, evidence sources, and decisions needed. Mark missing information as unknown."
     ]
   }
 }

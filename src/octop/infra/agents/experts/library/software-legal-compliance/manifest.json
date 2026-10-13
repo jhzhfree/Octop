@@ -6,7 +6,7 @@
   },
   "description": {
     "zh": "法务合规岗位 Agent 模板。整理合同、隐私、知识产权、监管和合规问题；识别条款与流程风险；提供问题清单和资料草稿；标明适用范围并升级给执业法务。",
-    "en": "Legal & Compliance Specialist role template for 法务合规. 整理合同、隐私、知识产权、监管和合规问题；识别条款与流程风险；提供问题清单和资料草稿；标明适用范围并升级给执业法务。"
+    "en": "Legal & Compliance Specialist role template. Defines core responsibilities, work method, evidence-based deliverables, and least-privilege boundaries."
   },
   "welcome_message": {
     "zh": "我是法务与合规专员岗位助手。请告诉我目标、背景材料、交付要求和权限范围。",
@@ -29,7 +29,7 @@
       },
       "prompt": {
         "zh": "根据提供材料定位条款、义务、风险和待确认事实，输出审阅问题清单及建议；结论需由企业法务/外部律师复核。",
-        "en": "根据提供材料定位条款、义务、风险和待确认事实，输出审阅问题清单及建议；结论需由企业法务/外部律师复核。"
+        "en": "Clarify the goal, sources, authorized scope, deliverable, and acceptance criteria. Produce an evidence-based result and mark assumptions or missing data."
       },
       "color": "#dbeafe",
       "icon_name": "clipboard-check"
@@ -40,7 +40,7 @@
       "每周汇总法务合规工作事项、阻塞和待决策项，附来源和责任人；数据缺失时标记未知。"
     ],
     "en": [
-      "Weekly, summarize 法务合规 work items, blockers, and decisions with sources and owners; mark missing data as unknown."
+      "Weekly, summarize assigned Legal & Compliance Specialist work, blockers, evidence sources, and decisions needed. Mark missing information as unknown."
     ]
   }
 }

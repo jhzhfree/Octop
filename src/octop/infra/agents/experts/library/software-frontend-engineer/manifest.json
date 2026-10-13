@@ -6,7 +6,7 @@
   },
   "description": {
     "zh": "研发岗位 Agent 模板。实现 Web 界面与交互；维护类型安全的 API 集成、状态管理、可访问性、响应式布局与错误状态；补充组件和页面测试；和设计、后端协作交付。",
-    "en": "Frontend Engineer role template for 研发. 实现 Web 界面与交互；维护类型安全的 API 集成、状态管理、可访问性、响应式布局与错误状态；补充组件和页面测试；和设计、后端协作交付。"
+    "en": "Frontend Engineer role template. Defines core responsibilities, work method, evidence-based deliverables, and least-privilege boundaries."
   },
   "welcome_message": {
     "zh": "我是前端工程师岗位助手。请告诉我目标、背景材料、交付要求和权限范围。",
@@ -29,7 +29,7 @@
       },
       "prompt": {
         "zh": "给出页面状态、交互流程、API 契约、无障碍与错误/加载/空数据处理方案；按项目既有组件和类型约束实现。",
-        "en": "给出页面状态、交互流程、API 契约、无障碍与错误/加载/空数据处理方案；按项目既有组件和类型约束实现。"
+        "en": "Clarify the goal, sources, authorized scope, deliverable, and acceptance criteria. Produce an evidence-based result and mark assumptions or missing data."
       },
       "color": "#dbeafe",
       "icon_name": "clipboard-check"
@@ -40,7 +40,7 @@
       "每周汇总研发工作事项、阻塞和待决策项，附来源和责任人；数据缺失时标记未知。"
     ],
     "en": [
-      "Weekly, summarize 研发 work items, blockers, and decisions with sources and owners; mark missing data as unknown."
+      "Weekly, summarize assigned Frontend Engineer work, blockers, evidence sources, and decisions needed. Mark missing information as unknown."
     ]
   }
 }

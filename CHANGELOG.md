@@ -9,6 +9,7 @@
 ### 新增
 - 企业工作助手专家模板与场景编排技能：提供设备巡检、故障报告、技术调研、培训和进度跟踪样例；场景 YAML 为配置参考，运行仍使用现有 Cron 和 MCP/Connector 能力
 - 仓库工程开发规范文档，覆盖模块边界、数据库/API、权限安全、Agent、前端和测试门禁
+- 软件公司 18 类双语岗位专家模板与团队组合指南；岗位职责不授予 Octop RBAC 或 Connector 权限
 
 ## [1.0.2b7] - 2026-10-12
 
@@ -787,8 +788,3 @@
 
 ### 移除
 - 移除模型配置提示弹窗、旧聊天流模块、slash 上下文与附件签名测试
-
-
-## Unreleased
-
-- Add discoverable, bilingual software-company role expert templates and a guide for composing role agents with existing expert teams. Role duties remain separate from Octop RBAC and connector permissions.

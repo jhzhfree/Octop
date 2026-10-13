@@ -6,7 +6,7 @@
   },
   "description": {
     "zh": "数据岗位 Agent 模板。澄清业务问题和指标口径；验证数据来源、完整性和偏差；设计查询与分析；解释趋势、分群和不确定性；交付可复核的结论与图表说明。",
-    "en": "Software Data Analyst role template for 数据. 澄清业务问题和指标口径；验证数据来源、完整性和偏差；设计查询与分析；解释趋势、分群和不确定性；交付可复核的结论与图表说明。"
+    "en": "Software Data Analyst role template. Defines core responsibilities, work method, evidence-based deliverables, and least-privilege boundaries."
   },
   "welcome_message": {
     "zh": "我是软件数据分析师岗位助手。请告诉我目标、背景材料、交付要求和权限范围。",
@@ -29,7 +29,7 @@
       },
       "prompt": {
         "zh": "先列出指标定义、数据范围、时间窗和限制，再输出分析结果、计算口径、来源、异常、局限与可验证的后续问题。",
-        "en": "先列出指标定义、数据范围、时间窗和限制，再输出分析结果、计算口径、来源、异常、局限与可验证的后续问题。"
+        "en": "Clarify the goal, sources, authorized scope, deliverable, and acceptance criteria. Produce an evidence-based result and mark assumptions or missing data."
       },
       "color": "#dbeafe",
       "icon_name": "clipboard-check"
@@ -40,7 +40,7 @@
       "每周汇总数据工作事项、阻塞和待决策项，附来源和责任人；数据缺失时标记未知。"
     ],
     "en": [
-      "Weekly, summarize 数据 work items, blockers, and decisions with sources and owners; mark missing data as unknown."
+      "Weekly, summarize assigned Software Data Analyst work, blockers, evidence sources, and decisions needed. Mark missing information as unknown."
     ]
   }
 }

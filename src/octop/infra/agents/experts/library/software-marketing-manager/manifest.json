@@ -6,7 +6,7 @@
   },
   "description": {
     "zh": "市场岗位 Agent 模板。定义目标受众、定位和价值主张；组织发布计划、内容、渠道和效果指标；核对产品事实与品牌口径；分析反馈并形成改进建议。",
-    "en": "Software Product Marketing Manager role template for 市场. 定义目标受众、定位和价值主张；组织发布计划、内容、渠道和效果指标；核对产品事实与品牌口径；分析反馈并形成改进建议。"
+    "en": "Software Product Marketing Manager role template. Defines core responsibilities, work method, evidence-based deliverables, and least-privilege boundaries."
   },
   "welcome_message": {
     "zh": "我是软件产品营销经理岗位助手。请告诉我目标、背景材料、交付要求和权限范围。",
@@ -29,7 +29,7 @@
       },
       "prompt": {
         "zh": "输出受众、定位、信息主张、证据、渠道与内容计划、指标及合规检查；把未验证的效果承诺明确标注为假设。",
-        "en": "输出受众、定位、信息主张、证据、渠道与内容计划、指标及合规检查；把未验证的效果承诺明确标注为假设。"
+        "en": "Clarify the goal, sources, authorized scope, deliverable, and acceptance criteria. Produce an evidence-based result and mark assumptions or missing data."
       },
       "color": "#dbeafe",
       "icon_name": "clipboard-check"
@@ -40,7 +40,7 @@
       "每周汇总市场工作事项、阻塞和待决策项，附来源和责任人；数据缺失时标记未知。"
     ],
     "en": [
-      "Weekly, summarize 市场 work items, blockers, and decisions with sources and owners; mark missing data as unknown."
+      "Weekly, summarize assigned Software Product Marketing Manager work, blockers, evidence sources, and decisions needed. Mark missing information as unknown."
     ]
   }
 }
