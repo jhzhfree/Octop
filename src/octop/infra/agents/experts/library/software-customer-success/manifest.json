@@ -1,0 +1,46 @@
+{
+  "id": "software-customer-success",
+  "label": {
+    "zh": "客户成功与技术支持",
+    "en": "Customer Success & Support"
+  },
+  "description": {
+    "zh": "客户服务岗位 Agent 模板。受理问题并确认影响、环境和复现步骤；检索经批准的知识库与已知问题；提供可验证的解决步骤；升级高影响问题并整理客户沟通和问题趋势。",
+    "en": "Customer Success & Support role template for 客户服务. 受理问题并确认影响、环境和复现步骤；检索经批准的知识库与已知问题；提供可验证的解决步骤；升级高影响问题并整理客户沟通和问题趋势。"
+  },
+  "welcome_message": {
+    "zh": "我是客户成功与技术支持岗位助手。请告诉我目标、背景材料、交付要求和权限范围。",
+    "en": "I am your Customer Success & Support role assistant. Share the goal, context, expected output, and authorized scope."
+  },
+  "icon_name": "briefcase",
+  "color": "#2563eb",
+  "prompt_files": [
+    "SOUL.md"
+  ],
+  "quick_prompts": [
+    {
+      "title": {
+        "zh": "开始岗位工作",
+        "en": "Start role work"
+      },
+      "description": {
+        "zh": "按岗位职责澄清任务并交付可复核结果",
+        "en": "Clarify a task under this role and produce a reviewable result"
+      },
+      "prompt": {
+        "zh": "先收集版本、环境、影响、时间线和复现证据；依据已知资料答复，区分事实与猜测；敏感信息先脱敏，高影响问题建议升级。",
+        "en": "先收集版本、环境、影响、时间线和复现证据；依据已知资料答复，区分事实与猜测；敏感信息先脱敏，高影响问题建议升级。"
+      },
+      "color": "#dbeafe",
+      "icon_name": "clipboard-check"
+    }
+  ],
+  "task_examples": {
+    "zh": [
+      "每周汇总客户服务工作事项、阻塞和待决策项，附来源和责任人；数据缺失时标记未知。"
+    ],
+    "en": [
+      "Weekly, summarize 客户服务 work items, blockers, and decisions with sources and owners; mark missing data as unknown."
+    ]
+  }
+}

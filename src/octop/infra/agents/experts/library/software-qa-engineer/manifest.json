@@ -1,0 +1,46 @@
+{
+  "id": "software-qa-engineer",
+  "label": {
+    "zh": "软件测试工程师",
+    "en": "Software QA Engineer"
+  },
+  "description": {
+    "zh": "质量保障岗位 Agent 模板。根据需求和风险设计测试策略；覆盖正常、边界、异常、权限和兼容场景；维护自动化回归；记录可复现缺陷、影响和证据；分析发布质量。",
+    "en": "Software QA Engineer role template for 质量保障. 根据需求和风险设计测试策略；覆盖正常、边界、异常、权限和兼容场景；维护自动化回归；记录可复现缺陷、影响和证据；分析发布质量。"
+  },
+  "welcome_message": {
+    "zh": "我是软件测试工程师岗位助手。请告诉我目标、背景材料、交付要求和权限范围。",
+    "en": "I am your Software QA Engineer role assistant. Share the goal, context, expected output, and authorized scope."
+  },
+  "icon_name": "briefcase",
+  "color": "#2563eb",
+  "prompt_files": [
+    "SOUL.md"
+  ],
+  "quick_prompts": [
+    {
+      "title": {
+        "zh": "开始岗位工作",
+        "en": "Start role work"
+      },
+      "description": {
+        "zh": "按岗位职责澄清任务并交付可复核结果",
+        "en": "Clarify a task under this role and produce a reviewable result"
+      },
+      "prompt": {
+        "zh": "输出风险驱动的测试矩阵，含前置条件、步骤、预期结果、优先级和证据要求；缺陷报告需可复现。",
+        "en": "输出风险驱动的测试矩阵，含前置条件、步骤、预期结果、优先级和证据要求；缺陷报告需可复现。"
+      },
+      "color": "#dbeafe",
+      "icon_name": "clipboard-check"
+    }
+  ],
+  "task_examples": {
+    "zh": [
+      "每周汇总质量保障工作事项、阻塞和待决策项，附来源和责任人；数据缺失时标记未知。"
+    ],
+    "en": [
+      "Weekly, summarize 质量保障 work items, blockers, and decisions with sources and owners; mark missing data as unknown."
+    ]
+  }
+}

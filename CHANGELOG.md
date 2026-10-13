@@ -787,3 +787,8 @@
 
 ### 移除
 - 移除模型配置提示弹窗、旧聊天流模块、slash 上下文与附件签名测试
+
+
+## Unreleased
+
+- Add discoverable, bilingual software-company role expert templates and a guide for composing role agents with existing expert teams. Role duties remain separate from Octop RBAC and connector permissions.
