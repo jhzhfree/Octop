@@ -1,0 +1,71 @@
+# Example for an operations team. Replace every placeholder with approved IDs.
+id: app-server-morning-patrol
+name: 应用服务器晨间巡检
+owner: "设备维护处"
+agent: enterprise-work-assistant
+status: design_example
+
+trigger:
+  type: schedule
+  timezone: Asia/Shanghai
+  expression: "0 9 * * 1-5"
+
+scope:
+  assets: ["<CMDB 资产组 ID>"]
+  allowlist_source: "<CMDB 资产组 ID>"
+  excluded_assets: ["<未授权或生产变更窗口内资产>"]
+
+identity:
+  mode: delegated_user_or_approved_service_identity
+  provider: "<统一身份系统 Connector>"
+  bastion_connector: "<堡垒机 MCP server ID>"
+  secret_storage: connector_managed
+  never_prompt_for_password_or_mfa: true
+
+inputs:
+  - source: "<监控 MCP server ID>"
+    data: ["cpu_percent", "memory_percent", "disk_percent", "service_state"]
+    access: read_only
+  - source: "<日志 MCP server ID>"
+    data: ["error_count", "critical_event_summary"]
+    window: "24h"
+    access: read_only
+  - source: "<应用健康检查 Connector ID>"
+    data: ["http_health", "dependency_health"]
+    access: read_only
+
+steps:
+  - id: identity_and_scope_check
+    action: verify_current_authorization_and_asset_allowlist
+    on_failure: stop_and_report
+  - id: collect
+    action: gather_metrics_logs_and_health
+    timeout_seconds: 120
+    on_failure: record_partial_result
+  - id: compare
+    action: compare_with_configured_thresholds_and_last_successful_run
+    missing_data: mark_unknown
+  - id: report
+    action: create_report_with_evidence_and_run_id
+  - id: notify
+    action: send_redacted_summary_to_allowlisted_wecom_destination
+    enabled: false
+    requires_destination_allowlist: true
+
+policy:
+  default_access: read_only
+  auto_remediation: false
+  max_parallel_hosts: 5
+  retries: 1
+  redact_secrets_and_personal_data: true
+  audit_run: true
+
+outputs:
+  report_location: "<受控报告位置>"
+  wecom_destination: "<已审批的群 ID 或用户 ID>"
+
+acceptance:
+  - "显示巡检覆盖率和失败资产"
+  - "每个异常都有原始数据来源和时间"
+  - "未读到的数据标记为未知"
+  - "通知未启用时仅生成报告，不发送"
