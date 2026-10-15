@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from octop.infra.db.services import RepoBundle
+from octop.infra.gateway.threads import ThreadRegistry
 from octop.infra.users.identity import User
 from octop.infra.utils.ulid import new_ulid
 
@@ -229,6 +230,12 @@ class EnterpriseSceneService:
                     cron_id=cron_id,
                     agent_id=str(run["agent_id"]),
                     user_id=int(run["requested_by"]),
+                    session_key=ThreadRegistry.make_key(
+                        agent_id=str(run["agent_id"]),
+                        channel_type="cron",
+                        channel_subject_id=cron_id,
+                        channel_chat_type=ThreadRegistry.CHAT_TYPE_DM,
+                    ),
                     name=f"Scene: {run['scene_name']}",
                     trigger="date:2099-01-01T00:00:00",
                     prompt=str(run["prompt_snapshot"]),

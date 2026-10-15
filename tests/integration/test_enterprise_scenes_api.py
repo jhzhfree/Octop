@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from octop.infra.gateway.threads import ThreadRegistry
 from tests.support.auth import TEST_PASSWORD, bearer, create_agent, login
 
 
@@ -120,6 +121,12 @@ async def test_scene_run_is_snapshotted_and_requires_another_org_manager(env):
     assert result["cron_id"]
     cron = manager.get(result["cron_id"])
     assert cron is not None and cron.enabled == 0 and cron.mcp_servers_exact == 1
+    assert cron.session_key == ThreadRegistry.make_key(
+        agent_id=agent_id,
+        channel_type="cron",
+        channel_subject_id=result["cron_id"],
+        channel_chat_type=ThreadRegistry.CHAT_TYPE_DM,
+    )
 
     duplicate_approval = await client.post(
         f"/api/organizations/{org_id}/scene-runs/{run_id}/approve",
