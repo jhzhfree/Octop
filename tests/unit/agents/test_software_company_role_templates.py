@@ -5,10 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-ROLE_ROOT = (
-    Path(__file__).resolve().parents[3]
-    / "src/octop/infra/agents/experts/library"
-)
+ROLE_ROOT = Path(__file__).resolve().parents[3] / "src/octop/infra/agents/experts/library"
 ROLE_IDS = {
     "software-general-manager",
     "software-product-manager",

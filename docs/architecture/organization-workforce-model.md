@@ -34,14 +34,22 @@ The dashboard exposes organization selection and creation, a chart of department
 
 The HTTP API is under `/api/organizations`. It returns 403 for organization access violations, 404 for unavailable or cross-organization references, 409 for hierarchy cycles and conflicting assignments, and 422 for malformed or null values.
 
-## Next product increment
+## Scenario execution increment
 
-The next increment should connect the workforce structure to the scenario/template system:
+Enterprise scenes are now stored against one organization position and one Agent already appointed to that position. A scene contains a name, task prompt, and explicitly selected MCP connectors. Only an owner or manager can create or edit it; the creator must also own or administer the chosen Agent and must have access to the selected connectors.
 
-1. Add scenario templates with triggers, task steps, inputs, outputs, tool requirements, and escalation policy.
-2. Bind a scenario to one or more positions/Agents while keeping tool grants and credential scopes explicit.
-3. Add workflow execution state, retry policy, audit events, and human approval gates for consequential actions.
-4. Build a team view for progress, handoffs, blocked work, and evidence-backed reports.
+Organization members who already have access to the appointed Agent can request a one-shot run; an organization appointment alone does not grant Agent access. Each request stores an immutable snapshot of the prompt, connector names, Agent, position, and scene name. An organization owner or manager other than the requester can reject it or approve it. Before queueing, Octop checks that the Agent is still enabled and appointed, then revalidates the requested connectors against the requester's current grants. Approved runs are submitted through the existing CronManager as disabled, one-shot Cron jobs. Scene jobs use an exact MCP connector allowlist and do not inherit the Agent's default connector list; the connector grant is checked again when execution loads it.
+
+The dashboard displays scene definitions, pending approvals, and run history. It refreshes statuses from Cron's last-run result. Scene edits create immutable numbered versions; updates include the version the editor loaded, so concurrent edits return a conflict instead of overwriting one another. Runs retain the version and prompt/connector snapshot they were requested from. Audit events record create/edit/request/approve/reject actions without writing task prompts or credentials to the audit log. The v22 SQLite and PostgreSQL migration pair adds scene version history; startup also idempotently repairs databases missing the scene tables or version columns.
+
+This increment deliberately supports one Agent and one prompt per manually requested run. Approval covers the whole prompt and connector allowlist; it does not constrain individual tools inside a selected MCP connector to read-only operations. Configure read-only connectors and an appropriately restricted Agent for this phase. The feature does not import or execute the YAML design template, schedule recurring scenes, compose multi-step graphs, retry failed work, or offer per-step approval for high-risk writes. A queued run can be monitored in the scene history; automatic recovery of an interrupted in-flight run is not implemented.
+
+## Follow-up product increment
+
+1. Add reusable scenario templates and controlled recurring triggers with explicit scope, idempotency, timeout, and failure policies.
+2. Compose multi-step flows with step-level execution state, handoffs, retry rules, and evidence-linked outputs.
+3. Add authorized high-risk actions only with step-level approval, credential scope, and audit evidence.
+4. Build a team view for progress, handoffs, blocked work, and reports.
 5. Add directory-backed employee/Agent pickers and an owner-transfer lifecycle.
 
 Scenario execution should call the existing capability and permission layers. It must not infer authorization from role duties, capability labels, or organizational reporting lines.

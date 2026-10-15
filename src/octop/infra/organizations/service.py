@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 from typing import Any
 
 from octop.infra.db.services import RepoBundle
@@ -64,7 +65,9 @@ class OrganizationService:
         departments = self.repos.organization_repo.list_departments(organization_id)
         positions = self.repos.organization_repo.list_positions(organization_id)
         assignments = self.repos.organization_repo.list_assignments(organization_id)
-        by_position: dict[str, list[dict[str, Any]]] = {str(p["position_id"]): [] for p in positions}
+        by_position: dict[str, list[dict[str, Any]]] = {
+            str(p["position_id"]): [] for p in positions
+        }
         for assignment in assignments:
             subject_type = str(assignment["subject_type"])
             subject_id = str(assignment["subject_id"])
@@ -89,9 +92,7 @@ class OrganizationService:
             "positions": positions,
         }
 
-    def update_organization(
-        self, organization_id: str, updates: dict[str, Any]
-    ) -> dict[str, Any]:
+    def update_organization(self, organization_id: str, updates: dict[str, Any]) -> dict[str, Any]:
         row = self._organization(organization_id)
         self._require_owner(organization_id)
         result = self.repos.organization_repo.update(organization_id, updates)
@@ -135,7 +136,9 @@ class OrganizationService:
     def _department(self, organization_id: str, department_id: str) -> dict[str, Any]:
         row = self.repos.organization_repo.get_department(department_id)
         if row is None or row["organization_id"] != organization_id:
-            raise OrganizationError("ORGANIZATION_DEPARTMENT_NOT_FOUND", "department not found", 404)
+            raise OrganizationError(
+                "ORGANIZATION_DEPARTMENT_NOT_FOUND", "department not found", 404
+            )
         return row
 
     def _validate_department_parent(
@@ -148,15 +151,21 @@ class OrganizationService:
         while current_id:
             if current_id == department_id:
                 raise OrganizationError(
-                    "ORGANIZATION_HIERARCHY_CYCLE", "department hierarchy cannot contain a cycle", 409
+                    "ORGANIZATION_HIERARCHY_CYCLE",
+                    "department hierarchy cannot contain a cycle",
+                    409,
                 )
             if current_id in seen:
                 raise OrganizationError(
-                    "ORGANIZATION_HIERARCHY_CYCLE", "department hierarchy already contains a cycle", 409
+                    "ORGANIZATION_HIERARCHY_CYCLE",
+                    "department hierarchy already contains a cycle",
+                    409,
                 )
             seen.add(current_id)
             current = self._department(organization_id, current_id)
-            current_id = str(current["parent_department_id"]) if current["parent_department_id"] else None
+            current_id = (
+                str(current["parent_department_id"]) if current["parent_department_id"] else None
+            )
 
     def create_department(
         self,
@@ -222,7 +231,9 @@ class OrganizationService:
         while current_id:
             if current_id == position_id or current_id in seen:
                 raise OrganizationError(
-                    "ORGANIZATION_HIERARCHY_CYCLE", "position reporting line cannot contain a cycle", 409
+                    "ORGANIZATION_HIERARCHY_CYCLE",
+                    "position reporting line cannot contain a cycle",
+                    409,
                 )
             seen.add(current_id)
             current = self._position(organization_id, current_id)
@@ -241,7 +252,7 @@ class OrganizationService:
         department_id: str | None = None,
         reports_to_position_id: str | None = None,
         duties: str = "",
-        capabilities: list[str] | None = None,
+        capabilities: builtins.list[str] | None = None,
     ) -> dict[str, Any]:
         self._organization(organization_id)
         self._require_manager(organization_id)
@@ -300,7 +311,9 @@ class OrganizationService:
             try:
                 target_user_id = int(subject_id)
             except ValueError as exc:
-                raise OrganizationError("ORGANIZATION_ASSIGNEE_INVALID", "invalid user id", 422) from exc
+                raise OrganizationError(
+                    "ORGANIZATION_ASSIGNEE_INVALID", "invalid user id", 422
+                ) from exc
             if self.repos.organization_repo.get_member(organization_id, target_user_id) is None:
                 raise OrganizationError(
                     "ORGANIZATION_ASSIGNEE_INVALID", "user must be an organization member", 409
@@ -317,9 +330,7 @@ class OrganizationService:
                 )
         else:
             raise OrganizationError("ORGANIZATION_ASSIGNEE_INVALID", "invalid assignee type", 422)
-        result = self.repos.organization_repo.add_assignment(
-            position_id, subject_type, subject_id
-        )
+        result = self.repos.organization_repo.add_assignment(position_id, subject_type, subject_id)
         if result is None:
             raise OrganizationError(
                 "ORGANIZATION_ASSIGNMENT_EXISTS", "assignee already holds this position", 409
@@ -331,7 +342,7 @@ class OrganizationService:
         self._require_manager(organization_id)
         assignment = self.repos.organization_repo.get_assignment(assignment_id)
         if assignment is None or assignment["organization_id"] != organization_id:
-            raise OrganizationError("ORGANIZATION_ASSIGNMENT_NOT_FOUND", "assignment not found", 404)
+            raise OrganizationError(
+                "ORGANIZATION_ASSIGNMENT_NOT_FOUND", "assignment not found", 404
+            )
         self.repos.organization_repo.delete_assignment(assignment_id)
-
-

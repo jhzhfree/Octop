@@ -37,10 +37,14 @@
   ],
   "task_examples": {
     "zh": [
-      "每周汇总人力资源工作事项、阻塞和待决策项，附来源和责任人；数据缺失时标记未知。"
+      "每周汇总人力资源工作事项、阻塞和待决策项，附来源和责任人；数据缺失时标记未知。",
+      "围绕人力资源伙伴岗位的一项具体任务，先确认目标、输入材料、权限边界和验收标准，再形成可执行步骤与交付清单。",
+      "复盘一项人力资源伙伴工作，列出结果、证据、未解决风险和下一步责任人；缺少依据的内容标为待确认。"
     ],
     "en": [
-      "Weekly, summarize assigned Human Resources Partner work, blockers, evidence sources, and decisions needed. Mark missing information as unknown."
+      "Weekly, summarize assigned Human Resources Partner work, blockers, evidence sources, and decisions needed. Mark missing information as unknown.",
+      "Plan a Human Resources Partner task by confirming its goal, inputs, authorization, acceptance criteria, and deliverables before proposing steps.",
+      "Review a Human Resources Partner task with outcomes, evidence, open risks, and next owners; mark unsupported details as unverified."
     ]
   }
 }

@@ -76,12 +76,8 @@ async def test_org_chart_supports_human_members_and_hierarchy(env):
         json={"username": "org_outsider", "password": TEST_PASSWORD, "role": "user"},
     )
     assert outsider.status_code == 201, outsider.text
-    outsider_auth = bearer(
-        await login(client, username="org_outsider", password=TEST_PASSWORD)
-    )
-    forbidden = await client.get(
-        f"/api/organizations/{org_id}/chart", headers=outsider_auth
-    )
+    outsider_auth = bearer(await login(client, username="org_outsider", password=TEST_PASSWORD))
+    forbidden = await client.get(f"/api/organizations/{org_id}/chart", headers=outsider_auth)
     assert forbidden.status_code == 403
 
     member_auth = bearer(await login(client, username="org_member", password=TEST_PASSWORD))
@@ -130,9 +126,7 @@ async def test_org_chart_supports_human_members_and_hierarchy(env):
 
 async def test_org_manager_cannot_manage_members_or_cross_org_references(env):
     client, _server, admin_auth = env
-    org = await client.post(
-        "/api/organizations", headers=admin_auth, json={"name": "Org One"}
-    )
+    org = await client.post("/api/organizations", headers=admin_auth, json={"name": "Org One"})
     org_id = org.json()["organization_id"]
     user = await client.post(
         "/api/users",
@@ -148,9 +142,7 @@ async def test_org_manager_cannot_manage_members_or_cross_org_references(env):
     assert added.status_code == 201
     manager_auth = bearer(await login(client, username="org_manager", password=TEST_PASSWORD))
 
-    other = await client.post(
-        "/api/organizations", headers=admin_auth, json={"name": "Org Two"}
-    )
+    other = await client.post("/api/organizations", headers=admin_auth, json={"name": "Org Two"})
     other_dept = await client.post(
         f"/api/organizations/{other.json()['organization_id']}/departments",
         headers=admin_auth,

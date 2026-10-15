@@ -163,6 +163,72 @@ def _ensure_cron_jobs_schema(db: DatabasePool) -> None:
         "mcp_servers",
         "TEXT NOT NULL DEFAULT '[]'",
     )
+    _ensure_column(
+        db,
+        "cron_jobs",
+        "mcp_servers_exact",
+        "INTEGER NOT NULL DEFAULT 0",
+    )
+
+
+def _ensure_enterprise_scenes_schema(db: DatabasePool) -> None:
+    """Repair earlier v21 databases created before scene runtime was added."""
+    if not _table_exists(db, "organizations") or not _table_exists(db, "organization_positions"):
+        return
+    identity = (
+        "BIGSERIAL PRIMARY KEY"
+        if db.dialect == "postgresql"
+        else "INTEGER PRIMARY KEY AUTOINCREMENT"
+    )
+    timestamp = "BIGINT" if db.dialect == "postgresql" else "INTEGER"
+    statements = [
+        f"CREATE TABLE IF NOT EXISTS enterprise_scenes ("
+        f"id {identity}, scene_id TEXT NOT NULL UNIQUE, "
+        "organization_id TEXT NOT NULL REFERENCES organizations(organization_id) ON DELETE CASCADE, "
+        "position_id TEXT NOT NULL REFERENCES organization_positions(position_id) ON DELETE CASCADE, "
+        "agent_id TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE, "
+        "owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, "
+        "name TEXT NOT NULL, prompt TEXT NOT NULL, mcp_servers_json TEXT NOT NULL DEFAULT '[]', "
+        "version INTEGER NOT NULL DEFAULT 1, "
+        f"enabled INTEGER NOT NULL DEFAULT 1, created_at {timestamp} NOT NULL, updated_at {timestamp} NOT NULL)",
+        f"CREATE TABLE IF NOT EXISTS enterprise_scene_runs ("
+        f"id {identity}, run_id TEXT NOT NULL UNIQUE, "
+        "scene_id TEXT NOT NULL REFERENCES enterprise_scenes(scene_id) ON DELETE CASCADE, "
+        "organization_id TEXT NOT NULL REFERENCES organizations(organization_id) ON DELETE CASCADE, "
+        "position_id TEXT NOT NULL REFERENCES organization_positions(position_id) ON DELETE CASCADE, "
+        "agent_id TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE, "
+        "scene_name TEXT NOT NULL, scene_version INTEGER NOT NULL DEFAULT 1, prompt_snapshot TEXT NOT NULL, "
+        "mcp_servers_json TEXT NOT NULL DEFAULT '[]', requested_by INTEGER NOT NULL REFERENCES users(id), "
+        "status TEXT NOT NULL CHECK (status IN ('awaiting_approval','rejected','queued','succeeded','failed')), "
+        "approved_by INTEGER REFERENCES users(id), decision_note TEXT NOT NULL DEFAULT '', cron_id TEXT, "
+        "error_summary TEXT, "
+        f"created_at {timestamp} NOT NULL, updated_at {timestamp} NOT NULL)",
+        f"CREATE TABLE IF NOT EXISTS enterprise_scene_versions ("
+        f"id {identity}, scene_id TEXT NOT NULL REFERENCES enterprise_scenes(scene_id) ON DELETE CASCADE, "
+        "version INTEGER NOT NULL, name TEXT NOT NULL, prompt TEXT NOT NULL, "
+        "mcp_servers_json TEXT NOT NULL DEFAULT '[]', enabled INTEGER NOT NULL DEFAULT 1, "
+        "created_by INTEGER NOT NULL REFERENCES users(id), "
+        f"created_at {timestamp} NOT NULL, UNIQUE(scene_id, version))",
+        "CREATE INDEX IF NOT EXISTS idx_enterprise_scenes_org ON enterprise_scenes(organization_id, updated_at)",
+        "CREATE INDEX IF NOT EXISTS idx_enterprise_scene_runs_org ON enterprise_scene_runs(organization_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_enterprise_scene_runs_scene ON enterprise_scene_runs(scene_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_enterprise_scene_versions_scene ON enterprise_scene_versions(scene_id, version)",
+    ]
+    with db.transaction() as conn:
+        for statement in statements:
+            conn.execute(statement)
+    _ensure_column(db, "enterprise_scenes", "version", "INTEGER NOT NULL DEFAULT 1")
+    _ensure_column(db, "enterprise_scene_runs", "scene_version", "INTEGER NOT NULL DEFAULT 1")
+    _ensure_column(db, "enterprise_scene_versions", "enabled", "INTEGER NOT NULL DEFAULT 1")
+    with db.transaction() as conn:
+        conn.execute(
+            "INSERT INTO enterprise_scene_versions(scene_id, version, name, prompt, "
+            "mcp_servers_json, enabled, created_by, created_at) "
+            "SELECT s.scene_id, s.version, s.name, s.prompt, s.mcp_servers_json, s.enabled, "
+            "s.owner_user_id, s.created_at FROM enterprise_scenes s WHERE NOT EXISTS "
+            "(SELECT 1 FROM enterprise_scene_versions v WHERE v.scene_id = s.scene_id "
+            "AND v.version = s.version)"
+        )
 
 
 def _collapse_legacy_agent_welcome_columns(db: DatabasePool) -> None:
@@ -2042,4 +2108,5 @@ def run_migrations(db: DatabasePool) -> None:
     _ensure_sso_provider_kind_schema(db)
     _ensure_user_role_schema(db)
     _ensure_bridge_connections_schema(db)
+    _ensure_enterprise_scenes_schema(db)
     _grant_default_nav_permissions(db)

@@ -26,16 +26,19 @@ def test_cron_mcp_servers_roundtrip(tmp_path: Path) -> None:
         prompt="hi",
         session_key="a1:cron:j1:dm",
         mcp_servers=["github__1", "feishu__2"],
+        mcp_servers_exact=True,
     )
     row = repo.get(cid)
     assert row is not None
     assert row.mcp_servers == ["github__1", "feishu__2"]
+    assert row.mcp_servers_exact == 1
     assert row.to_public_dict()["mcp_servers"] == ["github__1", "feishu__2"]
 
     repo.update(cid, mcp_servers=["only_one"])
     row2 = repo.get(cid)
     assert row2 is not None
     assert row2.mcp_servers == ["only_one"]
+    assert row2.mcp_servers_exact == 1
 
     cid2 = repo.create(
         cron_id="j2",
@@ -48,3 +51,4 @@ def test_cron_mcp_servers_roundtrip(tmp_path: Path) -> None:
     row3 = repo.get(cid2)
     assert row3 is not None
     assert row3.mcp_servers == []
+    assert row3.mcp_servers_exact == 0

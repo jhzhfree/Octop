@@ -14,6 +14,7 @@ from octop.infra.db.repos.care_push import CarePushRepo
 from octop.infra.db.repos.channels import ChannelRepo
 from octop.infra.db.repos.connectors import ConnectorRepo
 from octop.infra.db.repos.cron import CronJobRepo
+from octop.infra.db.repos.enterprise_scenes import EnterpriseSceneRepo
 from octop.infra.db.repos.invites import InviteRepo
 from octop.infra.db.repos.knowledge import KnowledgeRepo
 from octop.infra.db.repos.organizations import OrganizationRepo
@@ -61,6 +62,7 @@ class RepoBundle:
     published_expert_repo: PublishedExpertRepo
     knowledge_repo: KnowledgeRepo
     organization_repo: OrganizationRepo
+    enterprise_scene_repo: EnterpriseSceneRepo
     voice_provider_repo: VoiceProviderRepo
     care_push_repo: CarePushRepo
     proactive_care_config_repo: ProactiveCareConfigRepo
@@ -92,6 +94,7 @@ class RepoBundle:
             published_expert_repo=PublishedExpertRepo(db),
             knowledge_repo=KnowledgeRepo(db),
             organization_repo=OrganizationRepo(db),
+            enterprise_scene_repo=EnterpriseSceneRepo(db),
             voice_provider_repo=VoiceProviderRepo(db),
             care_push_repo=CarePushRepo(db),
             proactive_care_config_repo=ProactiveCareConfigRepo(db),
@@ -196,6 +199,10 @@ class SharedServices:
     @property
     def organization_repo(self) -> OrganizationRepo:
         return self.repos.organization_repo
+
+    @property
+    def enterprise_scene_repo(self) -> EnterpriseSceneRepo:
+        return self.repos.enterprise_scene_repo
 
     @property
     def voice_provider_repo(self) -> VoiceProviderRepo:

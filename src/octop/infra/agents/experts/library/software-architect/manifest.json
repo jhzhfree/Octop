@@ -37,10 +37,14 @@
   ],
   "task_examples": {
     "zh": [
-      "每周汇总研发工作事项、阻塞和待决策项，附来源和责任人；数据缺失时标记未知。"
+      "每周汇总研发工作事项、阻塞和待决策项，附来源和责任人；数据缺失时标记未知。",
+      "评审系统架构方案，按目标、约束、候选方案、取舍和风险形成可追溯的决策记录。",
+      "梳理关键业务链路的数据流、接口边界和故障场景，标出需验证的假设。"
     ],
     "en": [
-      "Weekly, summarize assigned Software Architect work, blockers, evidence sources, and decisions needed. Mark missing information as unknown."
+      "Weekly, summarize assigned Software Architect work, blockers, evidence sources, and decisions needed. Mark missing information as unknown.",
+      "Review a system architecture proposal and record its goals, constraints, options, tradeoffs, and risks.",
+      "Map critical data flows, API boundaries, and failure scenarios, then list assumptions that still need validation."
     ]
   }
 }

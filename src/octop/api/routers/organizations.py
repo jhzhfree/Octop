@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -79,11 +80,13 @@ def _updates(body: BaseModel, nullable: set[str] | None = None) -> dict[str, Any
     nullable_fields = nullable or set()
     invalid = [key for key, value in values.items() if value is None and key not in nullable_fields]
     if invalid:
-        raise HTTPException(status_code=422, detail="null is not allowed for: " + ", ".join(invalid))
+        raise HTTPException(
+            status_code=422, detail="null is not allowed for: " + ", ".join(invalid)
+        )
     return values
 
 
-def _call(callback: Any) -> Any:
+def _call[T](callback: Callable[[], T]) -> T:
     try:
         return callback()
     except OrganizationError as exc:
@@ -128,14 +131,12 @@ async def update_organization(
     server: Any = Depends(get_server),
 ) -> dict[str, Any]:
     service = _service(server, user)
-    return _call(
-        lambda: service.update_organization(
-            organization_id, _updates(body)
-        )
-    )
+    return _call(lambda: service.update_organization(organization_id, _updates(body)))
 
 
-@router.delete("/organizations/{organization_id}", status_code=204, summary="Delete an organization")
+@router.delete(
+    "/organizations/{organization_id}", status_code=204, summary="Delete an organization"
+)
 async def delete_organization(
     organization_id: str,
     user: Any = Depends(current_user),
@@ -157,9 +158,7 @@ async def add_organization_member(
     server: Any = Depends(get_server),
 ) -> dict[str, Any]:
     service = _service(server, user)
-    return _call(
-        lambda: service.add_member(organization_id, body.user_id, body.role)
-    )
+    return _call(lambda: service.add_member(organization_id, body.user_id, body.role))
 
 
 @router.delete(
@@ -189,9 +188,7 @@ async def create_department(
     server: Any = Depends(get_server),
 ) -> dict[str, Any]:
     service = _service(server, user)
-    return _call(
-        lambda: service.create_department(organization_id, **body.model_dump())
-    )
+    return _call(lambda: service.create_department(organization_id, **body.model_dump()))
 
 
 @router.patch(
@@ -257,7 +254,9 @@ async def update_position(
     service = _service(server, user)
     return _call(
         lambda: service.update_position(
-            organization_id, position_id, _updates(body, {"department_id", "reports_to_position_id"})
+            organization_id,
+            position_id,
+            _updates(body, {"department_id", "reports_to_position_id"}),
         )
     )
 

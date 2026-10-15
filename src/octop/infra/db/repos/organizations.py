@@ -95,8 +95,7 @@ class OrganizationRepo:
         values = [value for _, value in fields]
         with self._db.transaction() as conn:
             conn.execute(
-                f"UPDATE organizations SET {assignments}, updated_at = ? "
-                "WHERE organization_id = ?",
+                f"UPDATE organizations SET {assignments}, updated_at = ? WHERE organization_id = ?",
                 (*values, now, organization_id),
             )
         return self.get(organization_id)
@@ -190,8 +189,17 @@ class OrganizationRepo:
                 "INSERT INTO organization_departments(department_id, organization_id, "
                 "parent_department_id, name, code, description, sort_order, created_at, updated_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (public_id, organization_id, parent_department_id, name, code, description,
-                 sort_order, now, now),
+                (
+                    public_id,
+                    organization_id,
+                    parent_department_id,
+                    name,
+                    code,
+                    description,
+                    sort_order,
+                    now,
+                    now,
+                ),
             )
             row = conn.execute(
                 "SELECT * FROM organization_departments WHERE department_id = ?", (public_id,)
@@ -256,8 +264,18 @@ class OrganizationRepo:
                 "INSERT INTO organization_positions(position_id, organization_id, department_id, "
                 "reports_to_position_id, title, code, duties, capabilities_json, created_at, updated_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (public_id, organization_id, department_id, reports_to_position_id, title, code,
-                 duties, json.dumps(capabilities, ensure_ascii=False), now, now),
+                (
+                    public_id,
+                    organization_id,
+                    department_id,
+                    reports_to_position_id,
+                    title,
+                    code,
+                    duties,
+                    json.dumps(capabilities, ensure_ascii=False),
+                    now,
+                    now,
+                ),
             )
             row = conn.execute(
                 "SELECT * FROM organization_positions WHERE position_id = ?", (public_id,)
@@ -266,7 +284,12 @@ class OrganizationRepo:
 
     def update_position(self, position_id: str, updates: dict[str, Any]) -> dict[str, Any] | None:
         allowed = {
-            "department_id", "reports_to_position_id", "title", "code", "duties", "capabilities"
+            "department_id",
+            "reports_to_position_id",
+            "title",
+            "code",
+            "duties",
+            "capabilities",
         }
         fields: list[tuple[str, Any]] = []
         for key, value in updates.items():
@@ -350,4 +373,3 @@ class OrganizationRepo:
                 "DELETE FROM organization_assignments WHERE assignment_id = ?", (assignment_id,)
             )
         return int(cur.rowcount or 0) > 0
-
