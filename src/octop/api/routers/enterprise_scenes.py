@@ -70,6 +70,12 @@ class SceneRunRecord(BaseModel):
     updated_at: int
 
 
+class SceneRunEvidenceRecord(BaseModel):
+    run_id: str
+    available: bool
+    answer: str | None
+
+
 class SceneVersionRecord(BaseModel):
     scene_id: str
     version: int
@@ -236,6 +242,35 @@ async def get_scene_run(
     server: Any = Depends(get_server),
 ) -> dict[str, Any]:
     return _call(lambda: _service(server, user).get_run(organization_id, run_id))
+
+
+@router.get(
+    "/organizations/{organization_id}/scene-runs/{run_id}/evidence",
+    summary="Read the visible result of an enterprise scene run",
+    response_model=SceneRunEvidenceRecord,
+)
+async def get_scene_run_evidence(
+    organization_id: str,
+    run_id: str,
+    user: Any = Depends(current_user),
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    service = _service(server, user)
+    run = _call(lambda: service.get_run_evidence_access(organization_id, run_id))
+    from octop.infra.scenes.evidence import scene_run_evidence  # noqa: PLC0415
+
+    answer = None
+    if run["status"] == "succeeded":
+        runtime = server.app_runtime
+        answer = await scene_run_evidence(
+            run=run,
+            cron_manager=runtime.cron_manager,
+            thread_registry=runtime.gateway.thread_registry,
+            agent_registry=runtime.agent_registry,
+            thread_message_repo=server.services.thread_message_repo,
+            history_archive=getattr(runtime, "history_archive", None),
+        )
+    return {"run_id": run_id, "available": answer is not None, "answer": answer}
 
 
 @router.post(

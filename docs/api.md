@@ -150,6 +150,7 @@ Organization routes are mounted under `/api/organizations`. Any organization mem
 | `POST` | `/organizations/{org_id}/scenes/{scene_id}/runs` | organization member | Creates an immutable `awaiting_approval` run snapshot with its scene version → `201` |
 | `GET` | `/organizations/{org_id}/scene-runs?scene_id=...` | organization member | Run history; terminal status is reconciled from the linked Cron result |
 | `GET` | `/organizations/{org_id}/scene-runs/{run_id}` | organization member | Includes submitted prompt and connector snapshot |
+| `GET` | `/organizations/{org_id}/scene-runs/{run_id}/evidence` | run requester or approver | Returns only the latest visible assistant text; excludes tool payloads and reasoning |
 | `POST` | `/organizations/{org_id}/scene-runs/{run_id}/approve` | owner/manager, not requester | body `{note?}`; rechecks Agent assignment/status and requester Connector grants, then queues a one-shot Cron run |
 | `POST` | `/organizations/{org_id}/scene-runs/{run_id}/reject` | owner/manager, not requester | body `{note?}` |
 

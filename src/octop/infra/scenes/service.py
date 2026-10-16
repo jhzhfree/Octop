@@ -175,6 +175,16 @@ class EnterpriseSceneService:
         self._sync_status(row)
         return self._public(self.repos.enterprise_scene_repo.get_run(run_id) or row)
 
+    def get_run_evidence_access(self, organization_id: str, run_id: str) -> dict[str, Any]:
+        row = self._run(organization_id, run_id)
+        if not self.actor.is_admin and self.actor.id not in {
+            int(row["requested_by"]),
+            int(row["approved_by"]) if row["approved_by"] is not None else None,
+        }:
+            raise SceneError("SCENE_EVIDENCE_FORBIDDEN", "scene run evidence access denied", 403)
+        self._sync_status(row)
+        return self._public(self.repos.enterprise_scene_repo.get_run(run_id) or row)
+
     def _sync_status(self, row: dict[str, Any]) -> None:
         if row["status"] != "queued" or not row["cron_id"]:
             return

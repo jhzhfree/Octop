@@ -30,6 +30,7 @@ import type { ColumnsType } from "antd/es/table";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useServerTimezone } from "../../hooks/useServerTimezone";
+import { useCurrentUser } from "../../hooks/useCurrentUser";
 import { formatServerDateTime } from "../../utils/formatMessageTime";
 import {
   organizationsApi,
@@ -53,6 +54,7 @@ type AssignmentKind = "user" | "agent";
 export default function OrganizationsPage() {
   const { t } = useTranslation();
   const timezone = useServerTimezone();
+  const currentUser = useCurrentUser();
   const [form] = Form.useForm();
   const [sceneForm] = Form.useForm();
   const [organizations, setOrganizations] = useState<OrganizationRecord[]>([]);
@@ -68,6 +70,10 @@ export default function OrganizationsPage() {
   const [assignPositionId, setAssignPositionId] = useState<string>();
   const [scenes, setScenes] = useState<EnterpriseScene[]>([]);
   const [sceneRuns, setSceneRuns] = useState<EnterpriseSceneRun[]>([]);
+  const [sceneEvidence, setSceneEvidence] = useState<
+    Record<string, string | null>
+  >({});
+  const [loadingEvidence, setLoadingEvidence] = useState<string>();
   const [sceneModalOpen, setSceneModalOpen] = useState(false);
   const [editingScene, setEditingScene] = useState<EnterpriseScene>();
   const [sceneVersions, setSceneVersions] = useState<EnterpriseSceneVersion[]>(
@@ -260,6 +266,25 @@ export default function OrganizationsPage() {
       );
     } catch {
       message.error(t("organizations.operationFailed"));
+    }
+  }
+
+  async function loadSceneEvidence(run: EnterpriseSceneRun) {
+    if (!organizationId) return;
+    setLoadingEvidence(run.run_id);
+    try {
+      const result = await organizationsApi.sceneRunEvidence(
+        organizationId,
+        run.run_id,
+      );
+      setSceneEvidence((current) => ({
+        ...current,
+        [run.run_id]: result.available ? result.answer : null,
+      }));
+    } catch {
+      message.error(t("organizations.evidenceLoadFailed"));
+    } finally {
+      setLoadingEvidence(undefined);
     }
   }
 
@@ -971,6 +996,33 @@ export default function OrganizationsPage() {
                                   {run.error_summary}
                                 </Typography.Paragraph>
                               )}
+                              {run.status === "succeeded" &&
+                                (currentUser?.role === "admin" ||
+                                  currentUser?.id === run.requested_by ||
+                                  currentUser?.id === run.approved_by) && (
+                                  <>
+                                    <Button
+                                      size="small"
+                                      loading={loadingEvidence === run.run_id}
+                                      onClick={() =>
+                                        void loadSceneEvidence(run)
+                                      }
+                                    >
+                                      {t("organizations.viewEvidence")}
+                                    </Button>
+                                    {sceneEvidence[run.run_id] !==
+                                      undefined && (
+                                      <Typography.Paragraph
+                                        style={{ whiteSpace: "pre-wrap" }}
+                                      >
+                                        {sceneEvidence[run.run_id] ??
+                                          t(
+                                            "organizations.evidenceUnavailable",
+                                          )}
+                                      </Typography.Paragraph>
+                                    )}
+                                  </>
+                                )}
                             </div>
                           ),
                         }}

@@ -128,6 +128,36 @@ async def test_scene_run_is_snapshotted_and_requires_another_org_manager(env):
         channel_chat_type=ThreadRegistry.CHAT_TYPE_DM,
     )
 
+    reviewer_user = await client.post(
+        "/api/users",
+        headers=owner_auth,
+        json={"username": "scene_reviewer", "password": TEST_PASSWORD, "role": "user"},
+    )
+    assert reviewer_user.status_code == 201, reviewer_user.text
+    reviewer_id = reviewer_user.json()["id"]
+    await client.post(
+        f"/api/organizations/{org_id}/members",
+        headers=owner_auth,
+        json={"user_id": reviewer_id, "role": "member"},
+    )
+    reviewer_auth = bearer(await login(client, username="scene_reviewer", password=TEST_PASSWORD))
+    evidence_denied = await client.get(
+        f"/api/organizations/{org_id}/scene-runs/{run_id}/evidence",
+        headers=reviewer_auth,
+    )
+    assert evidence_denied.status_code == 403
+
+    requester_evidence = await client.get(
+        f"/api/organizations/{org_id}/scene-runs/{run_id}/evidence",
+        headers=owner_auth,
+    )
+    assert requester_evidence.status_code == 200, requester_evidence.text
+    assert requester_evidence.json() == {
+        "run_id": run_id,
+        "available": False,
+        "answer": None,
+    }
+
     duplicate_approval = await client.post(
         f"/api/organizations/{org_id}/scene-runs/{run_id}/approve",
         headers=manager_auth,

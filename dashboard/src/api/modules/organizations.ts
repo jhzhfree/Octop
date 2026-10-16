@@ -112,6 +112,11 @@ export interface EnterpriseSceneRun {
   created_at: number;
   updated_at: number;
 }
+export interface EnterpriseSceneRunEvidence {
+  run_id: string;
+  available: boolean;
+  answer: string | null;
+}
 export interface EnterpriseSceneWriteBody {
   name: string;
   position_id: string;
@@ -289,6 +294,14 @@ export const organizationsApi = {
   sceneRuns: (id: string) =>
     request<EnterpriseSceneRun[]>(
       "/organizations/" + encodeURIComponent(id) + "/scene-runs",
+    ),
+  sceneRunEvidence: (id: string, runId: string) =>
+    request<EnterpriseSceneRunEvidence>(
+      "/organizations/" +
+        encodeURIComponent(id) +
+        "/scene-runs/" +
+        encodeURIComponent(runId) +
+        "/evidence",
     ),
   decideSceneRun: (
     id: string,

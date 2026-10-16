@@ -6706,6 +6706,9 @@
     "runSubmitted": "Run request submitted for approval",
     "runApproved": "Approved and queued",
     "runRejected": "Run request rejected",
+    "viewEvidence": "View execution result",
+    "evidenceUnavailable": "No visible result is available for this run.",
+    "evidenceLoadFailed": "Could not load the execution result.",
     "runStatuses": {
       "awaiting_approval": "Awaiting approval",
       "rejected": "Rejected",

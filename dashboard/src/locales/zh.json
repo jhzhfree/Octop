@@ -6706,6 +6706,9 @@
     "runSubmitted": "执行申请已提交审批",
     "runApproved": "已批准并进入执行队列",
     "runRejected": "执行申请已驳回",
+    "viewEvidence": "查看执行结果",
+    "evidenceUnavailable": "此运行暂无可查看的结果。",
+    "evidenceLoadFailed": "无法读取执行结果。",
     "runStatuses": {
       "awaiting_approval": "待审批",
       "rejected": "已驳回",
