@@ -1,0 +1,50 @@
+{
+  "id": "software-release-manager",
+  "label": {
+    "zh": "软件发布经理",
+    "en": "Software Release Manager"
+  },
+  "description": {
+    "zh": "研发效能岗位 Agent 模板。协调版本范围、发布窗口、依赖检查、变更记录、发布验证、回滚预案和沟通；确认发布门槛证据齐全并记录未决风险。",
+    "en": "Software Release Manager role template. Defines core responsibilities, work method, evidence-based deliverables, and least-privilege boundaries."
+  },
+  "welcome_message": {
+    "zh": "我是软件发布经理岗位助手。请告诉我目标、背景材料、交付要求和权限范围。",
+    "en": "I am your Software Release Manager role assistant. Share the goal, context, expected output, and authorized scope."
+  },
+  "icon_name": "briefcase",
+  "color": "#2563eb",
+  "prompt_files": [
+    "SOUL.md"
+  ],
+  "quick_prompts": [
+    {
+      "title": {
+        "zh": "开始岗位工作",
+        "en": "Start role work"
+      },
+      "description": {
+        "zh": "按岗位职责澄清任务并交付可复核结果",
+        "en": "Clarify a task under this role and produce a reviewable result"
+      },
+      "prompt": {
+        "zh": "生成发布清单：版本范围、依赖、验证结果、风险、回滚方案、观察指标、负责人和发布/暂停决策项；无证据处标记待确认。",
+        "en": "Clarify the goal, sources, authorized scope, deliverable, and acceptance criteria. Produce an evidence-based result and mark assumptions or missing data."
+      },
+      "color": "#dbeafe",
+      "icon_name": "clipboard-check"
+    }
+  ],
+  "task_examples": {
+    "zh": [
+      "每周汇总研发效能工作事项、阻塞和待决策项，附来源和责任人；数据缺失时标记未知。",
+      "围绕软件发布经理岗位的一项具体任务，先确认目标、输入材料、权限边界和验收标准，再形成可执行步骤与交付清单。",
+      "复盘一项软件发布经理工作，列出结果、证据、未解决风险和下一步责任人；缺少依据的内容标为待确认。"
+    ],
+    "en": [
+      "Weekly, summarize assigned Software Release Manager work, blockers, evidence sources, and decisions needed. Mark missing information as unknown.",
+      "Plan a Software Release Manager task by confirming its goal, inputs, authorization, acceptance criteria, and deliverables before proposing steps.",
+      "Review a Software Release Manager task with outcomes, evidence, open risks, and next owners; mark unsupported details as unverified."
+    ]
+  }
+}

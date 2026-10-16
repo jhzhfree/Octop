@@ -76,6 +76,7 @@ class CronJobRow:
     enabled: int
     task_type: str
     mcp_servers: list[str]
+    mcp_servers_exact: int
     last_run_at: int | None
     last_status: str | None
     last_error: str | None
@@ -98,6 +99,7 @@ class CronJobRow:
             enabled=r["enabled"],
             task_type=normalize_cron_task_type(str(r["task_type"])),
             mcp_servers=_decode_mcp_servers(r["mcp_servers"]),
+            mcp_servers_exact=int(r["mcp_servers_exact"]),
             last_run_at=r["last_run_at"],
             last_status=r["last_status"],
             last_error=r["last_error"],
@@ -143,6 +145,7 @@ class CronJobRepo:
         model: str | None = None,
         task_type: CronTaskType = DEFAULT_CRON_TASK_TYPE,
         mcp_servers: list[str] | None = None,
+        mcp_servers_exact: bool = False,
         enabled: bool = True,
         name: str | None = None,
     ) -> str:
@@ -150,9 +153,9 @@ class CronJobRepo:
         with self._db.transaction() as conn:
             conn.execute(
                 "INSERT INTO cron_jobs(cron_id, name, agent_id, user_id, schedule_spec, prompt, "
-                "session_key, model, fresh_thread, task_type, mcp_servers, enabled, "
+                "session_key, model, fresh_thread, task_type, mcp_servers, mcp_servers_exact, enabled, "
                 "created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     cron_id,
                     (name or "").strip() or default_cron_name(prompt, cron_id),
@@ -165,6 +168,7 @@ class CronJobRepo:
                     bool_int(fresh_thread),
                     task_type,
                     _encode_mcp_servers(mcp_servers),
+                    bool_int(mcp_servers_exact),
                     bool_int(enabled),
                     ts,
                     ts,

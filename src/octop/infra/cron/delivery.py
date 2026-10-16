@@ -45,6 +45,7 @@ class CronDeliveryCommand:
     task_type: CronTaskType
     model: str | None
     mcp_servers: tuple[str, ...]
+    mcp_servers_exact: bool = False
 
 
 class CronDeliveryService:
@@ -198,6 +199,8 @@ class CronDeliveryService:
 
         if is_team_agent(self._agent_manager.get_row(command.agent_id)):
             servers: list[str] = []
+        elif command.mcp_servers_exact:
+            servers = [name.strip() for name in command.mcp_servers if name.strip()]
         else:
             servers = [name.strip() for name in command.mcp_servers if name.strip()]
             extra_defaults = self._agent_manager.default_mcp_servers(command.agent_id)

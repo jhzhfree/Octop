@@ -23,6 +23,7 @@ SIDEBAR_NAV_KEYS = frozenset(
     {
         "chat",
         "experts",
+        "organizations",
         "tasks",
         "token-usage",
         "personalization",

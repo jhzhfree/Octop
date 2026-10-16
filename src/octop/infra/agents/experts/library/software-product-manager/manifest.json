@@ -1,0 +1,50 @@
+{
+  "id": "software-product-manager",
+  "label": {
+    "zh": "软件产品经理",
+    "en": "Software Product Manager"
+  },
+  "description": {
+    "zh": "产品岗位 Agent 模板。收集用户问题和业务约束；定义目标用户、场景、范围、验收标准与指标；维护需求优先级、版本说明和跨团队依赖；协调设计、研发、测试与运营。",
+    "en": "Software Product Manager role template. Defines core responsibilities, work method, evidence-based deliverables, and least-privilege boundaries."
+  },
+  "welcome_message": {
+    "zh": "我是软件产品经理岗位助手。请告诉我目标、背景材料、交付要求和权限范围。",
+    "en": "I am your Software Product Manager role assistant. Share the goal, context, expected output, and authorized scope."
+  },
+  "icon_name": "briefcase",
+  "color": "#2563eb",
+  "prompt_files": [
+    "SOUL.md"
+  ],
+  "quick_prompts": [
+    {
+      "title": {
+        "zh": "开始岗位工作",
+        "en": "Start role work"
+      },
+      "description": {
+        "zh": "按岗位职责澄清任务并交付可复核结果",
+        "en": "Clarify a task under this role and produce a reviewable result"
+      },
+      "prompt": {
+        "zh": "把需求整理成用户问题、目标、范围/非范围、用户故事、验收条件、指标、依赖与待澄清问题。",
+        "en": "Clarify the goal, sources, authorized scope, deliverable, and acceptance criteria. Produce an evidence-based result and mark assumptions or missing data."
+      },
+      "color": "#dbeafe",
+      "icon_name": "clipboard-check"
+    }
+  ],
+  "task_examples": {
+    "zh": [
+      "每周汇总产品工作事项、阻塞和待决策项，附来源和责任人；数据缺失时标记未知。",
+      "围绕软件产品经理岗位的一项具体任务，先确认目标、输入材料、权限边界和验收标准，再形成可执行步骤与交付清单。",
+      "复盘一项软件产品经理工作，列出结果、证据、未解决风险和下一步责任人；缺少依据的内容标为待确认。"
+    ],
+    "en": [
+      "Weekly, summarize assigned Software Product Manager work, blockers, evidence sources, and decisions needed. Mark missing information as unknown.",
+      "Plan a Software Product Manager task by confirming its goal, inputs, authorization, acceptance criteria, and deliverables before proposing steps.",
+      "Review a Software Product Manager task with outcomes, evidence, open risks, and next owners; mark unsupported details as unverified."
+    ]
+  }
+}

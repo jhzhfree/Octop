@@ -1,0 +1,91 @@
+# Human-reviewable scenario design template.
+# This documents a structure; Octop Cron does not currently import YAML.
+schema_version: 1
+id: equipment-health-daily
+name: 设备服务器每日健康巡检
+owner: "<责任人或团队>"
+agent: enterprise-work-assistant
+status: draft
+
+trigger:
+  type: schedule
+  timezone: Asia/Shanghai
+  expression: "0 9 * * 1-5"
+  # Create/enable the schedule in Octop's existing task page after reviewing the prompt.
+
+scope:
+  assets: ["<资产清单中的主机 ID>"]
+  allowlist_source: "<CMDB / 已审批资产组>"
+  excluded_assets: []
+
+identity:
+  mode: delegated_user_or_approved_service_identity
+  provider: "<企业统一身份系统>"
+  bastion_connector: "<已配置 MCP/Connector 标识>"
+  secret_storage: connector_managed
+  never_prompt_for_password_or_mfa: true
+
+inputs:
+  - source: "<监控系统 MCP server>"
+    data: ["cpu", "memory", "disk", "service_state"]
+    access: read_only
+  - source: "<日志系统 MCP server>"
+    data: ["recent_error_summary"]
+    window: "24h"
+    access: read_only
+
+steps:
+  - id: authorize
+    action: verify_current_user_and_asset_scope
+    on_failure: stop_and_report
+  - id: collect
+    action: read_configured_health_metrics
+    timeout_seconds: 90
+    on_failure: record_partial_result
+  - id: evaluate
+    action: compare_against_approved_thresholds_and_previous_run
+  - id: report
+    action: create_report_draft
+    output_template: "<受控报告模板>"
+  - id: notify
+    action: send_summary_to_allowlisted_wecom_destination
+    enabled: false
+    requires_destination_allowlist: true
+
+execution:
+  mode: manual_reviewed
+  idempotency_key: "{scene_id}:{scheduled_for}:{scope_hash}"
+  duplicate_policy: skip_existing_run
+  concurrency_policy: forbid_overlapping_runs
+  timeout_seconds: 600
+  # These fields define the intended contract; they are not enforced by Cron today.
+
+policy:
+  default_access: read_only
+  auto_remediation: false
+  required_approval_actions:
+    - production_change
+    - service_restart
+    - asset_scope_change
+    - vulnerability_scan
+  vulnerability_scanning: separate_approved_scenario_only
+  retries: 1
+  retry_only_transient_failures: true
+  max_parallel_hosts: 5
+  redact_secrets_and_personal_data: true
+  audit_run: true
+  fail_closed_on_authorization_error: true
+
+outputs:
+  report_location: "<受控文件库或工单系统>"
+  wecom_destination: "<已审批的群/用户配置 ID>"
+  retention_days: 180
+
+acceptance:
+  - "所有数据点都有采集时间和来源"
+  - "缺失数据不计为正常"
+  - "失败项和未覆盖资产均列入报告"
+  - "通知目标来自 allowlist"
+  - "权限校验失败时停止执行，不降级为无权限运行"
+  - "同一计划时间和作用范围不重复执行"
+  - "任务只读且不执行修复"

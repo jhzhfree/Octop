@@ -72,6 +72,7 @@ def _suspend_proactive_care_loops(
 @pytest.fixture(autouse=True)
 def _isolated_user_home(
     tmp_path_factory: pytest.TempPathFactory,
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch,
 ) -> Path:
     """Per-test HOME outside the test's ``tmp_path``.
@@ -83,6 +84,21 @@ def _isolated_user_home(
     home = tmp_path_factory.mktemp("user-home")
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
+    # Ordinary unit/integration tests use local mocks and should not inherit a
+    # runner's outbound proxy. Live tests keep proxy configuration so an
+    # operator can intentionally route real service calls through their proxy.
+    if not request.node.nodeid.startswith("tests/live/"):
+        for key in (
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "ALL_PROXY",
+            "NO_PROXY",
+            "http_proxy",
+            "https_proxy",
+            "all_proxy",
+            "no_proxy",
+        ):
+            monkeypatch.delenv(key, raising=False)
     for key in (
         "OCTOP_CAPTCHA_PROVIDER",
         "OCTOP_CAPTCHA_SITE_KEY",

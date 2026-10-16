@@ -48,6 +48,7 @@ class CronCreateSpec:
     model: str | None = None
     task_type: str = "agent"
     mcp_servers: list[str] = field(default_factory=list)
+    mcp_servers_exact: bool = False
     enabled: bool = True
     meta: dict[str, Any] = field(default_factory=dict)
     username: str | None = None
@@ -137,6 +138,7 @@ class CronManager:
                 model=(spec.model or "").strip() or None,
                 task_type=normalize_cron_task_type(spec.task_type),
                 mcp_servers=list(spec.mcp_servers or []),
+                mcp_servers_exact=spec.mcp_servers_exact,
                 enabled=spec.enabled,
             )
             row = self._repos.cron_repo.get(spec.cron_id)

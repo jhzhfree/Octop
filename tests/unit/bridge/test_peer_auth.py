@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import socket
+from unittest.mock import patch
+
 import pytest
 
 from octop.infra.bridge.peer_auth import (
@@ -13,7 +16,13 @@ from octop.infra.errors import ErrorCode, OctopError
 
 
 def test_normalize_accepts_https_host() -> None:
-    assert normalize_peer_base_url("https://demo.octop.chat/") == "https://demo.octop.chat"
+    with patch(
+        "octop.infra.bridge.peer_auth.socket.getaddrinfo",
+        return_value=[
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("93.184.216.34", 0))
+        ],
+    ):
+        assert normalize_peer_base_url("https://demo.octop.chat/") == "https://demo.octop.chat"
 
 
 def test_normalize_rejects_metadata_ip() -> None:

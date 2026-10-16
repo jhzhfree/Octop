@@ -137,6 +137,25 @@ does not set these headers itself.
 | `PUT`    | `/agents/{id}/tool-settings` | owner | body `{disabled_builtin: string[], plugins?}` — persists denylist + plugin flags (hot-sync, no reload) |
 | `PATCH`  | `/agents/{id}/tool-settings/{tool_name}` | owner | body `{enabled, source, plugin_id?}` — toggle one tool (hot-sync) |
 
+## Organizations and enterprise scenes
+
+Organization routes are mounted under `/api/organizations`. Any organization member may read scenes and run history; a member may request a run only when they also have existing access to the appointed Agent. Owners and managers may create/edit scenes and approve or reject runs; creating a scene additionally requires Agent owner/admin access, and the requester cannot approve their own request. Agent tool access remains governed by the existing Agent owner and Connector grants.
+
+| Method | Path | Auth | Notes |
+|--------|------|------|-------|
+| `GET` | `/organizations/{org_id}/scenes` | organization member | List configured position-bound scenes |
+| `POST` | `/organizations/{org_id}/scenes` | owner/manager + Agent owner/admin | body `{name, position_id, agent_id, prompt, mcp_servers[]}` → `201`; Agent must be appointed to the position |
+| `PATCH` | `/organizations/{org_id}/scenes/{scene_id}` | owner/manager | Update `{expected_version, name?, prompt?, mcp_servers?, enabled?}`; stale versions return `409` |
+| `GET` | `/organizations/{org_id}/scenes/{scene_id}/versions` | organization member | List immutable scene definition versions |
+| `POST` | `/organizations/{org_id}/scenes/{scene_id}/runs` | organization member | Creates an immutable `awaiting_approval` run snapshot with its scene version → `201` |
+| `GET` | `/organizations/{org_id}/scene-runs?scene_id=...` | organization member | Run history; terminal status is reconciled from the linked Cron result |
+| `GET` | `/organizations/{org_id}/scene-runs/{run_id}` | organization member | Includes submitted prompt and connector snapshot |
+| `GET` | `/organizations/{org_id}/scene-runs/{run_id}/evidence` | run requester or approver | Returns only the latest visible assistant text; excludes tool payloads and reasoning |
+| `POST` | `/organizations/{org_id}/scene-runs/{run_id}/approve` | owner/manager, not requester | body `{note?}`; rechecks Agent assignment/status and requester Connector grants, then queues a one-shot Cron run |
+| `POST` | `/organizations/{org_id}/scene-runs/{run_id}/reject` | owner/manager, not requester | body `{note?}` |
+
+Scene runs use an exact MCP connector-name allowlist and bypass the Agent's default MCP connector list. The approval is for the full prompt and selected connector set, not per-tool read/write permissions. Until step-level tool approval is available, configure read-only connectors and restricted Agents for scene use. Scenes are manually triggered; YAML templates, schedules, retries, and multi-step graphs are not executed by these routes.
+
 ## Skills and skill packages
 
 Skill copy operations create snapshots; they do not keep the source and

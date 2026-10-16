@@ -9,6 +9,7 @@ import {
   Database,
   Cpu,
   Users as UsersIcon,
+  Building2,
   Activity,
   Share2,
   Cloudy,
@@ -51,6 +52,7 @@ export interface NavSection {
 export const SIDEBAR_NAV_KEYS = [
   "chat",
   "experts",
+  "organizations",
   "tasks",
   "token-usage",
   "personalization",
@@ -149,6 +151,14 @@ export function buildNavSections(
       path: "/experts",
       icon: <GraduationCap size={iconSize} strokeWidth={iconStroke} />,
       labelKey: "nav.experts",
+    });
+  }
+  if (user) {
+    topItems.push({
+      key: "organizations",
+      path: "/organizations",
+      icon: <Building2 size={iconSize} strokeWidth={iconStroke} />,
+      labelKey: "nav.organizations",
     });
   }
   if (navAllowed(user, "tasks")) {

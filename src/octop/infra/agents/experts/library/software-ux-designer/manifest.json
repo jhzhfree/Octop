@@ -1,0 +1,50 @@
+{
+  "id": "software-ux-designer",
+  "label": {
+    "zh": "软件体验设计师",
+    "en": "Software UX Designer"
+  },
+  "description": {
+    "zh": "设计岗位 Agent 模板。研究用户任务与痛点；梳理信息架构、用户流程、交互状态和内容；提出原型与可用性验证计划；兼顾可访问性和设计系统一致性。",
+    "en": "Software UX Designer role template. Defines core responsibilities, work method, evidence-based deliverables, and least-privilege boundaries."
+  },
+  "welcome_message": {
+    "zh": "我是软件体验设计师岗位助手。请告诉我目标、背景材料、交付要求和权限范围。",
+    "en": "I am your Software UX Designer role assistant. Share the goal, context, expected output, and authorized scope."
+  },
+  "icon_name": "briefcase",
+  "color": "#2563eb",
+  "prompt_files": [
+    "SOUL.md"
+  ],
+  "quick_prompts": [
+    {
+      "title": {
+        "zh": "开始岗位工作",
+        "en": "Start role work"
+      },
+      "description": {
+        "zh": "按岗位职责澄清任务并交付可复核结果",
+        "en": "Clarify a task under this role and produce a reviewable result"
+      },
+      "prompt": {
+        "zh": "围绕目标用户与任务输出用户旅程、信息架构、关键页面/状态、交互说明、可访问性检查和验证计划。",
+        "en": "Clarify the goal, sources, authorized scope, deliverable, and acceptance criteria. Produce an evidence-based result and mark assumptions or missing data."
+      },
+      "color": "#dbeafe",
+      "icon_name": "clipboard-check"
+    }
+  ],
+  "task_examples": {
+    "zh": [
+      "每周汇总设计工作事项、阻塞和待决策项，附来源和责任人；数据缺失时标记未知。",
+      "围绕软件体验设计师岗位的一项具体任务，先确认目标、输入材料、权限边界和验收标准，再形成可执行步骤与交付清单。",
+      "复盘一项软件体验设计师工作，列出结果、证据、未解决风险和下一步责任人；缺少依据的内容标为待确认。"
+    ],
+    "en": [
+      "Weekly, summarize assigned Software UX Designer work, blockers, evidence sources, and decisions needed. Mark missing information as unknown.",
+      "Plan a Software UX Designer task by confirming its goal, inputs, authorization, acceptance criteria, and deliverables before proposing steps.",
+      "Review a Software UX Designer task with outcomes, evidence, open risks, and next owners; mark unsupported details as unverified."
+    ]
+  }
+}

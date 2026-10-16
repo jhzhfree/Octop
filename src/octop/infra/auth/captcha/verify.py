@@ -56,8 +56,12 @@ async def ensure_captcha(
         cam_key=effective.cam_key,
     )
     url = _TEST_URLS.get(provider.slug) or call.url
+    # The explicit test URL seam targets an in-process local mock server.
+    # Avoid inheriting developer/CI proxies for that loopback request; normal
+    # provider traffic continues to honor the deployment's proxy settings.
+    test_url = provider.slug in _TEST_URLS
     try:
-        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT, trust_env=not test_url) as client:
             if call.json_body is not None:
                 resp = await client.post(url, json=call.json_body, headers=call.headers)
             elif call.method == "GET":

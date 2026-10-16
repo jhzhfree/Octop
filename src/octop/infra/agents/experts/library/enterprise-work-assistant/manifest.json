@@ -1,0 +1,65 @@
+{
+  "id": "enterprise-work-assistant",
+  "label": {"zh": "企业工作助手", "en": "Enterprise Work Assistant"},
+  "description": {
+    "zh": "面向企业员工的场景化工作助手。组合专家、技能、插件、MCP/Connector 与定时任务，支持运维巡检、故障报告、技术调研、培训材料和进度跟踪。",
+    "en": "A scenario-based work assistant for enterprise employees. Combines experts, skills, plugins, MCP/connectors, and scheduled tasks for operations checks, incident reports, research, training materials, and progress tracking."
+  },
+  "welcome_message": {
+    "zh": "告诉我你要完成的工作，或描述一个可重复执行的场景；我会先明确系统、数据范围、执行权限和结果去向。",
+    "en": "Tell me what work you need done or describe a repeatable scenario. I will first clarify systems, data scope, permissions, and where results should go."
+  },
+  "icon_name": "briefcase",
+  "color": "#0F766E",
+  "prompt_files": ["SOUL.md"],
+  "quick_prompts": [
+    {
+      "title": {"zh": "定义工作场景", "en": "Define a work scenario"},
+      "description": {"zh": "把重复工作整理成可复用的步骤、工具和验收结果", "en": "Turn recurring work into reusable steps, tools, and acceptance criteria"},
+      "prompt": {
+        "zh": "帮我把下面的工作整理成一个可复用场景：明确触发条件、输入、执行步骤、需要的工具/连接器、权限与审批边界、结果模板、通知对象和失败处理。不要假设尚未配置的系统或凭据。\n\n工作描述：",
+        "en": "Turn this work into a reusable scenario: define its trigger, inputs, steps, required tools/connectors, permission and approval boundaries, output template, recipients, and failure handling. Do not assume systems or credentials that have not been configured.\n\nWork description:"
+      },
+      "color": "#ccfbf1", "icon_name": "workflow"
+    },
+    {
+      "title": {"zh": "执行设备巡检", "en": "Run an equipment inspection"},
+      "description": {"zh": "读取已授权设备状态，分析异常并生成巡检报告", "en": "Read authorized equipment status, analyze anomalies, and create an inspection report"},
+      "prompt": {
+        "zh": "按已配置的设备巡检场景执行一次只读巡检。逐项列出数据来源、检查时间、指标与阈值、异常证据和未能检查的项目；生成报告草稿。只有在通知目标已配置且允许自动发送时才发送通知，不执行修复或重启。",
+        "en": "Run one read-only inspection using the configured equipment scenario. List each data source, check time, metric and threshold, evidence, and anything not checked; create a report draft. Send a notification only when its destination is configured and auto-send is allowed. Do not remediate or restart systems."
+      },
+      "color": "#dbeafe", "icon_name": "activity"
+    },
+    {
+      "title": {"zh": "生成故障报告", "en": "Prepare an incident report"},
+      "description": {"zh": "整理现象、证据、影响范围、原因判断和待办", "en": "Organize symptoms, evidence, impact, findings, and follow-up actions"},
+      "prompt": {
+        "zh": "基于已提供或已授权读取的记录生成故障报告。区分已证实事实、推测和未知项，附上证据来源、影响范围、时间线、临时措施建议及后续责任人待确认项；不要编造数据或直接修改生产系统。",
+        "en": "Prepare an incident report from provided records or authorized read access. Separate verified facts, hypotheses, and unknowns; include evidence sources, impact, timeline, suggested mitigations, and follow-ups whose owners need confirmation. Do not invent data or change production systems."
+      },
+      "color": "#fee2e2", "icon_name": "file-text"
+    },
+    {
+      "title": {"zh": "调研并制作培训材料", "en": "Research and prepare training"},
+      "description": {"zh": "围绕技术主题整理有来源的讲解和 PPT 大纲", "en": "Create a sourced explanation and presentation outline for a technical topic"},
+      "prompt": {
+        "zh": "围绕我指定的技术主题做调研，优先使用官方或一手资料，标出来源和发布日期，区分事实与建议，并输出适合内部培训的 PPT 大纲（目标受众、学习目标、逐页标题与要点、演示练习、参考资料）。",
+        "en": "Research the technical topic I specify, prioritizing official and primary sources. Cite sources and publication dates, separate facts from recommendations, and produce an internal training deck outline with audience, objectives, slide titles and points, hands-on exercise, and references."
+      },
+      "color": "#fef3c7", "icon_name": "book-open"
+    }
+  ],
+  "task_examples": {
+    "zh": [
+      "每个工作日 09:00，使用已配置的只读巡检连接检查指定应用服务器的 CPU、内存、磁盘、关键服务和最近错误日志，生成带证据的巡检报告；异常时按已配置的企业微信通知策略发送，禁止自动修复。",
+      "每周五 16:00，汇总指定项目空间中本周已完成、进行中、阻塞和逾期事项，附来源链接与负责人；缺少权限或数据时明确列出，不推测进度。",
+      "每月第一个工作日 10:00，对已登记且获批的资产执行漏洞扫描器的安全基线/温和扫描，汇总风险、受影响资产和证据；不得扩大目标范围、执行利用或自动修复，发现高危项时按已配置的通知策略上报。"
+    ],
+    "en": [
+      "Every workday at 09:00, use configured read-only inspection connectors to check CPU, memory, disk, critical services, and recent error logs on the specified application servers. Create an evidence-based report and notify through the configured WeCom policy on anomalies. Do not remediate automatically.",
+      "Every Friday at 16:00, summarize completed, in-progress, blocked, and overdue items from the specified project space, with source links and owners. Explicitly list inaccessible or missing data; do not infer progress.",
+      "At 10:00 on the first business day of each month, run a security-baseline or gentle scan through the configured scanner against registered, approved assets. Summarize risk, affected assets, and evidence. Do not expand scope, exploit findings, or remediate automatically; report high-risk findings through the configured notification policy."
+    ]
+  }
+}

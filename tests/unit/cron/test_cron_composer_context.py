@@ -222,6 +222,43 @@ async def test_deliver_agent_explicit_mcp_overrides_defaults() -> None:
 
 
 @pytest.mark.asyncio
+async def test_scene_run_uses_exact_mcp_allowlist_without_agent_defaults() -> None:
+    session = _dashboard_session()
+    agent_row = MagicMock()
+    agent_row.default_model = None
+
+    async def _stream(_aid: str, request: dict):
+        assert request.get("mcp_servers") == ["approved__1"]
+        yield {"type": "token", "content": "ok"}
+
+    agent_manager = MagicMock()
+    agent_manager.merge_turn_mcp_servers = MagicMock()
+    agent_manager.default_mcp_servers = MagicMock(return_value=["new_default__1"])
+    agent_manager.prepare_chat_mcp = AsyncMock(return_value=[])
+    agent_manager.stream = _stream
+    agent_manager.get_row = MagicMock(return_value=agent_row)
+
+    gateway = MagicMock()
+    gateway.run_in_session = _run_locked
+    gateway.require_session = MagicMock(return_value=session)
+    gateway.push_session_text = AsyncMock()
+    gateway.notify_dashboard_push = AsyncMock()
+
+    service = CronDeliveryService(
+        gateway=gateway,
+        agent_manager=agent_manager,
+        repos=MagicMock(),
+    )
+    await service.deliver(_command(mcp_servers=("approved__1",), mcp_servers_exact=True))
+
+    agent_manager.merge_turn_mcp_servers.assert_not_called()
+    agent_manager.prepare_chat_mcp.assert_awaited_once_with(
+        "a1", ["approved__1"], connector_user_id=1
+    )
+    gateway.push_session_text.assert_awaited()
+
+
+@pytest.mark.asyncio
 async def test_deliver_agent_attaches_expert_knowledge_bases() -> None:
     session = _dashboard_session()
     agent_row = MagicMock()

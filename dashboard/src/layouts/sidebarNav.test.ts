@@ -21,6 +21,7 @@ describe("sidebarNav", () => {
     }
     expect(isGroupedNavKey("chat")).toBe(false);
     expect(isGroupedNavKey("experts")).toBe(false);
+    expect(isGroupedNavKey("organizations")).toBe(false);
   });
 
   it("places grouped keys only under sections with groupKey", () => {

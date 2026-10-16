@@ -31,6 +31,7 @@ class CronJob:
         model: str | None,
         task_type: str,
         mcp_servers: list[str] | None,
+        mcp_servers_exact: bool = False,
         user_id: int,
         delivery_service: CronDeliveryService,
         cron_repo: CronJobRepo,
@@ -45,6 +46,7 @@ class CronJob:
         self._model = model
         self._task_type = normalize_cron_task_type(task_type)
         self._mcp_servers = list(mcp_servers or [])
+        self._mcp_servers_exact = mcp_servers_exact
         self._user_id = user_id
         self._delivery_service = delivery_service
         self._cron_repo = cron_repo
@@ -69,6 +71,7 @@ class CronJob:
             model=row.model,
             task_type=row.task_type,
             mcp_servers=list(row.mcp_servers),
+            mcp_servers_exact=bool(row.mcp_servers_exact),
             user_id=row.user_id,
             delivery_service=delivery_service,
             cron_repo=cron_repo,
@@ -94,6 +97,7 @@ class CronJob:
                     task_type=self._task_type,
                     model=self._model,
                     mcp_servers=tuple(self._mcp_servers),
+                    mcp_servers_exact=self._mcp_servers_exact,
                 )
             )
         except Exception as exc:

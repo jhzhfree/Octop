@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import socket
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -46,6 +47,15 @@ async def test_bridge_probe_returns_expert_list(env: Any) -> None:
                     "user": {"username": "peer", "display_name": "Peer User"},
                 }
             ),
+        ),
+        # The production URL normalizer deliberately resolves peer hosts
+        # before connecting. Keep this contract test hermetic while still
+        # exercising the metadata/link-local address check.
+        patch(
+            "octop.infra.bridge.peer_auth.socket.getaddrinfo",
+            return_value=[
+                (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("93.184.216.34", 0))
+            ],
         ),
         patch("octop.infra.bridge.manager.httpx.AsyncClient", return_value=mock_client),
     ):

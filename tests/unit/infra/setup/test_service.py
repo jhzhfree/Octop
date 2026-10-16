@@ -79,7 +79,10 @@ def test_render_systemd_unit_user_scope(tmp_path: Path) -> None:
 def test_render_systemd_unit_system_scope(tmp_path: Path) -> None:
     runtime = _runtime(tmp_path)
     unit = render_systemd_unit(runtime, user_unit=False)
-    assert f"User={getpass.getuser()}" in unit
+    if runtime.run_as_user == "root":
+        assert "User=root" not in unit
+    else:
+        assert f"User={runtime.run_as_user}" in unit
     assert 'Environment="HOME=' in unit
     assert "WantedBy=multi-user.target" in unit
     assert "OCTOP_SYSTEMD_USER=1" not in unit
@@ -95,10 +98,15 @@ def test_render_systemd_unit_system_scope_uses_runtime_scope_by_default(
     before any system unit existed, so the first install omitted ``User=`` and
     systemd ran the daemon as root.
     """
-    import getpass
+    from types import SimpleNamespace
 
-    user = getpass.getuser()
-    account_home = Path(pwd.getpwnam(user).pw_dir)
+    user = "octop-test-user"
+    account_home = tmp_path / "account-home"
+    monkeypatch.setattr(
+        service_mod.pwd,
+        "getpwnam",
+        lambda _user: SimpleNamespace(pw_dir=str(account_home)),
+    )
     runtime = replace(_runtime(tmp_path), run_as_user=user, scope="system")
 
     unit = render_systemd_unit(runtime)
@@ -823,6 +831,7 @@ def test_write_unit_sudo_path_creates_parent_dir_first(
     # Force the sudo branch regardless of the on-disk state of ~/Library.
     monkeypatch.setattr(service_mod, "_needs_sudo", lambda _p: True)
     monkeypatch.setattr(service_mod, "os", _FakeOs(root=False))
+    monkeypatch.setattr(service_mod, "geteuid", lambda: 501)
     monkeypatch.setattr(service_mod, "_run_cmd", _fake_run_cmd)
 
     service_mod._write_unit(runtime)
