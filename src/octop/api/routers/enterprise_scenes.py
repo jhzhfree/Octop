@@ -35,6 +35,10 @@ class SceneDecisionBody(BaseModel):
     note: str = Field(default="", max_length=2000)
 
 
+class SceneRunRequestBody(BaseModel):
+    plan_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+
 class SceneRecord(BaseModel):
     scene_id: str
     organization_id: str
@@ -66,6 +70,8 @@ class SceneRunRecord(BaseModel):
     decision_note: str
     cron_id: str | None
     error_summary: str | None
+    plan_id: str | None = None
+    plan_snapshot: dict[str, Any] | None = None
     created_at: int
     updated_at: int
 
@@ -200,6 +206,7 @@ async def list_scene_versions(
 async def request_scene_run(
     organization_id: str,
     scene_id: str,
+    body: SceneRunRequestBody | None = None,
     user: Any = Depends(current_user),
     server: Any = Depends(get_server),
 ) -> dict[str, Any]:
@@ -213,7 +220,11 @@ async def request_scene_run(
     )
     if sorted(authorized) != sorted(scene["mcp_servers"]):
         raise HTTPException(status_code=403, detail="Scene connector access is not granted")
-    return _call(lambda: service.request_run(organization_id, scene_id))
+    return _call(
+        lambda: service.request_run(
+            organization_id, scene_id, plan_id=body.plan_id if body is not None else None
+        )
+    )
 
 
 @router.get(

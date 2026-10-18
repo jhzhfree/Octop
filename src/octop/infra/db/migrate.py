@@ -219,8 +219,14 @@ def _ensure_enterprise_scenes_schema(db: DatabasePool) -> None:
             conn.execute(statement)
     _ensure_column(db, "enterprise_scenes", "version", "INTEGER NOT NULL DEFAULT 1")
     _ensure_column(db, "enterprise_scene_runs", "scene_version", "INTEGER NOT NULL DEFAULT 1")
+    _ensure_column(db, "enterprise_scene_runs", "plan_id", "TEXT")
+    _ensure_column(db, "enterprise_scene_runs", "plan_snapshot_json", "TEXT")
     _ensure_column(db, "enterprise_scene_versions", "enabled", "INTEGER NOT NULL DEFAULT 1")
     with db.transaction() as conn:
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_enterprise_scene_runs_plan "
+            "ON enterprise_scene_runs(plan_id, created_at)"
+        )
         conn.execute(
             "INSERT INTO enterprise_scene_versions(scene_id, version, name, prompt, "
             "mcp_servers_json, enabled, created_by, created_at) "
@@ -229,6 +235,80 @@ def _ensure_enterprise_scenes_schema(db: DatabasePool) -> None:
             "(SELECT 1 FROM enterprise_scene_versions v WHERE v.scene_id = s.scene_id "
             "AND v.version = s.version)"
         )
+
+
+def _ensure_digital_workers_schema(db: DatabasePool) -> None:
+    """Repair databases that have organizations but missed the worker tables."""
+    if not _table_exists(db, "organizations") or not _table_exists(db, "organization_positions"):
+        return
+    identity = (
+        "BIGSERIAL PRIMARY KEY"
+        if db.dialect == "postgresql"
+        else "INTEGER PRIMARY KEY AUTOINCREMENT"
+    )
+    timestamp = "BIGINT" if db.dialect == "postgresql" else "INTEGER"
+    statements = [
+        f"CREATE TABLE IF NOT EXISTS digital_workers ("
+        f"id {identity}, worker_id TEXT NOT NULL UNIQUE, "
+        "organization_id TEXT NOT NULL REFERENCES organizations(organization_id) ON DELETE CASCADE, "
+        "position_id TEXT NOT NULL REFERENCES organization_positions(position_id) ON DELETE CASCADE, "
+        "agent_id TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE, "
+        "owner_user_id INTEGER NOT NULL REFERENCES users(id), name TEXT NOT NULL, "
+        "responsibilities TEXT NOT NULL DEFAULT '', "
+        "status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','active','paused','archived')), "
+        f"version INTEGER NOT NULL DEFAULT 1, created_at {timestamp} NOT NULL, "
+        f"updated_at {timestamp} NOT NULL, UNIQUE(position_id, agent_id))",
+        f"CREATE TABLE IF NOT EXISTS digital_worker_goals ("
+        f"id {identity}, goal_id TEXT NOT NULL UNIQUE, "
+        "worker_id TEXT NOT NULL REFERENCES digital_workers(worker_id) ON DELETE CASCADE, "
+        "title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', success_criteria TEXT NOT NULL, "
+        "period_start TEXT, period_end TEXT, "
+        "status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','active','completed','cancelled')), "
+        f"created_by INTEGER NOT NULL REFERENCES users(id), created_at {timestamp} NOT NULL, "
+        f"updated_at {timestamp} NOT NULL)",
+        f"CREATE TABLE IF NOT EXISTS digital_worker_capability_proposals ("
+        f"id {identity}, proposal_id TEXT NOT NULL UNIQUE, "
+        "worker_id TEXT NOT NULL REFERENCES digital_workers(worker_id) ON DELETE CASCADE, "
+        "source_run_id TEXT NOT NULL REFERENCES enterprise_scene_runs(run_id) ON DELETE CASCADE, "
+        "source_summary TEXT NOT NULL, observed_gaps TEXT NOT NULL, proposed_changes_json TEXT NOT NULL, "
+        "expected_benefit TEXT NOT NULL, risk_notes TEXT NOT NULL DEFAULT '', "
+        "base_capability_version INTEGER NOT NULL, "
+        "status TEXT NOT NULL DEFAULT 'submitted' CHECK (status IN ('submitted','published','rejected')), "
+        "created_by INTEGER NOT NULL REFERENCES users(id), reviewed_by INTEGER REFERENCES users(id), "
+        "review_note TEXT NOT NULL DEFAULT '', "
+        f"created_at {timestamp} NOT NULL, updated_at {timestamp} NOT NULL)",
+        f"CREATE TABLE IF NOT EXISTS digital_worker_plans ("
+        f"id {identity}, plan_id TEXT NOT NULL UNIQUE, "
+        "goal_id TEXT NOT NULL REFERENCES digital_worker_goals(goal_id) ON DELETE CASCADE, "
+        "title TEXT NOT NULL, approach TEXT NOT NULL DEFAULT '', steps_json TEXT NOT NULL DEFAULT '[]', "
+        "status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','ready','cancelled')), "
+        f"version INTEGER NOT NULL DEFAULT 1, created_by INTEGER NOT NULL REFERENCES users(id), "
+        f"created_at {timestamp} NOT NULL, updated_at {timestamp} NOT NULL)",
+        "CREATE INDEX IF NOT EXISTS idx_digital_workers_org ON digital_workers(organization_id, updated_at)",
+        "CREATE INDEX IF NOT EXISTS idx_digital_worker_goals_worker ON digital_worker_goals(worker_id, period_start, period_end)",
+        "CREATE INDEX IF NOT EXISTS idx_digital_worker_plans_goal ON digital_worker_plans(goal_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_worker_capability_proposals_worker ON digital_worker_capability_proposals(worker_id, created_at)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_worker_capability_proposals_source ON digital_worker_capability_proposals(source_run_id)",
+    ]
+    with db.transaction() as conn:
+        for statement in statements:
+            conn.execute(statement)
+    _ensure_column(
+        db,
+        "digital_workers",
+        "capabilities_json",
+        'TEXT NOT NULL DEFAULT \'{"skills":[],"knowledge":[],"operating_guidance":[],"skill_package_ids":[],"knowledge_base_ids":[]}\'',
+    )
+    _ensure_column(db, "digital_workers", "capability_version", "INTEGER NOT NULL DEFAULT 1")
+    _ensure_column(
+        db, "digital_worker_capability_proposals", "risk_notes", "TEXT NOT NULL DEFAULT ''"
+    )
+    _ensure_column(
+        db,
+        "digital_worker_capability_proposals",
+        "base_capability_version",
+        "INTEGER NOT NULL DEFAULT 1",
+    )
 
 
 def _collapse_legacy_agent_welcome_columns(db: DatabasePool) -> None:
@@ -1969,6 +2049,27 @@ def _apply_sqlite_migration(db: DatabasePool, version: int, path: Path) -> None:
         with db.connect() as conn:
             conn.execute("UPDATE _schema_version SET version = ?", (version,))
         return
+    if version == 25:
+        _ensure_column(
+            db,
+            "enterprise_scene_runs",
+            "plan_id",
+            "TEXT REFERENCES digital_worker_plans(plan_id) ON DELETE SET NULL",
+        )
+        _ensure_column(db, "enterprise_scene_runs", "plan_snapshot_json", "TEXT")
+        with db.connect() as conn:
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_enterprise_scene_runs_plan "
+                "ON enterprise_scene_runs(plan_id, created_at)"
+            )
+            conn.execute("UPDATE _schema_version SET version = ?", (version,))
+        return
+    if version == 26:
+        _ensure_enterprise_scenes_schema(db)
+        _ensure_digital_workers_schema(db)
+        with db.connect() as conn:
+            conn.execute("UPDATE _schema_version SET version = ?", (version,))
+        return
     sql = path.read_text(encoding="utf-8")
     with db.connect() as conn:
         conn.executescript(sql)
@@ -2109,4 +2210,5 @@ def run_migrations(db: DatabasePool) -> None:
     _ensure_user_role_schema(db)
     _ensure_bridge_connections_schema(db)
     _ensure_enterprise_scenes_schema(db)
+    _ensure_digital_workers_schema(db)
     _grant_default_nav_permissions(db)

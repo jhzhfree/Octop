@@ -1,9 +1,12 @@
 import {
   Building2,
+  BriefcaseBusiness,
   Check,
+  ClipboardList,
   Pencil,
   Play,
   Plus,
+  Target,
   Trash2,
   UserRoundPlus,
   UserRoundX,
@@ -41,6 +44,11 @@ import {
   type EnterpriseSceneVersion,
   type OrganizationPosition,
   type OrganizationRecord,
+  type DigitalWorker,
+  type DigitalWorkerGoal,
+  type DigitalWorkerPlan,
+  type DigitalWorkerAuthorizedResources,
+  type DigitalWorkerCapabilityProposal,
 } from "../../api/modules/organizations";
 
 type ModalKind =
@@ -57,6 +65,11 @@ export default function OrganizationsPage() {
   const currentUser = useCurrentUser();
   const [form] = Form.useForm();
   const [sceneForm] = Form.useForm();
+  const [workerForm] = Form.useForm();
+  const [goalForm] = Form.useForm();
+  const [planForm] = Form.useForm();
+  const [runRequestForm] = Form.useForm();
+  const [capabilityProposalForm] = Form.useForm();
   const [organizations, setOrganizations] = useState<OrganizationRecord[]>([]);
   const [organizationId, setOrganizationId] = useState<string>();
   const [chart, setChart] = useState<OrganizationChart>();
@@ -81,6 +94,31 @@ export default function OrganizationsPage() {
   );
   const [versionsModalScene, setVersionsModalScene] =
     useState<EnterpriseScene>();
+  const [digitalWorkers, setDigitalWorkers] = useState<DigitalWorker[]>([]);
+  const [workerModalOpen, setWorkerModalOpen] = useState(false);
+  const [selectedWorker, setSelectedWorker] = useState<DigitalWorker>();
+  const [workerGoals, setWorkerGoals] = useState<DigitalWorkerGoal[]>([]);
+  const [selectedGoal, setSelectedGoal] = useState<DigitalWorkerGoal>();
+  const [workerPlans, setWorkerPlans] = useState<DigitalWorkerPlan[]>([]);
+  const [capabilityProposals, setCapabilityProposals] = useState<
+    DigitalWorkerCapabilityProposal[]
+  >([]);
+  const [authorizedWorkerResources, setAuthorizedWorkerResources] =
+    useState<DigitalWorkerAuthorizedResources>({
+      skills: [],
+      knowledge_bases: [],
+    });
+  const [capabilityProposalModalOpen, setCapabilityProposalModalOpen] =
+    useState(false);
+  const [capabilityProposalRunId, setCapabilityProposalRunId] =
+    useState<string>();
+  const [planModalOpen, setPlanModalOpen] = useState(false);
+  const [editingPlan, setEditingPlan] = useState<DigitalWorkerPlan>();
+  const [runRequestPlan, setRunRequestPlan] = useState<DigitalWorkerPlan>();
+  const [runRequestOpen, setRunRequestOpen] = useState(false);
+  const [goalModalOpen, setGoalModalOpen] = useState(false);
+  const selectedWorkerId = selectedWorker?.worker_id;
+  const selectedGoalId = selectedGoal?.goal_id;
 
   const load = useCallback(
     async (preferredId?: string) => {
@@ -94,18 +132,31 @@ export default function OrganizationsPage() {
           ) ?? rows[0];
         setOrganizationId(selected?.organization_id);
         if (selected) {
-          const [nextChart, nextScenes, nextRuns] = await Promise.all([
-            organizationsApi.chart(selected.organization_id),
-            organizationsApi.scenes(selected.organization_id),
-            organizationsApi.sceneRuns(selected.organization_id),
-          ]);
+          const [nextChart, nextScenes, nextRuns, nextWorkers] =
+            await Promise.all([
+              organizationsApi.chart(selected.organization_id),
+              organizationsApi.scenes(selected.organization_id),
+              organizationsApi.sceneRuns(selected.organization_id),
+              organizationsApi.digitalWorkers(selected.organization_id),
+            ]);
           setChart(nextChart);
           setScenes(nextScenes);
           setSceneRuns(nextRuns);
+          setDigitalWorkers(nextWorkers);
+          setSelectedWorker((current) =>
+            nextWorkers.find(
+              (worker) => worker.worker_id === current?.worker_id,
+            ),
+          );
         } else {
           setChart(undefined);
           setScenes([]);
           setSceneRuns([]);
+          setDigitalWorkers([]);
+          setSelectedWorker(undefined);
+          setWorkerGoals([]);
+          setSelectedGoal(undefined);
+          setWorkerPlans([]);
         }
       } catch {
         message.error(t("organizations.loadFailed"));
@@ -129,6 +180,39 @@ export default function OrganizationsPage() {
     }, 5000);
     return () => window.clearInterval(timer);
   }, [organizationId]);
+  useEffect(() => {
+    if (!organizationId || !selectedWorkerId) {
+      setWorkerGoals([]);
+      setCapabilityProposals([]);
+      setAuthorizedWorkerResources({ skills: [], knowledge_bases: [] });
+      return;
+    }
+    setCapabilityProposalRunId(undefined);
+    void organizationsApi
+      .digitalWorkerGoals(organizationId, selectedWorkerId)
+      .then(setWorkerGoals)
+      .catch(() => message.error(t("organizations.operationFailed")));
+    void organizationsApi
+      .digitalWorkerCapabilityProposals(organizationId, selectedWorkerId)
+      .then(setCapabilityProposals)
+      .catch(() => message.error(t("organizations.operationFailed")));
+    void organizationsApi
+      .digitalWorkerAuthorizedResources(organizationId, selectedWorkerId)
+      .then(setAuthorizedWorkerResources)
+      .catch(() =>
+        setAuthorizedWorkerResources({ skills: [], knowledge_bases: [] }),
+      );
+  }, [organizationId, selectedWorkerId, t]);
+  useEffect(() => {
+    if (!organizationId || !selectedWorkerId || !selectedGoalId) {
+      setWorkerPlans([]);
+      return;
+    }
+    void organizationsApi
+      .digitalWorkerPlans(organizationId, selectedWorkerId, selectedGoalId)
+      .then(setWorkerPlans)
+      .catch(() => message.error(t("organizations.operationFailed")));
+  }, [organizationId, selectedWorkerId, selectedGoalId, t]);
 
   const canManage =
     chart?.organization.member_role === "owner" ||
@@ -151,6 +235,9 @@ export default function OrganizationsPage() {
   const scenePosition = Form.useWatch("position_id", sceneForm) as
     | string
     | undefined;
+  const workerPosition = Form.useWatch("position_id", workerForm) as
+    | string
+    | undefined;
   const assignedAgents = useMemo(
     () =>
       chart?.positions
@@ -168,6 +255,323 @@ export default function OrganizationsPage() {
         ) ?? [],
     [chart?.positions, scenePosition],
   );
+  const workerAgents = useMemo(
+    () =>
+      chart?.positions
+        .filter(
+          (position) =>
+            !workerPosition || position.position_id === workerPosition,
+        )
+        .flatMap((position) =>
+          position.assignments
+            .filter((item) => item.subject_type === "agent")
+            .map((item) => ({
+              value: item.subject_id,
+              label: `${item.label} · ${position.title}`,
+            })),
+        ) ?? [],
+    [chart?.positions, workerPosition],
+  );
+
+  function openWorkerModal() {
+    workerForm.resetFields();
+    setWorkerModalOpen(true);
+  }
+
+  async function saveWorker(values: Record<string, unknown>) {
+    if (!organizationId) return;
+    setSaving(true);
+    try {
+      await organizationsApi.createDigitalWorker(organizationId, {
+        position_id: String(values.position_id ?? ""),
+        agent_id: String(values.agent_id ?? ""),
+        name: String(values.name ?? "").trim(),
+        responsibilities: String(values.responsibilities ?? "").trim(),
+      });
+      setWorkerModalOpen(false);
+      await load(organizationId);
+      message.success(t("organizations.saved"));
+    } catch {
+      message.error(t("organizations.operationFailed"));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function changeWorkerStatus(worker: DigitalWorker) {
+    if (!organizationId) return;
+    const status = worker.status === "active" ? "paused" : "active";
+    try {
+      await organizationsApi.updateDigitalWorker(
+        organizationId,
+        worker.worker_id,
+        worker.version,
+        { status },
+      );
+      await load(organizationId);
+      message.success(t("organizations.saved"));
+    } catch {
+      message.error(t("organizations.operationFailed"));
+    }
+  }
+
+  async function saveGoal(values: Record<string, unknown>) {
+    if (!organizationId || !selectedWorker) return;
+    setSaving(true);
+    try {
+      await organizationsApi.createDigitalWorkerGoal(
+        organizationId,
+        selectedWorker.worker_id,
+        {
+          title: String(values.title ?? "").trim(),
+          description: String(values.description ?? "").trim(),
+          success_criteria: String(values.success_criteria ?? "").trim(),
+          period_start: String(values.period_start ?? "") || undefined,
+          period_end: String(values.period_end ?? "") || undefined,
+        },
+      );
+      setGoalModalOpen(false);
+      goalForm.resetFields();
+      setWorkerGoals(
+        await organizationsApi.digitalWorkerGoals(
+          organizationId,
+          selectedWorker.worker_id,
+        ),
+      );
+      message.success(t("organizations.saved"));
+    } catch {
+      message.error(t("organizations.operationFailed"));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function changeGoalStatus(goal: DigitalWorkerGoal) {
+    if (!organizationId || !selectedWorker) return;
+    const status = goal.status === "draft" ? "active" : "completed";
+    try {
+      await organizationsApi.updateDigitalWorkerGoal(
+        organizationId,
+        selectedWorker.worker_id,
+        goal.goal_id,
+        { status },
+      );
+      setWorkerGoals(
+        await organizationsApi.digitalWorkerGoals(
+          organizationId,
+          selectedWorker.worker_id,
+        ),
+      );
+    } catch {
+      message.error(t("organizations.operationFailed"));
+    }
+  }
+
+  function openPlanModal(plan?: DigitalWorkerPlan) {
+    if (!selectedGoal) return;
+    setEditingPlan(plan);
+    planForm.resetFields();
+    planForm.setFieldsValue(
+      plan
+        ? { title: plan.title, approach: plan.approach, steps: plan.steps }
+        : { steps: [{ action: "", expected_output: "" }] },
+    );
+    setPlanModalOpen(true);
+  }
+
+  async function savePlan(values: Record<string, unknown>) {
+    if (!organizationId || !selectedWorker || !selectedGoal) return;
+    setSaving(true);
+    try {
+      const body = {
+        title: String(values.title ?? "").trim(),
+        approach: String(values.approach ?? "").trim(),
+        steps: (Array.isArray(values.steps) ? values.steps : []).map(
+          (step: { action?: string; expected_output?: string }) => ({
+            action: String(step.action ?? "").trim(),
+            expected_output: String(step.expected_output ?? "").trim(),
+          }),
+        ),
+      };
+      if (editingPlan) {
+        await organizationsApi.updateDigitalWorkerPlan(
+          organizationId,
+          selectedWorker.worker_id,
+          selectedGoal.goal_id,
+          editingPlan.plan_id,
+          editingPlan.version,
+          body,
+        );
+      } else {
+        await organizationsApi.createDigitalWorkerPlan(
+          organizationId,
+          selectedWorker.worker_id,
+          selectedGoal.goal_id,
+          body,
+        );
+      }
+      setPlanModalOpen(false);
+      setEditingPlan(undefined);
+      setWorkerPlans(
+        await organizationsApi.digitalWorkerPlans(
+          organizationId,
+          selectedWorker.worker_id,
+          selectedGoal.goal_id,
+        ),
+      );
+      message.success(t("organizations.saved"));
+    } catch {
+      message.error(t("organizations.operationFailed"));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function changePlanStatus(plan: DigitalWorkerPlan) {
+    if (!organizationId || !selectedWorker || !selectedGoal) return;
+    try {
+      await organizationsApi.updateDigitalWorkerPlan(
+        organizationId,
+        selectedWorker.worker_id,
+        selectedGoal.goal_id,
+        plan.plan_id,
+        plan.version,
+        { status: plan.status === "draft" ? "ready" : "draft" },
+      );
+      setWorkerPlans(
+        await organizationsApi.digitalWorkerPlans(
+          organizationId,
+          selectedWorker.worker_id,
+          selectedGoal.goal_id,
+        ),
+      );
+    } catch {
+      message.error(t("organizations.operationFailed"));
+    }
+  }
+
+  function openPlanRunModal(plan: DigitalWorkerPlan) {
+    if (!selectedWorker) return;
+    const matching = scenes.filter(
+      (scene) =>
+        scene.enabled &&
+        scene.position_id === selectedWorker.position_id &&
+        scene.agent_id === selectedWorker.agent_id,
+    );
+    setRunRequestPlan(plan);
+    runRequestForm.resetFields();
+    runRequestForm.setFieldsValue({ scene_id: matching[0]?.scene_id });
+    setRunRequestOpen(true);
+  }
+
+  async function submitPlanRun(values: Record<string, unknown>) {
+    if (!organizationId || !runRequestPlan) return;
+    setSaving(true);
+    try {
+      await organizationsApi.requestSceneRun(
+        organizationId,
+        String(values.scene_id ?? ""),
+        runRequestPlan.plan_id,
+      );
+      setRunRequestOpen(false);
+      await load(organizationId);
+      message.success(t("organizations.runSubmitted"));
+    } catch {
+      message.error(t("organizations.operationFailed"));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function openCapabilityProposal(run: EnterpriseSceneRun) {
+    setCapabilityProposalRunId(run.run_id);
+    capabilityProposalForm.resetFields();
+    setCapabilityProposalModalOpen(true);
+  }
+
+  async function saveCapabilityProposal(values: Record<string, unknown>) {
+    if (!organizationId || !selectedWorker || !capabilityProposalRunId) return;
+    const toLines = (value: unknown) =>
+      String(value ?? "")
+        .split("\n")
+        .map((item) => item.trim())
+        .filter(Boolean);
+    setSaving(true);
+    try {
+      await organizationsApi.createDigitalWorkerCapabilityProposal(
+        organizationId,
+        selectedWorker.worker_id,
+        {
+          source_run_id: capabilityProposalRunId,
+          source_summary: String(values.source_summary ?? "").trim(),
+          observed_gaps: String(values.observed_gaps ?? "").trim(),
+          expected_benefit: String(values.expected_benefit ?? "").trim(),
+          risk_notes: String(values.risk_notes ?? "").trim(),
+          proposed_changes: {
+            skills: toLines(values.skills),
+            knowledge: toLines(values.knowledge),
+            operating_guidance: toLines(values.operating_guidance),
+            skill_package_ids: Array.isArray(values.skill_package_ids)
+              ? values.skill_package_ids.map(String)
+              : [],
+            knowledge_base_ids: Array.isArray(values.knowledge_base_ids)
+              ? values.knowledge_base_ids.map(String)
+              : [],
+          },
+        },
+      );
+      setCapabilityProposalModalOpen(false);
+      setCapabilityProposalRunId(undefined);
+      setCapabilityProposals(
+        await organizationsApi.digitalWorkerCapabilityProposals(
+          organizationId,
+          selectedWorker.worker_id,
+        ),
+      );
+      message.success(t("organizations.capabilityProposalSubmitted"));
+    } catch {
+      message.error(t("organizations.operationFailed"));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function reviewCapabilityProposal(
+    proposal: DigitalWorkerCapabilityProposal,
+    approve: boolean,
+  ) {
+    if (!organizationId || !selectedWorker) return;
+    try {
+      await organizationsApi.reviewDigitalWorkerCapabilityProposal(
+        organizationId,
+        selectedWorker.worker_id,
+        proposal.proposal_id,
+        approve,
+        approve ? t("organizations.capabilityProposalApproveNote") : "",
+      );
+      const [proposals, workers] = await Promise.all([
+        organizationsApi.digitalWorkerCapabilityProposals(
+          organizationId,
+          selectedWorker.worker_id,
+        ),
+        organizationsApi.digitalWorkers(organizationId),
+      ]);
+      setCapabilityProposals(proposals);
+      setDigitalWorkers(workers);
+      setSelectedWorker(
+        workers.find((item) => item.worker_id === selectedWorker.worker_id),
+      );
+      message.success(
+        t(
+          approve
+            ? "organizations.capabilityProposalPublished"
+            : "organizations.capabilityProposalRejected",
+        ),
+      );
+    } catch {
+      message.error(t("organizations.operationFailed"));
+    }
+  }
 
   function openSceneModal(scene?: EnterpriseScene) {
     setEditingScene(scene);
@@ -589,6 +993,217 @@ export default function OrganizationsPage() {
         ) : null,
     },
   ];
+  const workerColumns: ColumnsType<DigitalWorker> = [
+    { title: t("organizations.workerName"), dataIndex: "name", key: "name" },
+    {
+      title: t("organizations.position"),
+      dataIndex: "position_title",
+      key: "position",
+    },
+    { title: t("organizations.agent"), dataIndex: "agent_name", key: "agent" },
+    {
+      title: t("organizations.workerStatus"),
+      dataIndex: "status",
+      key: "status",
+      render: (status: DigitalWorker["status"]) => (
+        <Tag color={status === "active" ? "green" : "default"}>
+          {t("organizations.workerStatuses." + status)}
+        </Tag>
+      ),
+    },
+    {
+      title: t("organizations.duties"),
+      dataIndex: "responsibilities",
+      key: "responsibilities",
+      ellipsis: true,
+    },
+    {
+      title: t("common.actions"),
+      key: "actions",
+      render: (_: unknown, worker) => (
+        <Space>
+          <Button
+            icon={<Target size={14} />}
+            onClick={() => {
+              setSelectedGoal(undefined);
+              setWorkerPlans([]);
+              setSelectedWorker(worker);
+            }}
+          >
+            {t("organizations.manageGoals")}
+          </Button>
+          {canManage && worker.status !== "archived" && (
+            <Button onClick={() => void changeWorkerStatus(worker)}>
+              {t(
+                worker.status === "active"
+                  ? "organizations.pauseWorker"
+                  : "organizations.activateWorker",
+              )}
+            </Button>
+          )}
+        </Space>
+      ),
+    },
+  ];
+  const goalColumns: ColumnsType<DigitalWorkerGoal> = [
+    { title: t("organizations.goalTitle"), dataIndex: "title", key: "title" },
+    {
+      title: t("organizations.goalPeriod"),
+      key: "period",
+      render: (_: unknown, goal) =>
+        [goal.period_start, goal.period_end].filter(Boolean).join(" — ") || "—",
+    },
+    {
+      title: t("organizations.successCriteria"),
+      dataIndex: "success_criteria",
+      key: "criteria",
+      ellipsis: true,
+    },
+    {
+      title: t("organizations.goalStatus"),
+      dataIndex: "status",
+      key: "status",
+      render: (status: DigitalWorkerGoal["status"]) => (
+        <Tag color={status === "completed" ? "green" : "blue"}>
+          {t("organizations.goalStatuses." + status)}
+        </Tag>
+      ),
+    },
+    {
+      title: t("common.actions"),
+      key: "actions",
+      render: (_: unknown, goal) => (
+        <Space>
+          <Button
+            icon={<ClipboardList size={14} />}
+            onClick={() => setSelectedGoal(goal)}
+          >
+            {t("organizations.managePlans")}
+          </Button>
+          {canManage &&
+            (goal.status === "draft" || goal.status === "active") && (
+              <Button onClick={() => void changeGoalStatus(goal)}>
+                {t(
+                  goal.status === "draft"
+                    ? "organizations.activateGoal"
+                    : "organizations.completeGoal",
+                )}
+              </Button>
+            )}
+        </Space>
+      ),
+    },
+  ];
+  const planColumns: ColumnsType<DigitalWorkerPlan> = [
+    { title: t("organizations.planTitle"), dataIndex: "title", key: "title" },
+    {
+      title: t("organizations.planSteps"),
+      key: "steps",
+      render: (_: unknown, plan) => plan.steps.length,
+    },
+    {
+      title: t("organizations.planStatus"),
+      dataIndex: "status",
+      key: "status",
+      render: (status: DigitalWorkerPlan["status"]) => (
+        <Tag color={status === "ready" ? "green" : "default"}>
+          {t("organizations.planStatuses." + status)}
+        </Tag>
+      ),
+    },
+    {
+      title: t("common.actions"),
+      key: "actions",
+      render: (_: unknown, plan) =>
+        plan.status !== "cancelled" ? (
+          <Space>
+            {canManage && plan.status === "draft" && (
+              <Button onClick={() => openPlanModal(plan)}>
+                {t("common.edit")}
+              </Button>
+            )}
+            {canManage && (
+              <Button onClick={() => void changePlanStatus(plan)}>
+                {t(
+                  plan.status === "draft"
+                    ? "organizations.preparePlan"
+                    : "organizations.reopenPlan",
+                )}
+              </Button>
+            )}
+            {plan.status === "ready" && (
+              <Button
+                type="primary"
+                icon={<Play size={14} />}
+                onClick={() => openPlanRunModal(plan)}
+              >
+                {t("organizations.requestRun")}
+              </Button>
+            )}
+          </Space>
+        ) : null,
+    },
+  ];
+  const capabilityProposalColumns: ColumnsType<DigitalWorkerCapabilityProposal> =
+    [
+      {
+        title: t("organizations.capabilityProposalEvidence"),
+        dataIndex: "source_run_id",
+        key: "source_run_id",
+        render: (runId: string) => runId.slice(0, 10),
+      },
+      {
+        title: t("organizations.capabilityVersion"),
+        dataIndex: "base_capability_version",
+        key: "base_capability_version",
+        render: (version: number) => `v${version}`,
+      },
+      {
+        title: t("organizations.capabilityProposalStatus"),
+        dataIndex: "status",
+        key: "status",
+        render: (status: DigitalWorkerCapabilityProposal["status"]) => (
+          <Tag
+            color={
+              status === "published"
+                ? "green"
+                : status === "rejected"
+                ? "red"
+                : "blue"
+            }
+          >
+            {t(`organizations.capabilityProposalStatuses.${status}`)}
+          </Tag>
+        ),
+      },
+      {
+        title: t("common.actions"),
+        key: "actions",
+        render: (_: unknown, proposal) =>
+          canManage &&
+          proposal.status === "submitted" &&
+          Number(currentUser?.id) !== proposal.created_by ? (
+            <Space>
+              <Popconfirm
+                title={t("organizations.capabilityProposalReviewConfirm")}
+                onConfirm={() => void reviewCapabilityProposal(proposal, true)}
+              >
+                <Button type="primary" size="small">
+                  {t("organizations.capabilityProposalPublish")}
+                </Button>
+              </Popconfirm>
+              <Popconfirm
+                title={t("organizations.capabilityProposalReviewConfirm")}
+                onConfirm={() => void reviewCapabilityProposal(proposal, false)}
+              >
+                <Button danger size="small">
+                  {t("organizations.capabilityProposalReject")}
+                </Button>
+              </Popconfirm>
+            </Space>
+          ) : null,
+      },
+    ];
   const sceneColumns: ColumnsType<EnterpriseScene> = [
     { title: t("organizations.sceneName"), dataIndex: "name", key: "name" },
     {
@@ -680,6 +1295,11 @@ export default function OrganizationsPage() {
       title: t("organizations.sceneName"),
       dataIndex: "scene_name",
       key: "scene",
+    },
+    {
+      title: t("organizations.planSnapshot"),
+      key: "plan",
+      render: (_: unknown, run) => run.plan_snapshot?.plan.title ?? "—",
     },
     {
       title: t("organizations.runStatus"),
@@ -789,6 +1409,9 @@ export default function OrganizationsPage() {
               }))}
               onChange={(value) => {
                 setOrganizationId(value);
+                setSelectedWorker(undefined);
+                setSelectedGoal(undefined);
+                setWorkerPlans([]);
                 void load(value);
               }}
             />
@@ -924,6 +1547,296 @@ export default function OrganizationsPage() {
                 ),
               },
               {
+                key: "digital-workers",
+                label: t("organizations.virtualWorkers"),
+                children: (
+                  <Space
+                    direction="vertical"
+                    size="large"
+                    style={{ width: "100%" }}
+                  >
+                    <Card
+                      title={t("organizations.virtualWorkers")}
+                      extra={
+                        canManage ? (
+                          <Button
+                            type="primary"
+                            icon={<BriefcaseBusiness size={14} />}
+                            onClick={openWorkerModal}
+                          >
+                            {t("organizations.createWorker")}
+                          </Button>
+                        ) : null
+                      }
+                    >
+                      <Typography.Paragraph type="secondary">
+                        {t("organizations.workerGovernanceHint")}
+                      </Typography.Paragraph>
+                      <Table
+                        rowKey="worker_id"
+                        size="small"
+                        pagination={{ pageSize: 8 }}
+                        dataSource={digitalWorkers}
+                        columns={workerColumns}
+                      />
+                    </Card>
+                    {selectedWorker && (
+                      <Card
+                        title={`${t("organizations.stageGoals")} · ${
+                          selectedWorker.name
+                        }`}
+                        extra={
+                          <Space>
+                            <Button
+                              onClick={() => {
+                                setSelectedWorker(undefined);
+                                setSelectedGoal(undefined);
+                                setWorkerPlans([]);
+                              }}
+                            >
+                              {t("common.close")}
+                            </Button>
+                            {canManage && (
+                              <Button
+                                type="primary"
+                                icon={<Plus size={14} />}
+                                onClick={() => {
+                                  goalForm.resetFields();
+                                  setGoalModalOpen(true);
+                                }}
+                              >
+                                {t("organizations.addGoal")}
+                              </Button>
+                            )}
+                          </Space>
+                        }
+                      >
+                        <Typography.Paragraph type="secondary">
+                          {selectedWorker.responsibilities || "—"}
+                        </Typography.Paragraph>
+                        <Table
+                          rowKey="goal_id"
+                          size="small"
+                          pagination={false}
+                          dataSource={workerGoals}
+                          columns={goalColumns}
+                        />
+                      </Card>
+                    )}
+                    {selectedWorker && (
+                      <Card
+                        title={`${t("organizations.capabilityProfile")} · ${
+                          selectedWorker.name
+                        }`}
+                        extra={
+                          canManage && selectedWorker.status === "active" ? (
+                            <Space>
+                              <Select
+                                style={{ minWidth: 260 }}
+                                placeholder={t(
+                                  "organizations.capabilityChooseEvidence",
+                                )}
+                                value={capabilityProposalRunId}
+                                onChange={setCapabilityProposalRunId}
+                                options={sceneRuns
+                                  .filter(
+                                    (run) =>
+                                      run.status === "succeeded" &&
+                                      run.plan_snapshot?.worker.worker_id ===
+                                        selectedWorker.worker_id &&
+                                      !capabilityProposals.some(
+                                        (proposal) =>
+                                          proposal.source_run_id === run.run_id,
+                                      ),
+                                  )
+                                  .map((run) => ({
+                                    value: run.run_id,
+                                    label: `${
+                                      run.scene_name
+                                    } · ${formatServerDateTime(
+                                      run.created_at,
+                                      timezone,
+                                    )}`,
+                                  }))}
+                              />
+                              <Button
+                                type="primary"
+                                disabled={!capabilityProposalRunId}
+                                onClick={() => {
+                                  const run = sceneRuns.find(
+                                    (item) =>
+                                      item.run_id === capabilityProposalRunId,
+                                  );
+                                  if (run) openCapabilityProposal(run);
+                                }}
+                              >
+                                {t("organizations.addCapabilityProposal")}
+                              </Button>
+                            </Space>
+                          ) : null
+                        }
+                      >
+                        <Typography.Paragraph type="secondary">
+                          {t("organizations.capabilityGovernanceHint", {
+                            version: selectedWorker.capability_version,
+                          })}
+                        </Typography.Paragraph>
+                        <Space wrap style={{ marginBottom: 16 }}>
+                          {selectedWorker.capabilities.skills.map((value) => (
+                            <Tag key={`skill-${value}`}>{value}</Tag>
+                          ))}
+                          {selectedWorker.capabilities.knowledge.map(
+                            (value) => (
+                              <Tag key={`knowledge-${value}`} color="blue">
+                                {value}
+                              </Tag>
+                            ),
+                          )}
+                          {selectedWorker.capabilities.operating_guidance.map(
+                            (value) => (
+                              <Tag key={`guidance-${value}`} color="purple">
+                                {value}
+                              </Tag>
+                            ),
+                          )}
+                          {selectedWorker.capabilities.skill_package_ids.map(
+                            (id) => (
+                              <Tag key={`package-${id}`} color="cyan">
+                                {authorizedWorkerResources.skills.find(
+                                  (item) => item.id === id,
+                                )?.name ?? id}
+                              </Tag>
+                            ),
+                          )}
+                          {selectedWorker.capabilities.knowledge_base_ids.map(
+                            (id) => (
+                              <Tag key={`kb-${id}`} color="geekblue">
+                                {authorizedWorkerResources.knowledge_bases.find(
+                                  (item) => item.id === id,
+                                )?.name ?? id}
+                              </Tag>
+                            ),
+                          )}
+                          {Object.values(selectedWorker.capabilities).every(
+                            (values) => values.length === 0,
+                          ) && (
+                            <Typography.Text type="secondary">
+                              —
+                            </Typography.Text>
+                          )}
+                        </Space>
+                        <Table
+                          rowKey="proposal_id"
+                          size="small"
+                          pagination={{ pageSize: 5 }}
+                          dataSource={capabilityProposals}
+                          columns={capabilityProposalColumns}
+                          expandable={{
+                            expandedRowRender: (proposal) => (
+                              <div>
+                                <Typography.Paragraph>
+                                  <strong>
+                                    {t(
+                                      "organizations.capabilityProposalSummary",
+                                    )}
+                                    :
+                                  </strong>{" "}
+                                  {proposal.source_summary}
+                                </Typography.Paragraph>
+                                <Typography.Paragraph>
+                                  <strong>
+                                    {t("organizations.capabilityObservedGaps")}:
+                                  </strong>{" "}
+                                  {proposal.observed_gaps}
+                                </Typography.Paragraph>
+                                <Typography.Paragraph>
+                                  <strong>
+                                    {t(
+                                      "organizations.capabilityExpectedBenefit",
+                                    )}
+                                    :
+                                  </strong>{" "}
+                                  {proposal.expected_benefit}
+                                </Typography.Paragraph>
+                                {proposal.risk_notes && (
+                                  <Typography.Paragraph>
+                                    <strong>
+                                      {t("organizations.capabilityRiskNotes")}:
+                                    </strong>{" "}
+                                    {proposal.risk_notes}
+                                  </Typography.Paragraph>
+                                )}
+                                {proposal.review_note && (
+                                  <Typography.Paragraph>
+                                    <strong>
+                                      {t("organizations.capabilityReviewNote")}:
+                                    </strong>{" "}
+                                    {proposal.review_note}
+                                  </Typography.Paragraph>
+                                )}
+                              </div>
+                            ),
+                          }}
+                        />
+                      </Card>
+                    )}
+                    {selectedWorker && selectedGoal && (
+                      <Card
+                        title={`${t("organizations.workPlans")} · ${
+                          selectedGoal.title
+                        }`}
+                        extra={
+                          <Space>
+                            <Button onClick={() => setSelectedGoal(undefined)}>
+                              {t("common.close")}
+                            </Button>
+                            {canManage && selectedGoal.status === "active" && (
+                              <Button
+                                type="primary"
+                                icon={<Plus size={14} />}
+                                onClick={() => openPlanModal()}
+                              >
+                                {t("organizations.addPlan")}
+                              </Button>
+                            )}
+                          </Space>
+                        }
+                      >
+                        <Typography.Paragraph type="secondary">
+                          {t("organizations.planGovernanceHint")}
+                        </Typography.Paragraph>
+                        <Table
+                          rowKey="plan_id"
+                          size="small"
+                          pagination={false}
+                          dataSource={workerPlans}
+                          columns={planColumns}
+                          expandable={{
+                            expandedRowRender: (plan) => (
+                              <div>
+                                <Typography.Paragraph>
+                                  <strong>
+                                    {t("organizations.planApproach")}:
+                                  </strong>{" "}
+                                  {plan.approach || "—"}
+                                </Typography.Paragraph>
+                                <ol>
+                                  {plan.steps.map((step, index) => (
+                                    <li key={`${plan.plan_id}-${index}`}>
+                                      {step.action} — {step.expected_output}
+                                    </li>
+                                  ))}
+                                </ol>
+                              </div>
+                            ),
+                          }}
+                        />
+                      </Card>
+                    )}
+                  </Space>
+                ),
+              },
+              {
                 key: "scenes",
                 label: t("organizations.scenes"),
                 children: (
@@ -971,6 +1884,65 @@ export default function OrganizationsPage() {
                                 <br />
                                 {run.prompt_snapshot}
                               </Typography.Paragraph>
+                              {run.plan_snapshot && (
+                                <Card
+                                  size="small"
+                                  title={`${t("organizations.planSnapshot")}: ${
+                                    run.plan_snapshot.plan.title
+                                  }`}
+                                  style={{ marginBottom: 12 }}
+                                >
+                                  <Typography.Paragraph>
+                                    <strong>
+                                      {t("organizations.stageGoals")}:
+                                    </strong>{" "}
+                                    {run.plan_snapshot.goal.title}
+                                  </Typography.Paragraph>
+                                  <Typography.Paragraph>
+                                    <strong>
+                                      {t("organizations.capabilityVersion")}:
+                                    </strong>{" "}
+                                    v
+                                    {
+                                      run.plan_snapshot.worker
+                                        .capability_version
+                                    }
+                                  </Typography.Paragraph>
+                                  {run.plan_snapshot.capabilities && (
+                                    <Typography.Paragraph type="secondary">
+                                      {[
+                                        ...run.plan_snapshot.capabilities
+                                          .skills,
+                                        ...run.plan_snapshot.capabilities
+                                          .knowledge,
+                                        ...run.plan_snapshot.capabilities
+                                          .operating_guidance,
+                                      ].join(" · ") || "—"}
+                                    </Typography.Paragraph>
+                                  )}
+                                  <Typography.Paragraph>
+                                    <strong>
+                                      {t("organizations.successCriteria")}:
+                                    </strong>{" "}
+                                    {run.plan_snapshot.goal.success_criteria}
+                                  </Typography.Paragraph>
+                                  <Typography.Paragraph>
+                                    <strong>
+                                      {t("organizations.planApproach")}:
+                                    </strong>{" "}
+                                    {run.plan_snapshot.plan.approach}
+                                  </Typography.Paragraph>
+                                  <ol>
+                                    {run.plan_snapshot.plan.steps.map(
+                                      (step, index) => (
+                                        <li key={`${run.run_id}-plan-${index}`}>
+                                          {step.action} — {step.expected_output}
+                                        </li>
+                                      ),
+                                    )}
+                                  </ol>
+                                </Card>
+                              )}
                               <Typography.Paragraph>
                                 <strong>
                                   {t("organizations.sceneVersion")}:
@@ -1214,6 +2186,307 @@ export default function OrganizationsPage() {
               </Form.Item>
             </>
           )}
+        </Form>
+      </Modal>
+      <Modal
+        open={workerModalOpen}
+        title={t("organizations.createWorker")}
+        onCancel={() => setWorkerModalOpen(false)}
+        onOk={() => workerForm.submit()}
+        confirmLoading={saving}
+        destroyOnClose
+      >
+        <Form
+          form={workerForm}
+          layout="vertical"
+          onFinish={(values) => void saveWorker(values)}
+        >
+          <Form.Item
+            name="name"
+            label={t("organizations.workerName")}
+            rules={[{ required: true }]}
+          >
+            <Input maxLength={120} />
+          </Form.Item>
+          <Form.Item
+            name="position_id"
+            label={t("organizations.position")}
+            rules={[{ required: true }]}
+          >
+            <Select
+              options={chart?.positions.map((position) => ({
+                value: position.position_id,
+                label: position.title,
+              }))}
+            />
+          </Form.Item>
+          <Form.Item
+            name="agent_id"
+            label={t("organizations.agent")}
+            rules={[{ required: true }]}
+          >
+            <Select options={workerAgents} />
+          </Form.Item>
+          <Form.Item
+            name="responsibilities"
+            label={t("organizations.duties")}
+            extra={t("organizations.workerResponsibilitiesHint")}
+          >
+            <Input.TextArea rows={3} maxLength={8000} />
+          </Form.Item>
+        </Form>
+      </Modal>
+      <Modal
+        open={goalModalOpen}
+        title={t("organizations.addGoal")}
+        onCancel={() => setGoalModalOpen(false)}
+        onOk={() => goalForm.submit()}
+        confirmLoading={saving}
+        destroyOnClose
+      >
+        <Form
+          form={goalForm}
+          layout="vertical"
+          onFinish={(values) => void saveGoal(values)}
+        >
+          <Form.Item
+            name="title"
+            label={t("organizations.goalTitle")}
+            rules={[{ required: true }]}
+          >
+            <Input maxLength={200} />
+          </Form.Item>
+          <Form.Item
+            name="success_criteria"
+            label={t("organizations.successCriteria")}
+            rules={[{ required: true }]}
+          >
+            <Input.TextArea rows={3} maxLength={4000} />
+          </Form.Item>
+          <Form.Item
+            name="description"
+            label={t("organizations.descriptionField")}
+          >
+            <Input.TextArea rows={2} maxLength={4000} />
+          </Form.Item>
+          <Space style={{ width: "100%" }} align="start">
+            <Form.Item name="period_start" label={t("organizations.goalStart")}>
+              <Input type="date" />
+            </Form.Item>
+            <Form.Item name="period_end" label={t("organizations.goalEnd")}>
+              <Input type="date" />
+            </Form.Item>
+          </Space>
+        </Form>
+      </Modal>
+      <Modal
+        open={planModalOpen}
+        title={t(
+          editingPlan ? "organizations.editPlan" : "organizations.addPlan",
+        )}
+        onCancel={() => setPlanModalOpen(false)}
+        onOk={() => planForm.submit()}
+        confirmLoading={saving}
+        destroyOnClose
+        width={680}
+      >
+        <Form
+          form={planForm}
+          layout="vertical"
+          onFinish={(values) => void savePlan(values)}
+        >
+          <Form.Item
+            name="title"
+            label={t("organizations.planTitle")}
+            rules={[{ required: true }]}
+          >
+            <Input maxLength={200} />
+          </Form.Item>
+          <Form.Item
+            name="approach"
+            label={t("organizations.planApproach")}
+            rules={[{ required: true }]}
+          >
+            <Input.TextArea rows={3} maxLength={4000} />
+          </Form.Item>
+          <Form.List name="steps">
+            {(fields, { add, remove }) => (
+              <Space direction="vertical" style={{ width: "100%" }}>
+                {fields.map(({ key, name, ...restField }, index) => (
+                  <Card
+                    key={key}
+                    size="small"
+                    title={`${t("organizations.planStep")} ${index + 1}`}
+                    extra={
+                      fields.length > 1 ? (
+                        <Button danger onClick={() => remove(name)}>
+                          {t("common.delete")}
+                        </Button>
+                      ) : null
+                    }
+                  >
+                    <Form.Item
+                      {...restField}
+                      name={[name, "action"]}
+                      label={t("organizations.planAction")}
+                      rules={[{ required: true }]}
+                    >
+                      <Input maxLength={500} />
+                    </Form.Item>
+                    <Form.Item
+                      {...restField}
+                      name={[name, "expected_output"]}
+                      label={t("organizations.planExpectedOutput")}
+                      rules={[{ required: true }]}
+                    >
+                      <Input.TextArea rows={2} maxLength={1000} />
+                    </Form.Item>
+                  </Card>
+                ))}
+                <Button
+                  type="dashed"
+                  icon={<Plus size={14} />}
+                  onClick={() => add({ action: "", expected_output: "" })}
+                  block
+                >
+                  {t("organizations.addPlanStep")}
+                </Button>
+              </Space>
+            )}
+          </Form.List>
+        </Form>
+      </Modal>
+      <Modal
+        open={runRequestOpen}
+        title={t("organizations.requestPlanRun")}
+        onCancel={() => setRunRequestOpen(false)}
+        onOk={() => runRequestForm.submit()}
+        confirmLoading={saving}
+        destroyOnClose
+      >
+        <Typography.Paragraph type="secondary">
+          {t("organizations.planRunApprovalHint")}
+        </Typography.Paragraph>
+        <Form
+          form={runRequestForm}
+          layout="vertical"
+          onFinish={(values) => void submitPlanRun(values)}
+        >
+          <Form.Item
+            name="scene_id"
+            label={t("organizations.scenes")}
+            rules={[{ required: true }]}
+          >
+            <Select
+              options={
+                selectedWorker
+                  ? scenes
+                      .filter(
+                        (scene) =>
+                          scene.enabled &&
+                          scene.position_id === selectedWorker.position_id &&
+                          scene.agent_id === selectedWorker.agent_id,
+                      )
+                      .map((scene) => ({
+                        value: scene.scene_id,
+                        label: scene.name,
+                      }))
+                  : []
+              }
+            />
+          </Form.Item>
+        </Form>
+      </Modal>
+      <Modal
+        open={capabilityProposalModalOpen}
+        title={t("organizations.addCapabilityProposal")}
+        onCancel={() => setCapabilityProposalModalOpen(false)}
+        onOk={() => capabilityProposalForm.submit()}
+        confirmLoading={saving}
+        destroyOnClose
+        width={760}
+      >
+        <Typography.Paragraph type="secondary">
+          {t("organizations.capabilityProposalFormHint")}
+        </Typography.Paragraph>
+        <Form
+          form={capabilityProposalForm}
+          layout="vertical"
+          onFinish={(values) => void saveCapabilityProposal(values)}
+        >
+          <Form.Item
+            name="source_summary"
+            label={t("organizations.capabilityProposalSummary")}
+            rules={[{ required: true }]}
+          >
+            <Input.TextArea rows={2} maxLength={4000} />
+          </Form.Item>
+          <Form.Item
+            name="observed_gaps"
+            label={t("organizations.capabilityObservedGaps")}
+            rules={[{ required: true }]}
+          >
+            <Input.TextArea rows={2} maxLength={4000} />
+          </Form.Item>
+          <Form.Item
+            name="expected_benefit"
+            label={t("organizations.capabilityExpectedBenefit")}
+            rules={[{ required: true }]}
+          >
+            <Input.TextArea rows={2} maxLength={4000} />
+          </Form.Item>
+          <Form.Item
+            name="skills"
+            label={t("organizations.capabilitySkills")}
+            extra={t("organizations.capabilityOnePerLine")}
+          >
+            <Input.TextArea rows={2} maxLength={4000} />
+          </Form.Item>
+          <Form.Item
+            name="knowledge"
+            label={t("organizations.capabilityKnowledge")}
+            extra={t("organizations.capabilityOnePerLine")}
+          >
+            <Input.TextArea rows={2} maxLength={4000} />
+          </Form.Item>
+          <Form.Item
+            name="operating_guidance"
+            label={t("organizations.capabilityGuidance")}
+            extra={t("organizations.capabilityOnePerLine")}
+          >
+            <Input.TextArea rows={2} maxLength={4000} />
+          </Form.Item>
+          <Form.Item
+            name="skill_package_ids"
+            label={t("organizations.authorizedSkillPackages")}
+            extra={t("organizations.capabilityResourceHint")}
+          >
+            <Select
+              mode="multiple"
+              options={authorizedWorkerResources.skills.map((resource) => ({
+                value: resource.id,
+                label: resource.name,
+              }))}
+            />
+          </Form.Item>
+          <Form.Item
+            name="knowledge_base_ids"
+            label={t("organizations.authorizedKnowledgeBases")}
+            extra={t("organizations.capabilityResourceHint")}
+          >
+            <Select
+              mode="multiple"
+              options={authorizedWorkerResources.knowledge_bases.map(
+                (resource) => ({ value: resource.id, label: resource.name }),
+              )}
+            />
+          </Form.Item>
+          <Form.Item
+            name="risk_notes"
+            label={t("organizations.capabilityRiskNotes")}
+          >
+            <Input.TextArea rows={2} maxLength={4000} />
+          </Form.Item>
         </Form>
       </Modal>
       <Modal

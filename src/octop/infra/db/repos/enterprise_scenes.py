@@ -18,6 +18,12 @@ def _decode(row: Any) -> dict[str, Any]:
         except (TypeError, ValueError):
             value = []
         item["mcp_servers"] = [str(name) for name in value] if isinstance(value, list) else []
+    if "plan_snapshot_json" in item:
+        raw_snapshot = item.pop("plan_snapshot_json")
+        try:
+            item["plan_snapshot"] = json.loads(raw_snapshot) if raw_snapshot else None
+        except (TypeError, ValueError):
+            item["plan_snapshot"] = None
     return item
 
 
@@ -144,14 +150,22 @@ class EnterpriseSceneRepo:
         return self.get(scene_id)
 
     def create_run(
-        self, *, run_id: str, scene: dict[str, Any], requested_by: int
+        self,
+        *,
+        run_id: str,
+        scene: dict[str, Any],
+        requested_by: int,
+        plan_id: str | None = None,
+        plan_snapshot: dict[str, Any] | None = None,
+        prompt_snapshot: str | None = None,
     ) -> dict[str, Any]:
         now = now_ts()
         with self._db.transaction() as conn:
             conn.execute(
                 "INSERT INTO enterprise_scene_runs(run_id, scene_id, organization_id, position_id, "
-                "agent_id, scene_name, scene_version, prompt_snapshot, mcp_servers_json, requested_by, status, "
-                "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_approval', ?, ?)",
+                "agent_id, scene_name, scene_version, prompt_snapshot, mcp_servers_json, requested_by, "
+                "plan_id, plan_snapshot_json, status, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_approval', ?, ?)",
                 (
                     run_id,
                     scene["scene_id"],
@@ -160,9 +174,11 @@ class EnterpriseSceneRepo:
                     scene["agent_id"],
                     scene["name"],
                     scene["version"],
-                    scene["prompt"],
+                    prompt_snapshot if prompt_snapshot is not None else scene["prompt"],
                     json.dumps(scene["mcp_servers"], ensure_ascii=False),
                     requested_by,
+                    plan_id,
+                    json.dumps(plan_snapshot, ensure_ascii=False) if plan_snapshot else None,
                     now,
                     now,
                 ),

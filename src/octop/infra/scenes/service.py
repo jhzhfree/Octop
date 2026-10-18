@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from octop.infra.db.services import RepoBundle
@@ -51,6 +52,18 @@ class EnterpriseSceneService:
             and item["subject_type"] == "agent"
             and item["subject_id"] == agent_id
             for item in self.repos.organization_repo.list_assignments(organization_id)
+        )
+
+    @staticmethod
+    def _configured_ids(raw: str | None) -> set[str]:
+        try:
+            values = json.loads(raw or "[]")
+        except (TypeError, json.JSONDecodeError):
+            return set()
+        return (
+            {str(value).strip() for value in values if str(value).strip()}
+            if isinstance(values, list)
+            else set()
         )
 
     @staticmethod
@@ -129,7 +142,9 @@ class EnterpriseSceneService:
         self._scene(organization_id, scene_id)
         return self.repos.enterprise_scene_repo.list_versions(scene_id)
 
-    def request_run(self, organization_id: str, scene_id: str) -> dict[str, Any]:
+    def request_run(
+        self, organization_id: str, scene_id: str, *, plan_id: str | None = None
+    ) -> dict[str, Any]:
         self._member_role(organization_id)
         scene = self._scene(organization_id, scene_id)
         if not scene["enabled"]:
@@ -143,8 +158,114 @@ class EnterpriseSceneService:
             raise SceneError(
                 "SCENE_AGENT_NOT_ASSIGNED", "Agent is no longer appointed to this position", 409
             )
+        plan_snapshot = None
+        prompt_snapshot = None
+        if plan_id is not None:
+            plan = self.repos.digital_worker_repo.get_plan(plan_id)
+            if plan is None:
+                raise SceneError("SCENE_PLAN_NOT_FOUND", "virtual worker plan not found", 404)
+            goal = self.repos.digital_worker_repo.get_goal(str(plan["goal_id"]))
+            worker = (
+                self.repos.digital_worker_repo.get_worker(str(goal["worker_id"]))
+                if goal is not None
+                else None
+            )
+            if goal is None or worker is None or worker["organization_id"] != organization_id:
+                raise SceneError("SCENE_PLAN_NOT_FOUND", "virtual worker plan not found", 404)
+            if (
+                worker["position_id"] != scene["position_id"]
+                or worker["agent_id"] != scene["agent_id"]
+            ):
+                raise SceneError(
+                    "SCENE_PLAN_SCENE_MISMATCH",
+                    "plan worker must match the scene organization, position, and Agent",
+                    409,
+                )
+            if (
+                plan["status"] != "ready"
+                or goal["status"] != "active"
+                or worker["status"] != "active"
+            ):
+                raise SceneError(
+                    "SCENE_PLAN_NOT_READY",
+                    "worker, goal, and plan must be active and ready before execution request",
+                    409,
+                )
+            worker_capabilities = worker.get("capabilities") or {}
+            approved_skill_ids = set(worker_capabilities.get("skill_package_ids", []))
+            approved_knowledge_ids = set(worker_capabilities.get("knowledge_base_ids", []))
+            enabled_skill_ids = self._configured_ids(agent.skill_package_ids)
+            enabled_knowledge_ids = self._configured_ids(agent.knowledge_base_ids)
+            effective_capabilities = {
+                "skills": worker_capabilities.get("skills", []),
+                "knowledge": worker_capabilities.get("knowledge", []),
+                "operating_guidance": worker_capabilities.get("operating_guidance", []),
+                "skill_package_ids": sorted(approved_skill_ids & enabled_skill_ids),
+                "knowledge_base_ids": sorted(approved_knowledge_ids & enabled_knowledge_ids),
+            }
+            plan_snapshot = {
+                "worker": {
+                    "worker_id": worker["worker_id"],
+                    "name": worker["name"],
+                    "responsibilities": worker["responsibilities"],
+                    "capability_version": worker["capability_version"],
+                },
+                "capabilities": effective_capabilities,
+                "goal": {
+                    "goal_id": goal["goal_id"],
+                    "title": goal["title"],
+                    "description": goal["description"],
+                    "success_criteria": goal["success_criteria"],
+                    "period_start": goal["period_start"],
+                    "period_end": goal["period_end"],
+                },
+                "plan": {
+                    "plan_id": plan["plan_id"],
+                    "title": plan["title"],
+                    "approach": plan["approach"],
+                    "steps": plan["steps"],
+                    "version": plan["version"],
+                },
+            }
+            step_text = "\n".join(
+                f"{index}. {step['action']}\n   Expected output: {step['expected_output']}"
+                for index, step in enumerate(plan["steps"], start=1)
+            )
+            capability_text = "\n".join(
+                (
+                    f"Skills: {', '.join(effective_capabilities['skills']) or 'none'}",
+                    f"Knowledge topics: {', '.join(effective_capabilities['knowledge']) or 'none'}",
+                    "Operating guidance: "
+                    f"{'; '.join(effective_capabilities['operating_guidance']) or 'none'}",
+                    "Pre-authorized skill package IDs: "
+                    f"{', '.join(effective_capabilities['skill_package_ids']) or 'none'}",
+                    "Pre-authorized knowledge base IDs: "
+                    f"{', '.join(effective_capabilities['knowledge_base_ids']) or 'none'}",
+                )
+            )
+            prompt_snapshot = (
+                f"{scene['prompt'].rstrip()}\n\n"
+                "Virtual worker plan submitted for human approval:\n"
+                f"Worker: {worker['name']}\n"
+                f"Responsibilities: {worker['responsibilities']}\n"
+                f"Reviewed capability profile version: {worker['capability_version']}\n"
+                f"Reviewed capabilities:\n{capability_text}\n"
+                f"Goal: {goal['title']}\n"
+                f"Goal success criteria: {goal['success_criteria']}\n"
+                f"Plan: {plan['title']}\n"
+                f"Approach: {plan['approach']}\n"
+                f"Steps:\n{step_text}\n\n"
+                "Return a concise result mapped to the goal success criteria and expected outputs. "
+                "Use only the Agent, skill packages, knowledge bases, and connectors already "
+                "authorized for this scene. Capability references do not expand access."
+            )
         run = self.repos.enterprise_scene_repo.create_run(
-            run_id=new_ulid(), scene=scene, requested_by=self.actor.id
+            run_id=new_ulid(),
+            scene=scene,
+            requested_by=self.actor.id,
+            plan_id=plan_id,
+            plan_snapshot=plan_snapshot,
+            prompt_snapshot=prompt_snapshot,
         )
         self.repos.audit_repo.write(
             actor=str(self.actor.id), action="scene.run_requested", target=run["run_id"]
@@ -229,6 +350,35 @@ class EnterpriseSceneService:
             raise SceneError(
                 "SCENE_AGENT_NOT_ASSIGNED", "Agent appointment changed before approval", 409
             )
+
+        plan_snapshot = run.get("plan_snapshot") or {}
+        capabilities = plan_snapshot.get("capabilities") or {}
+        if capabilities:
+            configured_skills = self._configured_ids(agent.skill_package_ids)
+            configured_knowledge = self._configured_ids(agent.knowledge_base_ids)
+            skill_refs = set(capabilities.get("skill_package_ids", []))
+            knowledge_refs = set(capabilities.get("knowledge_base_ids", []))
+            if (
+                not skill_refs.issubset(configured_skills)
+                or not knowledge_refs.issubset(configured_knowledge)
+                or any(self.repos.skill_package_repo.get(item) is None for item in skill_refs)
+                or any(self.repos.knowledge_repo.get_base(item) is None for item in knowledge_refs)
+            ):
+                self.repos.enterprise_scene_repo.mark_failed(
+                    run_id,
+                    summary="Virtual worker capability resource authorization changed",
+                )
+                self.repos.audit_repo.write(
+                    actor=str(self.actor.id),
+                    action="scene.run_failed",
+                    target=run_id,
+                    payload="capability resource authorization changed",
+                )
+                raise SceneError(
+                    "SCENE_CAPABILITY_RESOURCE_CHANGED",
+                    "Agent skill or knowledge authorization changed; submit a new run request",
+                    409,
+                )
 
         from octop.infra.cron.manager import CronCreateSpec  # noqa: PLC0415
 

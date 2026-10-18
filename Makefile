@@ -1,7 +1,7 @@
 # Makefile for Octop
 # Usage:
 #   make              - Show this help
-#   make all          - format (BE+FE) + backend lint + typecheck + test (ship bar)
+#   make all          - full-stack lint/typecheck + backend test (read-only ship bar)
 #   make build        - Build frontend + Python wheel
 #   make publish      - Build + upload to PyPI
 #
@@ -59,7 +59,7 @@ help:
 	@echo "  run-online       Start octop run from .venv-online"
 	@echo ""
 	@echo "Quality targets (ship bar):"
-	@echo "  all              format-all + lint + typecheck + test (backend lint/typecheck/test)"
+	@echo "  all              lint-all + typecheck-all + test (read-only full-stack ship gate)"
 	@echo "  precommit        fast change-aware gate for the git pre-commit hook (testmon-scoped tests)"
 	@echo "  lint             Ruff check + format check (src, tests)"
 	@echo "  format           Ruff auto-fix + format (src, tests)"
@@ -74,12 +74,12 @@ help:
 	@echo ""
 	@echo "Quality targets (full stack):"
 	@echo "  lint-all         lint + lint-frontend"
-	@echo "  format-all       format + format-frontend (also first step of make all)"
+	@echo "  format-all       format + format-frontend"
 	@echo "  typecheck-all    typecheck + typecheck-frontend"
-	@echo "  check-all        lint-all + typecheck-all + test"
+	@echo "  check-all        alias for all"
 	@echo ""
 	@echo "Utility targets:"
-	@echo "  install-hooks    Point git to .githooks (pre-commit: make all + dashboard build)"
+	@echo "  install-hooks    Point git to .githooks (pre-commit: scoped checks + dashboard build)"
 	@echo "  install          Install Python dev dependencies (alias: install-dev)"
 	@echo "  install-dev      uv sync / pip install -e \".[dev]\""
 	@echo "  install-tools    Install build + twine for publishing"
@@ -198,7 +198,7 @@ run-online:
 # ─── Quality (backend) ───────────────────────────────────────────────────────
 
 .PHONY: all
-all: format-all lint typecheck test
+all: lint-all typecheck-all test
 
 .PHONY: lint
 lint:
@@ -287,7 +287,7 @@ format-all: format format-frontend
 typecheck-all: typecheck typecheck-frontend
 
 .PHONY: check-all
-check-all: lint-all typecheck-all test
+check-all: all
 
 # ─── Utilities ───────────────────────────────────────────────────────────────
 

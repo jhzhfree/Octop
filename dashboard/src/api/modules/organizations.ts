@@ -109,6 +109,37 @@ export interface EnterpriseSceneRun {
   decision_note: string;
   cron_id: string | null;
   error_summary: string | null;
+  plan_id?: string | null;
+  plan_snapshot?: {
+    worker: {
+      worker_id: string;
+      name: string;
+      responsibilities: string;
+      capability_version: number;
+    };
+    capabilities?: {
+      skills: string[];
+      knowledge: string[];
+      operating_guidance: string[];
+      skill_package_ids: string[];
+      knowledge_base_ids: string[];
+    };
+    goal: {
+      goal_id: string;
+      title: string;
+      description: string;
+      success_criteria: string;
+      period_start: string | null;
+      period_end: string | null;
+    };
+    plan: {
+      plan_id: string;
+      title: string;
+      approach: string;
+      steps: DigitalWorkerPlanStep[];
+      version: number;
+    };
+  } | null;
   created_at: number;
   updated_at: number;
 }
@@ -123,6 +154,98 @@ export interface EnterpriseSceneWriteBody {
   agent_id: string;
   prompt: string;
   mcp_servers: string[];
+}
+export interface DigitalWorker {
+  worker_id: string;
+  organization_id: string;
+  position_id: string;
+  agent_id: string;
+  owner_user_id: number;
+  position_title: string;
+  agent_name: string;
+  name: string;
+  responsibilities: string;
+  capabilities: {
+    skills: string[];
+    knowledge: string[];
+    operating_guidance: string[];
+    skill_package_ids: string[];
+    knowledge_base_ids: string[];
+  };
+  capability_version: number;
+  status: "draft" | "active" | "paused" | "archived";
+  version: number;
+  created_at: number;
+  updated_at: number;
+}
+export interface DigitalWorkerGoal {
+  goal_id: string;
+  worker_id: string;
+  title: string;
+  description: string;
+  success_criteria: string;
+  period_start: string | null;
+  period_end: string | null;
+  status: "draft" | "active" | "completed" | "cancelled";
+  created_by: number;
+  created_at: number;
+  updated_at: number;
+}
+export interface DigitalWorkerPlanStep {
+  action: string;
+  expected_output: string;
+}
+export interface DigitalWorkerPlan {
+  plan_id: string;
+  goal_id: string;
+  title: string;
+  approach: string;
+  steps: DigitalWorkerPlanStep[];
+  status: "draft" | "ready" | "cancelled";
+  version: number;
+  created_by: number;
+  created_at: number;
+  updated_at: number;
+}
+export interface DigitalWorkerCapabilityResource {
+  id: string;
+  name: string;
+}
+export interface DigitalWorkerAuthorizedResources {
+  skills: DigitalWorkerCapabilityResource[];
+  knowledge_bases: DigitalWorkerCapabilityResource[];
+}
+export interface DigitalWorkerCapabilityChanges {
+  skills: string[];
+  knowledge: string[];
+  operating_guidance: string[];
+  skill_package_ids: string[];
+  knowledge_base_ids: string[];
+}
+export interface DigitalWorkerCapabilityProposal {
+  proposal_id: string;
+  worker_id: string;
+  source_run_id: string;
+  source_summary: string;
+  observed_gaps: string;
+  proposed_changes: DigitalWorkerCapabilityChanges;
+  expected_benefit: string;
+  risk_notes: string;
+  base_capability_version: number;
+  status: "submitted" | "published" | "rejected";
+  created_by: number;
+  reviewed_by: number | null;
+  review_note: string;
+  created_at: number;
+  updated_at: number;
+}
+export interface DigitalWorkerCapabilityProposalCreateBody {
+  source_run_id: string;
+  source_summary: string;
+  observed_gaps: string;
+  proposed_changes: DigitalWorkerCapabilityChanges;
+  expected_benefit: string;
+  risk_notes: string;
 }
 
 export const organizationsApi = {
@@ -242,6 +365,176 @@ export const organizationsApi = {
         encodeURIComponent(assignmentId),
       { method: "DELETE" },
     ),
+  digitalWorkers: (id: string) =>
+    request<DigitalWorker[]>(
+      "/organizations/" + encodeURIComponent(id) + "/digital-workers",
+    ),
+  createDigitalWorker: (
+    id: string,
+    body: Pick<DigitalWorker, "position_id" | "agent_id" | "name"> & {
+      responsibilities?: string;
+    },
+  ) =>
+    request<DigitalWorker>(
+      "/organizations/" + encodeURIComponent(id) + "/digital-workers",
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  updateDigitalWorker: (
+    id: string,
+    workerId: string,
+    expected_version: number,
+    body: Partial<Pick<DigitalWorker, "name" | "responsibilities" | "status">>,
+  ) =>
+    request<DigitalWorker>(
+      "/organizations/" +
+        encodeURIComponent(id) +
+        "/digital-workers/" +
+        encodeURIComponent(workerId),
+      { method: "PATCH", body: JSON.stringify({ ...body, expected_version }) },
+    ),
+  digitalWorkerGoals: (id: string, workerId: string) =>
+    request<DigitalWorkerGoal[]>(
+      "/organizations/" +
+        encodeURIComponent(id) +
+        "/digital-workers/" +
+        encodeURIComponent(workerId) +
+        "/goals",
+    ),
+  createDigitalWorkerGoal: (
+    id: string,
+    workerId: string,
+    body: Pick<DigitalWorkerGoal, "title" | "success_criteria"> & {
+      description?: string;
+      period_start?: string;
+      period_end?: string;
+    },
+  ) =>
+    request<DigitalWorkerGoal>(
+      "/organizations/" +
+        encodeURIComponent(id) +
+        "/digital-workers/" +
+        encodeURIComponent(workerId) +
+        "/goals",
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  updateDigitalWorkerGoal: (
+    id: string,
+    workerId: string,
+    goalId: string,
+    body: Partial<
+      Pick<
+        DigitalWorkerGoal,
+        | "title"
+        | "description"
+        | "success_criteria"
+        | "period_start"
+        | "period_end"
+        | "status"
+      >
+    >,
+  ) =>
+    request<DigitalWorkerGoal>(
+      "/organizations/" +
+        encodeURIComponent(id) +
+        "/digital-workers/" +
+        encodeURIComponent(workerId) +
+        "/goals/" +
+        encodeURIComponent(goalId),
+      { method: "PATCH", body: JSON.stringify(body) },
+    ),
+  digitalWorkerPlans: (id: string, workerId: string, goalId: string) =>
+    request<DigitalWorkerPlan[]>(
+      "/organizations/" +
+        encodeURIComponent(id) +
+        "/digital-workers/" +
+        encodeURIComponent(workerId) +
+        "/goals/" +
+        encodeURIComponent(goalId) +
+        "/plans",
+    ),
+  createDigitalWorkerPlan: (
+    id: string,
+    workerId: string,
+    goalId: string,
+    body: Pick<DigitalWorkerPlan, "title" | "approach" | "steps">,
+  ) =>
+    request<DigitalWorkerPlan>(
+      "/organizations/" +
+        encodeURIComponent(id) +
+        "/digital-workers/" +
+        encodeURIComponent(workerId) +
+        "/goals/" +
+        encodeURIComponent(goalId) +
+        "/plans",
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  updateDigitalWorkerPlan: (
+    id: string,
+    workerId: string,
+    goalId: string,
+    planId: string,
+    expected_version: number,
+    body: Partial<
+      Pick<DigitalWorkerPlan, "title" | "approach" | "steps" | "status">
+    >,
+  ) =>
+    request<DigitalWorkerPlan>(
+      "/organizations/" +
+        encodeURIComponent(id) +
+        "/digital-workers/" +
+        encodeURIComponent(workerId) +
+        "/goals/" +
+        encodeURIComponent(goalId) +
+        "/plans/" +
+        encodeURIComponent(planId),
+      { method: "PATCH", body: JSON.stringify({ ...body, expected_version }) },
+    ),
+  digitalWorkerAuthorizedResources: (id: string, workerId: string) =>
+    request<DigitalWorkerAuthorizedResources>(
+      "/organizations/" +
+        encodeURIComponent(id) +
+        "/digital-workers/" +
+        encodeURIComponent(workerId) +
+        "/authorized-resources",
+    ),
+  digitalWorkerCapabilityProposals: (id: string, workerId: string) =>
+    request<DigitalWorkerCapabilityProposal[]>(
+      "/organizations/" +
+        encodeURIComponent(id) +
+        "/digital-workers/" +
+        encodeURIComponent(workerId) +
+        "/capability-proposals",
+    ),
+  createDigitalWorkerCapabilityProposal: (
+    id: string,
+    workerId: string,
+    body: DigitalWorkerCapabilityProposalCreateBody,
+  ) =>
+    request<DigitalWorkerCapabilityProposal>(
+      "/organizations/" +
+        encodeURIComponent(id) +
+        "/digital-workers/" +
+        encodeURIComponent(workerId) +
+        "/capability-proposals",
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  reviewDigitalWorkerCapabilityProposal: (
+    id: string,
+    workerId: string,
+    proposalId: string,
+    approve: boolean,
+    review_note: string,
+  ) =>
+    request<DigitalWorkerCapabilityProposal>(
+      "/organizations/" +
+        encodeURIComponent(id) +
+        "/digital-workers/" +
+        encodeURIComponent(workerId) +
+        "/capability-proposals/" +
+        encodeURIComponent(proposalId) +
+        "/review",
+      { method: "POST", body: JSON.stringify({ approve, review_note }) },
+    ),
   scenes: (id: string) =>
     request<EnterpriseScene[]>(
       "/organizations/" + encodeURIComponent(id) + "/scenes",
@@ -280,16 +573,16 @@ export const organizationsApi = {
         encodeURIComponent(sceneId) +
         "/versions",
     ),
-  requestSceneRun: (id: string, sceneId: string) =>
+  requestSceneRun: (id: string, sceneId: string, planId?: string) =>
     request<EnterpriseSceneRun>(
       "/organizations/" +
         encodeURIComponent(id) +
         "/scenes/" +
         encodeURIComponent(sceneId) +
         "/runs",
-      {
-        method: "POST",
-      },
+      planId
+        ? { method: "POST", body: JSON.stringify({ plan_id: planId }) }
+        : { method: "POST" },
     ),
   sceneRuns: (id: string) =>
     request<EnterpriseSceneRun[]>(
