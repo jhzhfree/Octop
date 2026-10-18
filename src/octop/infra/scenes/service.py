@@ -277,7 +277,7 @@ class EnterpriseSceneService:
             await manager.run_now(cron_id)
         except Exception:
             self.repos.enterprise_scene_repo.mark_failed(
-                run_id, summary="Approval execution could not be queued"
+                run_id, summary="Approval execution could not be queued", cron_id=cron_id
             )
             if manager.get(cron_id) is not None:
                 await manager.delete(cron_id)

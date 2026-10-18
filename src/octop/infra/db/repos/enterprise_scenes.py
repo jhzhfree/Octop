@@ -206,13 +206,21 @@ class EnterpriseSceneRepo:
             )
         return int(cur.rowcount or 0) == 1
 
-    def mark_failed(self, run_id: str, *, summary: str) -> None:
+    def mark_failed(self, run_id: str, *, summary: str, cron_id: str | None = None) -> None:
         with self._db.transaction() as conn:
-            conn.execute(
-                "UPDATE enterprise_scene_runs SET status = 'failed', error_summary = ?, "
-                "updated_at = ? WHERE run_id = ? AND status IN ('awaiting_approval','queued')",
-                (summary, now_ts(), run_id),
-            )
+            if cron_id is None:
+                conn.execute(
+                    "UPDATE enterprise_scene_runs SET status = 'failed', error_summary = ?, "
+                    "updated_at = ? WHERE run_id = ? AND status = 'awaiting_approval'",
+                    (summary, now_ts(), run_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE enterprise_scene_runs SET status = 'failed', error_summary = ?, "
+                    "updated_at = ? WHERE run_id = ? AND (status = 'awaiting_approval' "
+                    "OR (status = 'queued' AND cron_id = ?))",
+                    (summary, now_ts(), run_id, cron_id),
+                )
 
     def sync_cron_status(self, run_id: str, *, status: str) -> None:
         with self._db.transaction() as conn:

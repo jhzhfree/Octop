@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from octop.infra.gateway.threads import ThreadRegistry
 from tests.support.auth import TEST_PASSWORD, bearer, create_agent, login
 
@@ -15,6 +17,13 @@ async def test_scene_run_is_snapshotted_and_requires_another_org_manager(env):
     )
     assert manager_user.status_code == 201, manager_user.text
     manager_id = manager_user.json()["id"]
+    second_manager_user = await client.post(
+        "/api/users",
+        headers=owner_auth,
+        json={"username": "scene_manager_two", "password": TEST_PASSWORD, "role": "user"},
+    )
+    assert second_manager_user.status_code == 201, second_manager_user.text
+    second_manager_id = second_manager_user.json()["id"]
 
     organization = await client.post("/api/organizations", headers=owner_auth, json={"name": "Ops"})
     org_id = organization.json()["organization_id"]
@@ -24,7 +33,16 @@ async def test_scene_run_is_snapshotted_and_requires_another_org_manager(env):
         json={"user_id": manager_id, "role": "manager"},
     )
     assert added.status_code == 201, added.text
+    second_manager_added = await client.post(
+        f"/api/organizations/{org_id}/members",
+        headers=owner_auth,
+        json={"user_id": second_manager_id, "role": "manager"},
+    )
+    assert second_manager_added.status_code == 201, second_manager_added.text
     manager_auth = bearer(await login(client, username="scene_manager", password=TEST_PASSWORD))
+    second_manager_auth = bearer(
+        await login(client, username="scene_manager_two", password=TEST_PASSWORD)
+    )
 
     department = await client.post(
         f"/api/organizations/{org_id}/departments",
@@ -97,27 +115,52 @@ async def test_scene_run_is_snapshotted_and_requires_another_org_manager(env):
     assert stale_update.status_code == 409
 
     manager = server.app_runtime.cron_manager
+    old_create = manager.create
     old_run_now = manager.run_now
+    create_count = 0
+    both_creates_started = asyncio.Event()
+
+    async def synchronized_create(spec):
+        nonlocal create_count
+        create_count += 1
+        if create_count == 2:
+            both_creates_started.set()
+        await asyncio.wait_for(both_creates_started.wait(), timeout=5)
+        return await old_create(spec)
 
     async def hold_run(cron_id: str, *, wait: bool = False) -> None:
         assert wait is False
 
+    manager.create = synchronized_create
     manager.run_now = hold_run
     try:
-        approved = await client.post(
-            f"/api/organizations/{org_id}/scene-runs/{run_id}/approve",
-            headers=manager_auth,
-            json={"note": "已检查任务范围"},
+        approvals = await asyncio.gather(
+            client.post(
+                f"/api/organizations/{org_id}/scene-runs/{run_id}/approve",
+                headers=manager_auth,
+                json={"note": "经理一已检查任务范围"},
+            ),
+            client.post(
+                f"/api/organizations/{org_id}/scene-runs/{run_id}/approve",
+                headers=second_manager_auth,
+                json={"note": "经理二已检查任务范围"},
+            ),
         )
     finally:
+        manager.create = old_create
         manager.run_now = old_run_now
 
+    successful_approvals = [response for response in approvals if response.status_code == 200]
+    rejected_approvals = [response for response in approvals if response.status_code == 409]
+    assert len(successful_approvals) == 1, [response.text for response in approvals]
+    assert len(rejected_approvals) == 1, [response.text for response in approvals]
+    approved = successful_approvals[0]
     assert approved.status_code == 200, approved.text
     result = approved.json()
     assert result["status"] == "queued"
     assert result["prompt_snapshot"] == "检查服务状态并生成摘要"
     assert result["scene_version"] == 1
-    assert result["approved_by"] == manager_id
+    assert result["approved_by"] in {manager_id, second_manager_id}
     assert result["cron_id"]
     cron = manager.get(result["cron_id"])
     assert cron is not None and cron.enabled == 0 and cron.mcp_servers_exact == 1
