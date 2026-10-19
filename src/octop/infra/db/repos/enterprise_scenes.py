@@ -205,6 +205,41 @@ class EnterpriseSceneRepo:
             rows = conn.execute(sql, params).fetchall()
         return [_decode(row) for row in rows]
 
+    def list_queued_runs(self, *, limit: int = 200) -> list[dict[str, Any]]:
+        """Return bounded pending executions for an independent reconciler.
+
+        This is intentionally cross-organization and must only be called by
+        trusted background maintenance code, never an unscoped user endpoint.
+        """
+        if not 1 <= limit <= 1000:
+            raise ValueError("limit must be between 1 and 1000")
+        with self._db.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM enterprise_scene_runs WHERE status = 'queued' "
+                "ORDER BY updated_at ASC, run_id ASC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [_decode(row) for row in rows]
+
+    def mark_queued_failed(
+        self, run_id: str, *, cron_id: str | None, summary: str
+    ) -> bool:
+        """Only the still-queued matching execution may be failed."""
+        with self._db.transaction() as conn:
+            if cron_id is None:
+                cur = conn.execute(
+                    "UPDATE enterprise_scene_runs SET status = 'failed', error_summary = ?, "
+                    "updated_at = ? WHERE run_id = ? AND status = 'queued' AND cron_id IS NULL",
+                    (summary, now_ts(), run_id),
+                )
+            else:
+                cur = conn.execute(
+                    "UPDATE enterprise_scene_runs SET status = 'failed', error_summary = ?, "
+                    "updated_at = ? WHERE run_id = ? AND status = 'queued' AND cron_id = ?",
+                    (summary, now_ts(), run_id, cron_id),
+                )
+        return int(cur.rowcount or 0) == 1
+
     def decide_run(
         self,
         run_id: str,
