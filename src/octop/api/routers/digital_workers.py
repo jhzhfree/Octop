@@ -91,6 +91,38 @@ class WorkerCapabilityReviewBody(BaseModel):
     review_note: str = Field(default="", max_length=4000)
 
 
+class AkbKnowledgeSourceBinding(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mcp_server: str = Field(min_length=1, max_length=128)
+    knowledge_base_code: str = Field(min_length=1, max_length=128)
+
+
+class AkbKnowledgeSourcesPutBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_capability_version: int = Field(ge=1)
+    sources: list[AkbKnowledgeSourceBinding] = Field(default_factory=list, max_length=20)
+
+
+class ProductKnowledgeSourceBinding(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9][a-z0-9._-]*$")
+    mcp_server: str = Field(min_length=1, max_length=128)
+    knowledge_base_ref: str = Field(min_length=1, max_length=256)
+    selector_argument: str | None = Field(default=None, min_length=1, max_length=128)
+    read_tools: list[str] = Field(min_length=1, max_length=20)
+    forbidden_arguments: list[str] = Field(default_factory=list, max_length=20)
+
+
+class ProductKnowledgeSourcesPutBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_capability_version: int = Field(ge=1)
+    sources: list[ProductKnowledgeSourceBinding] = Field(default_factory=list, max_length=20)
+
+
 def _service(server: Any, user: Any) -> DigitalWorkerService:
     services = getattr(server, "services", None)
     if services is None:
@@ -353,9 +385,59 @@ async def list_authorized_resources(
     worker_id: str,
     user: Any = Depends(current_user),
     server: Any = Depends(get_server),
-) -> dict[str, list[dict[str, str]]]:
+) -> dict[str, list[dict[str, Any]]]:
     return _call(
         lambda: _service(server, user).list_authorized_resources(organization_id, worker_id)
+    )
+
+
+@router.put(
+    "/organizations/{organization_id}/digital-workers/{worker_id}/akb-knowledge-sources",
+    summary="Bind read-only AKB knowledge sources to a virtual worker",
+    description=(
+        "The AKB MCP connection must already be allowed by an enterprise scene for the worker's "
+        "Agent and position. AKB API keys remain in the encrypted connector store."
+    ),
+)
+async def put_akb_knowledge_sources(
+    organization_id: str,
+    worker_id: str,
+    body: AkbKnowledgeSourcesPutBody,
+    user: Any = Depends(current_user),
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    return _call(
+        lambda: _service(server, user).set_akb_knowledge_sources(
+            organization_id,
+            worker_id,
+            expected_capability_version=body.expected_capability_version,
+            sources=[source.model_dump() for source in body.sources],
+        )
+    )
+
+
+@router.put(
+    "/organizations/{organization_id}/digital-workers/{worker_id}/knowledge-sources",
+    summary="Bind product knowledge bases to a virtual worker",
+    description=(
+        "Binds read-scoped knowledge MCP tools from any product already allowed by an enterprise "
+        "scene. Configure the provider, readable tool names, and optional knowledge-base selector."
+    ),
+)
+async def put_product_knowledge_sources(
+    organization_id: str,
+    worker_id: str,
+    body: ProductKnowledgeSourcesPutBody,
+    user: Any = Depends(current_user),
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    return _call(
+        lambda: _service(server, user).set_knowledge_sources(
+            organization_id,
+            worker_id,
+            expected_capability_version=body.expected_capability_version,
+            sources=[source.model_dump() for source in body.sources],
+        )
     )
 
 

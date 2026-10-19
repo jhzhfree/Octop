@@ -255,6 +255,56 @@ class CronDeliveryService:
         )
         if servers:
             request["mcp_servers"] = servers
+        scene_repo = getattr(self._repos, "enterprise_scene_repo", None)
+        scene_run = (
+            scene_repo.get_run_by_cron_id(command.cron_id)
+            if scene_repo is not None
+            else None
+        )
+        if isinstance(scene_run, dict):
+            snapshot = scene_run.get("plan_snapshot")
+            if not isinstance(snapshot, dict):
+                raise RuntimeError("Approved scene execution snapshot is invalid")
+            capabilities = snapshot.get("capabilities")
+            if not isinstance(capabilities, dict):
+                raise RuntimeError("Approved scene capability snapshot is invalid")
+            from octop.infra.knowledge.sources import canonical_knowledge_sources  # noqa: PLC0415
+
+            approved_sources = canonical_knowledge_sources(capabilities)
+            worker = snapshot.get("worker")
+            worker_id = str(worker.get("worker_id") or "") if isinstance(worker, dict) else ""
+            if not worker_id:
+                raise RuntimeError("Approved scene worker snapshot is invalid")
+            worker_repo = getattr(self._repos, "digital_worker_repo", None)
+            worker = (
+                worker_repo.get_worker(worker_id)
+                if worker_id and worker_repo is not None
+                else None
+            )
+            if worker is None:
+                raise RuntimeError("Approved scene worker is unavailable")
+            current_sources = canonical_knowledge_sources(
+                (worker or {}).get("capabilities", {})
+            )
+            if approved_sources != current_sources:
+                raise RuntimeError("Approved knowledge-source bindings changed before execution")
+            if any(
+                not isinstance(source, dict)
+                or not isinstance(source.get("provider"), str)
+                or source.get("access") != "read"
+                or source.get("mcp_server") not in servers
+                or not isinstance(source.get("knowledge_base_ref"), str)
+                or not source["knowledge_base_ref"].strip()
+                or not isinstance(source.get("read_tools"), list)
+                or not source["read_tools"]
+                for source in approved_sources
+            ):
+                raise RuntimeError("Approved knowledge-source bindings are invalid")
+            from octop.infra.agents.middleware.knowledge_source_scope import (
+                CONFIG_KEY,
+            )  # noqa: PLC0415
+
+            request.setdefault("configurable", {})[CONFIG_KEY] = approved_sources
         self._attach_turn_knowledge_config(request, command, session)
         return request
 

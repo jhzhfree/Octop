@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from langchain_core.messages import HumanMessage
 
+from octop.infra.agents.middleware.knowledge_source_scope import CONFIG_KEY
 from octop.infra.cron.delivery import CronDeliveryCommand, CronDeliveryService
 from octop.infra.gateway.process.message_keys import (
     COMPOSER_CTX_KEY,
@@ -105,6 +106,95 @@ async def test_deliver_agent_stamps_composer_on_human_message() -> None:
     agent_manager.prepare_chat_mcp.assert_awaited()
     gateway.push_session_text.assert_awaited_once()
     assert gateway.push_session_text.await_args.args[1] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_scene_cron_passes_approved_product_knowledge_scope_to_tool_runtime() -> None:
+    session = _dashboard_session()
+    sources = [
+        {
+            "provider": "akb",
+            "mcp_server": "akb__7",
+            "knowledge_base_ref": "hr-handbook",
+            "selector_argument": "knowledgeBaseCode",
+            "read_tools": ["knowledge_query", "knowledge_search"],
+            "forbidden_arguments": ["knowledgeBaseId"],
+            "access": "read",
+        }
+    ]
+    scene_run = {
+        "plan_snapshot": {
+            "worker": {"worker_id": "worker-1"},
+            "capabilities": {"knowledge_sources": sources},
+        }
+    }
+    repos = SimpleNamespace(
+        enterprise_scene_repo=SimpleNamespace(
+            get_run_by_cron_id=lambda _cron_id: scene_run
+        ),
+        digital_worker_repo=SimpleNamespace(
+            get_worker=lambda _worker_id: {"capabilities": {"knowledge_sources": sources}}
+        ),
+        user_repo=SimpleNamespace(get=lambda _user_id: None),
+        knowledge_repo=SimpleNamespace(list_visible=lambda _user_id: [], list_all=lambda: []),
+    )
+    manager = MagicMock()
+    manager.get_row.return_value = SimpleNamespace(default_model=None)
+    manager.default_mcp_servers.return_value = []
+    manager.merge_turn_mcp_servers.side_effect = lambda _uid, names, **_kwargs: list(names)
+    manager.prepare_chat_mcp = AsyncMock(return_value=[])
+    manager.default_knowledge_base_ids.return_value = []
+    gateway = MagicMock()
+    service = CronDeliveryService(gateway=gateway, agent_manager=manager, repos=repos)
+
+    request = await service._build_agent_request(
+        _command(mcp_servers=("akb__7",), mcp_servers_exact=True), session
+    )
+
+    assert request["configurable"][CONFIG_KEY] == sources
+
+
+@pytest.mark.asyncio
+async def test_scene_cron_fails_closed_after_akb_binding_revocation() -> None:
+    session = _dashboard_session()
+    approved_sources = [
+        {
+            "provider": "akb",
+            "mcp_server": "akb__7",
+            "knowledge_base_ref": "hr-handbook",
+            "selector_argument": "knowledgeBaseCode",
+            "read_tools": ["knowledge_query", "knowledge_search"],
+            "forbidden_arguments": ["knowledgeBaseId"],
+            "access": "read",
+        }
+    ]
+    repos = SimpleNamespace(
+        enterprise_scene_repo=SimpleNamespace(
+            get_run_by_cron_id=lambda _cron_id: {
+                "plan_snapshot": {
+                    "worker": {"worker_id": "worker-1"},
+                    "capabilities": {"knowledge_sources": approved_sources},
+                }
+            }
+        ),
+        digital_worker_repo=SimpleNamespace(
+            get_worker=lambda _worker_id: {"capabilities": {"knowledge_sources": []}}
+        ),
+        user_repo=SimpleNamespace(get=lambda _user_id: None),
+        knowledge_repo=SimpleNamespace(list_visible=lambda _user_id: [], list_all=lambda: []),
+    )
+    manager = MagicMock()
+    manager.get_row.return_value = SimpleNamespace(default_model=None)
+    manager.default_mcp_servers.return_value = []
+    manager.merge_turn_mcp_servers.side_effect = lambda _uid, names, **_kwargs: list(names)
+    manager.prepare_chat_mcp = AsyncMock(return_value=[])
+    manager.default_knowledge_base_ids.return_value = []
+    service = CronDeliveryService(gateway=MagicMock(), agent_manager=manager, repos=repos)
+
+    with pytest.raises(RuntimeError, match="bindings changed"):
+        await service._build_agent_request(
+            _command(mcp_servers=("akb__7",), mcp_servers_exact=True), session
+        )
 
 
 @pytest.mark.asyncio

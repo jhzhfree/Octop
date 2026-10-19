@@ -192,6 +192,15 @@ class EnterpriseSceneRepo:
             ).fetchone()
         return _decode(row) if row else None
 
+    def get_run_by_cron_id(self, cron_id: str) -> dict[str, Any] | None:
+        """Return the approval snapshot attached to a queued scene cron."""
+        with self._db.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM enterprise_scene_runs WHERE cron_id = ? AND status = 'queued'",
+                (cron_id,),
+            ).fetchone()
+        return _decode(row) if row else None
+
     def list_runs(
         self, organization_id: str, *, scene_id: str | None = None
     ) -> list[dict[str, Any]]:

@@ -192,6 +192,29 @@ class EnterpriseSceneService:
                     409,
                 )
             worker_capabilities = worker.get("capabilities") or {}
+            from octop.infra.knowledge.sources import (  # noqa: PLC0415
+                canonical_knowledge_sources,
+                legacy_akb_sources,
+            )
+
+            knowledge_sources = canonical_knowledge_sources(worker_capabilities)
+            akb_sources = legacy_akb_sources(knowledge_sources)
+            scene_mcp_servers = set(str(name) for name in scene.get("mcp_servers", []))
+            for source in knowledge_sources:
+                if (
+                    not isinstance(source, dict)
+                    or source.get("mcp_server") not in scene_mcp_servers
+                    or source.get("access") != "read"
+                    or not isinstance(source.get("provider"), str)
+                    or not isinstance(source.get("knowledge_base_ref"), str)
+                    or not isinstance(source.get("read_tools"), list)
+                    or not source.get("read_tools")
+                ):
+                    raise SceneError(
+                        "SCENE_KNOWLEDGE_SOURCE_NOT_AUTHORIZED",
+                        "a knowledge source is invalid or not enabled for the scene",
+                        409,
+                    )
             approved_skill_ids = set(worker_capabilities.get("skill_package_ids", []))
             approved_knowledge_ids = set(worker_capabilities.get("knowledge_base_ids", []))
             enabled_skill_ids = self._configured_ids(agent.skill_package_ids)
@@ -202,6 +225,8 @@ class EnterpriseSceneService:
                 "operating_guidance": worker_capabilities.get("operating_guidance", []),
                 "skill_package_ids": sorted(approved_skill_ids & enabled_skill_ids),
                 "knowledge_base_ids": sorted(approved_knowledge_ids & enabled_knowledge_ids),
+                "knowledge_sources": knowledge_sources,
+                "akb_knowledge_sources": akb_sources,
             }
             plan_snapshot = {
                 "worker": {
@@ -241,6 +266,16 @@ class EnterpriseSceneService:
                     f"{', '.join(effective_capabilities['skill_package_ids']) or 'none'}",
                     "Pre-authorized knowledge base IDs: "
                     f"{', '.join(effective_capabilities['knowledge_base_ids']) or 'none'}",
+                    "Pre-authorized product knowledge sources: "
+                    + (
+                        "; ".join(
+                            f"{source.get('provider', '')}: {source.get('mcp_server', '')} / "
+                            f"{source.get('knowledge_base_ref', '')}; "
+                            f"tools={','.join(source.get('read_tools', []))}"
+                            for source in knowledge_sources
+                        )
+                        or "none"
+                    ),
                 )
             )
             prompt_snapshot = (
@@ -257,7 +292,9 @@ class EnterpriseSceneService:
                 f"Steps:\n{step_text}\n\n"
                 "Return a concise result mapped to the goal success criteria and expected outputs. "
                 "Use only the Agent, skill packages, knowledge bases, and connectors already "
-                "authorized for this scene. Capability references do not expand access."
+                "authorized for this scene. For a product knowledge source, use only its listed "
+                "MCP server and approved read tools and knowledge-base reference. "
+                "Capability references do not expand access."
             )
         run = self.repos.enterprise_scene_repo.create_run(
             run_id=new_ulid(),
@@ -414,6 +451,48 @@ class EnterpriseSceneService:
                 raise SceneError(
                     "SCENE_CAPABILITY_RESOURCE_CHANGED",
                     "Agent skill or knowledge authorization changed; submit a new run request",
+                    409,
+                )
+            from octop.infra.knowledge.sources import canonical_knowledge_sources  # noqa: PLC0415
+
+            knowledge_sources = canonical_knowledge_sources(capabilities)
+            worker_id = str((plan_snapshot.get("worker") or {}).get("worker_id") or "")
+            current_worker = self.repos.digital_worker_repo.get_worker(worker_id)
+            current_sources = canonical_knowledge_sources(
+                (current_worker or {}).get("capabilities", {})
+            )
+            current_source_keys = {
+                json.dumps(source, sort_keys=True)
+                for source in current_sources
+                if isinstance(source, dict)
+            } if isinstance(current_sources, list) else set()
+            source_invalid = (
+                not isinstance(knowledge_sources, list)
+                or any(
+                    not isinstance(source, dict)
+                    or source.get("access") != "read"
+                    or not isinstance(source.get("provider"), str)
+                    or not isinstance(source.get("knowledge_base_ref"), str)
+                    or not isinstance(source.get("read_tools"), list)
+                    or not source.get("read_tools")
+                    or source.get("mcp_server") not in set(run.get("mcp_servers", []))
+                    or json.dumps(source, sort_keys=True) not in current_source_keys
+                    for source in knowledge_sources
+                )
+            )
+            if source_invalid:
+                self.repos.enterprise_scene_repo.mark_failed(
+                    run_id, summary="Virtual worker knowledge-source authorization changed"
+                )
+                self.repos.audit_repo.write(
+                    actor=str(self.actor.id),
+                    action="scene.run_failed",
+                    target=run_id,
+                    payload="knowledge-source authorization changed",
+                )
+                raise SceneError(
+                    "SCENE_KNOWLEDGE_SOURCE_AUTHORIZATION_CHANGED",
+                    "knowledge-source authorization changed; submit a new run request",
                     409,
                 )
 

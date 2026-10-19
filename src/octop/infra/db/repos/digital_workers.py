@@ -16,6 +16,55 @@ from octop.infra.db.repos._base import now_ts
 from octop.infra.utils.ulid import new_ulid
 
 
+def _legacy_akb_source(source: dict[str, Any]) -> dict[str, Any] | None:
+    if source.get("provider") != "akb":
+        return None
+    base_ref = str(source.get("knowledge_base_ref") or source.get("knowledge_base_code") or "")
+    return {
+        "provider": "akb",
+        "mcp_server": source.get("mcp_server"),
+        "knowledge_base_code": base_ref,
+        "access": "read",
+    }
+
+
+def _canonical_knowledge_sources(capabilities: dict[str, Any]) -> list[dict[str, Any]]:
+    sources = capabilities.get("knowledge_sources")
+    legacy_sources = capabilities.get("akb_knowledge_sources", [])
+    if not isinstance(sources, list) or (not sources and legacy_sources):
+        sources = legacy_sources
+    normalized: list[dict[str, Any]] = []
+    for source in sources if isinstance(sources, list) else []:
+        if not isinstance(source, dict):
+            continue
+        provider = str(source.get("provider") or "").strip()
+        mcp_server = str(source.get("mcp_server") or "").strip()
+        base_ref = str(source.get("knowledge_base_ref") or source.get("knowledge_base_code") or "").strip()
+        if not provider or not mcp_server or not base_ref:
+            continue
+        read_tools = source.get("read_tools")
+        if not isinstance(read_tools, list):
+            read_tools = ["knowledge_query", "knowledge_search"] if provider == "akb" else []
+        forbidden_arguments = source.get("forbidden_arguments")
+        if not isinstance(forbidden_arguments, list):
+            forbidden_arguments = ["knowledgeBaseId"] if provider == "akb" else []
+        selector_argument = source.get("selector_argument")
+        if selector_argument is None and provider == "akb":
+            selector_argument = "knowledgeBaseCode"
+        normalized.append(
+            {
+                "provider": provider,
+                "mcp_server": mcp_server,
+                "knowledge_base_ref": base_ref,
+                "selector_argument": selector_argument,
+                "read_tools": read_tools,
+                "forbidden_arguments": forbidden_arguments,
+                "access": "read",
+            }
+        )
+    return normalized
+
+
 def _dict(row: Any) -> dict[str, Any]:
     return dict(row)
 
@@ -34,9 +83,18 @@ def _worker_dict(row: Any) -> dict[str, Any]:
         "operating_guidance",
         "skill_package_ids",
         "knowledge_base_ids",
+        "knowledge_sources",
+        "akb_knowledge_sources",
     ):
         if not isinstance(capabilities.get(field), list):
             capabilities[field] = []
+    generic_sources = _canonical_knowledge_sources(capabilities)
+    capabilities["knowledge_sources"] = generic_sources
+    capabilities["akb_knowledge_sources"] = [
+        legacy
+        for source in generic_sources
+        if (legacy := _legacy_akb_source(source)) is not None
+    ]
     result["capabilities"] = capabilities
     return result
 
@@ -132,6 +190,73 @@ class DigitalWorkerRepo:
             if int(cur.rowcount or 0) != 1:
                 return None
         return self.get_worker(worker_id)
+
+    def update_knowledge_sources(
+        self,
+        worker_id: str,
+        sources: list[dict[str, Any]],
+        *,
+        expected_capability_version: int,
+    ) -> dict[str, Any] | None:
+        """Replace product-neutral knowledge-source bindings with optimistic concurrency."""
+        with self._db.transaction() as conn:
+            row = conn.execute(
+                "SELECT capabilities_json FROM digital_workers "
+                "WHERE worker_id = ? AND capability_version = ?",
+                (worker_id, expected_capability_version),
+            ).fetchone()
+            if row is None:
+                return None
+            try:
+                capabilities = json.loads(row["capabilities_json"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                capabilities = {}
+            if not isinstance(capabilities, dict):
+                capabilities = {}
+            capabilities["knowledge_sources"] = sources
+            capabilities["akb_knowledge_sources"] = [
+                legacy
+                for source in sources
+                if (legacy := _legacy_akb_source(source)) is not None
+            ]
+            cur = conn.execute(
+                "UPDATE digital_workers SET capabilities_json = ?, "
+                "capability_version = capability_version + 1, updated_at = ? "
+                "WHERE worker_id = ? AND capability_version = ?",
+                (
+                    json.dumps(capabilities, ensure_ascii=False),
+                    now_ts(),
+                    worker_id,
+                    expected_capability_version,
+                ),
+            )
+            if int(cur.rowcount or 0) != 1:
+                return None
+        return self.get_worker(worker_id)
+
+    def update_akb_knowledge_sources(
+        self,
+        worker_id: str,
+        sources: list[dict[str, str]],
+        *,
+        expected_capability_version: int,
+    ) -> dict[str, Any] | None:
+        """Backward-compatible wrapper for the former AKB-only binding method."""
+        generic = [
+            {
+                "provider": "akb",
+                "mcp_server": source.get("mcp_server", ""),
+                "knowledge_base_ref": source.get("knowledge_base_code", ""),
+                "selector_argument": "knowledgeBaseCode",
+                "read_tools": ["knowledge_query", "knowledge_search"],
+                "forbidden_arguments": ["knowledgeBaseId"],
+                "access": "read",
+            }
+            for source in sources
+        ]
+        return self.update_knowledge_sources(
+            worker_id, generic, expected_capability_version=expected_capability_version
+        )
 
     def list_goals(self, worker_id: str) -> list[dict[str, Any]]:
         with self._db.connect() as conn:

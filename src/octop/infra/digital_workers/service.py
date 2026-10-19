@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from octop.infra.db.services import RepoBundle
@@ -448,7 +449,7 @@ class DigitalWorkerService:
 
     def list_authorized_resources(
         self, organization_id: str, worker_id: str
-    ) -> dict[str, list[dict[str, str]]]:
+    ) -> dict[str, list[dict[str, Any]]]:
         self._require_manager(organization_id)
         worker = self._worker(organization_id, worker_id)
         agent = self.repos.agent_repo.get(str(worker["agent_id"]))
@@ -467,7 +468,200 @@ class DigitalWorkerService:
             base = self.repos.knowledge_repo.get_base(kb_id)
             if base is not None:
                 knowledge_bases.append({"id": base.id, "name": base.name})
-        return {"skills": skills, "knowledge_bases": knowledge_bases}
+        return {
+            "skills": skills,
+            "knowledge_bases": knowledge_bases,
+            "knowledge_sources": list(
+                (worker.get("capabilities") or {}).get("knowledge_sources", [])
+            ),
+            "akb_knowledge_sources": list(
+                (worker.get("capabilities") or {}).get("akb_knowledge_sources", [])
+            ),
+        }
+
+    def set_akb_knowledge_sources(
+        self,
+        organization_id: str,
+        worker_id: str,
+        *,
+        expected_capability_version: int,
+        sources: list[dict[str, str]],
+    ) -> dict[str, Any]:
+        """Backward-compatible AKB-specific binding API."""
+        generic_sources = [
+            {
+                "provider": "akb",
+                "mcp_server": source.get("mcp_server", ""),
+                "knowledge_base_ref": source.get("knowledge_base_code", ""),
+                "selector_argument": "knowledgeBaseCode",
+                "read_tools": ["knowledge_query", "knowledge_search"],
+                "forbidden_arguments": ["knowledgeBaseId"],
+                "access": "read",
+            }
+            for source in sources
+        ]
+        return self.set_knowledge_sources(
+            organization_id,
+            worker_id,
+            expected_capability_version=expected_capability_version,
+            sources=generic_sources,
+            audit_action="digital_worker.akb_knowledge_sources_update",
+            audit_sources=[
+                {
+                    "provider": "akb",
+                    "mcp_server": source.get("mcp_server", ""),
+                    "knowledge_base_code": source.get("knowledge_base_code", ""),
+                    "access": "read",
+                }
+                for source in sources
+            ],
+        )
+
+    def set_knowledge_sources(
+        self,
+        organization_id: str,
+        worker_id: str,
+        *,
+        expected_capability_version: int,
+        sources: list[dict[str, Any]],
+        audit_action: str = "digital_worker.knowledge_sources_update",
+        audit_sources: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Bind product-neutral, read-scoped knowledge MCP sources to a worker."""
+        self._require_manager(organization_id)
+        worker = self._worker(organization_id, worker_id)
+        agent = self.repos.agent_repo.get(str(worker["agent_id"]))
+        if agent is None or (
+            not self.actor.is_admin and agent.user_id != self.actor.id and not agent.is_shared
+        ):
+            raise DigitalWorkerError("ORGANIZATION_FORBIDDEN", "Agent access is not granted", 403)
+        if int(worker["capability_version"]) != expected_capability_version:
+            raise DigitalWorkerError(
+                "DIGITAL_WORKER_CAPABILITY_VERSION_CONFLICT",
+                "worker capabilities changed; reload before updating knowledge sources",
+                409,
+            )
+        scenes = self.repos.enterprise_scene_repo.list_for_org(organization_id)
+        available_mcp = {
+            str(name)
+            for scene in scenes
+            if scene.get("position_id") == worker["position_id"]
+            and scene.get("agent_id") == worker["agent_id"]
+            and bool(scene.get("enabled"))
+            for name in scene.get("mcp_servers", [])
+        }
+        normalized: list[dict[str, Any]] = []
+        seen: set[tuple[str, str, str]] = set()
+        for source in sources:
+            mcp_server = str(source.get("mcp_server") or "").strip()
+            provider = str(source.get("provider") or "").strip().lower()
+            base_ref = str(source.get("knowledge_base_ref") or "").strip()
+            selector_argument = str(source.get("selector_argument") or "").strip() or None
+            raw_tools = source.get("read_tools")
+            raw_forbidden = source.get("forbidden_arguments", [])
+            read_tools = (
+                sorted({str(tool).strip() for tool in raw_tools if str(tool).strip()})
+                if isinstance(raw_tools, list)
+                else []
+            )
+            forbidden_arguments = (
+                sorted({str(arg).strip() for arg in raw_forbidden if str(arg).strip()})
+                if isinstance(raw_forbidden, list)
+                else []
+            )
+            if not mcp_server or len(mcp_server) > 128:
+                raise DigitalWorkerError(
+                    "DIGITAL_WORKER_KNOWLEDGE_SOURCE_INVALID", "mcp_server is required", 422
+                )
+            if (
+                not provider
+                or len(provider) > 64
+                or re.fullmatch(r"[a-z0-9][a-z0-9._-]*", provider) is None
+            ):
+                raise DigitalWorkerError(
+                    "DIGITAL_WORKER_KNOWLEDGE_SOURCE_INVALID",
+                    "provider must be a stable product identifier",
+                    422,
+                )
+            if not base_ref or len(base_ref) > 256:
+                raise DigitalWorkerError(
+                    "DIGITAL_WORKER_KNOWLEDGE_SOURCE_INVALID",
+                    "knowledge_base_ref is required",
+                    422,
+                )
+            if not read_tools or len(read_tools) > 20 or any(
+                len(tool) > 128 or re.fullmatch(r"[A-Za-z0-9_-]+", tool) is None
+                for tool in read_tools
+            ):
+                raise DigitalWorkerError(
+                    "DIGITAL_WORKER_KNOWLEDGE_SOURCE_INVALID",
+                    "at least one valid read tool is required",
+                    422,
+                )
+            if selector_argument and re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", selector_argument) is None:
+                raise DigitalWorkerError(
+                    "DIGITAL_WORKER_KNOWLEDGE_SOURCE_INVALID",
+                    "selector_argument must be a simple MCP argument name",
+                    422,
+                )
+            if any(
+                len(argument) > 128
+                or re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", argument) is None
+                for argument in forbidden_arguments
+            ):
+                raise DigitalWorkerError(
+                    "DIGITAL_WORKER_KNOWLEDGE_SOURCE_INVALID",
+                    "forbidden_arguments must contain simple MCP argument names",
+                    422,
+                )
+            if selector_argument in forbidden_arguments:
+                raise DigitalWorkerError(
+                    "DIGITAL_WORKER_KNOWLEDGE_SOURCE_INVALID",
+                    "selector_argument cannot also be forbidden",
+                    422,
+                )
+            if mcp_server not in available_mcp:
+                raise DigitalWorkerError(
+                    "DIGITAL_WORKER_KNOWLEDGE_SOURCE_NOT_AUTHORIZED",
+                    "knowledge MCP source must be allowed by a scene for this worker's "
+                    "Agent and position",
+                    409,
+                )
+            identity = (provider, mcp_server, base_ref)
+            if identity not in seen:
+                normalized.append(
+                    {
+                        "provider": provider,
+                        "mcp_server": mcp_server,
+                        "knowledge_base_ref": base_ref,
+                        "selector_argument": selector_argument,
+                        "read_tools": read_tools,
+                        "forbidden_arguments": forbidden_arguments,
+                        "access": "read",
+                    }
+                )
+                seen.add(identity)
+        updated = self.repos.digital_worker_repo.update_knowledge_sources(
+            worker_id,
+            normalized,
+            expected_capability_version=expected_capability_version,
+        )
+        if updated is None:
+            raise DigitalWorkerError(
+                "DIGITAL_WORKER_CAPABILITY_VERSION_CONFLICT",
+                "worker capabilities changed; reload before updating knowledge sources",
+                409,
+            )
+        self.repos.audit_repo.write(
+            actor=str(self.actor.id),
+            action=audit_action,
+            target=worker_id,
+            payload=json.dumps(
+                normalized if audit_sources is None else audit_sources,
+                ensure_ascii=False,
+            ),
+        )
+        return updated
 
     def create_capability_proposal(
         self,

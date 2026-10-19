@@ -7,8 +7,15 @@ import json
 from tests.support.auth import TEST_PASSWORD, bearer, create_agent, login
 
 
-async def test_digital_worker_profile_and_stage_goals(env):
+async def test_digital_worker_profile_and_stage_goals(env, monkeypatch):
     client, server, owner_auth = env
+
+    async def allow_test_mcp_servers(_server, *, user_id, names):
+        return names
+
+    monkeypatch.setattr(
+        "octop.api.common.validators.validate_chat_mcp_servers", allow_test_mcp_servers
+    )
     user = await client.post(
         "/api/users",
         headers=owner_auth,
@@ -250,6 +257,69 @@ async def test_digital_worker_profile_and_stage_goals(env):
     )
     assert scene_response.status_code == 201, scene_response.text
     scene_id = scene_response.json()["scene_id"]
+    # The fixture has no live MCP service. Keep this contract test offline and let the
+    # request validator accept the scene's synthetic connector name.
+    scene_with_akb = server.services.enterprise_scene_repo.update(
+        scene_id,
+        {"mcp_servers": ["akb__1"]},
+        expected_version=1,
+        actor_id=1,
+    )
+    assert scene_with_akb is not None
+    unauthorized_source = await client.put(
+        f"/api/organizations/{organization_id}/digital-workers/{worker['worker_id']}"
+        "/akb-knowledge-sources",
+        headers=owner_auth,
+        json={
+            "expected_capability_version": 1,
+            "sources": [
+                {"mcp_server": "akb__other", "knowledge_base_code": "ops-runbook"}
+            ],
+        },
+    )
+    assert unauthorized_source.status_code == 409
+    bound_sources = await client.put(
+        f"/api/organizations/{organization_id}/digital-workers/{worker['worker_id']}"
+        "/akb-knowledge-sources",
+        headers=owner_auth,
+        json={
+            "expected_capability_version": 1,
+            "sources": [
+                {"mcp_server": "akb__1", "knowledge_base_code": "ops-runbook"}
+            ],
+        },
+    )
+    assert bound_sources.status_code == 200, bound_sources.text
+    assert bound_sources.json()["capabilities"]["akb_knowledge_sources"] == [
+        {
+            "provider": "akb",
+            "mcp_server": "akb__1",
+            "knowledge_base_code": "ops-runbook",
+            "access": "read",
+        }
+    ]
+    assert bound_sources.json()["capability_version"] == 2
+    source_audit = server.services.audit_repo.query(
+        action="digital_worker.akb_knowledge_sources_update", limit=1
+    )
+    assert source_audit[0].payload == json.dumps(
+        [
+            {
+                "provider": "akb",
+                "mcp_server": "akb__1",
+                "knowledge_base_code": "ops-runbook",
+                "access": "read",
+            }
+        ],
+        ensure_ascii=False,
+    )
+    stale_source_update = await client.put(
+        f"/api/organizations/{organization_id}/digital-workers/{worker['worker_id']}"
+        "/akb-knowledge-sources",
+        headers=owner_auth,
+        json={"expected_capability_version": 1, "sources": []},
+    )
+    assert stale_source_update.status_code == 409
     other_position = await client.post(
         f"/api/organizations/{organization_id}/positions",
         headers=owner_auth,
@@ -291,6 +361,14 @@ async def test_digital_worker_profile_and_stage_goals(env):
     assert run["plan_id"] == plan["plan_id"]
     assert run["plan_snapshot"]["goal"]["goal_id"] == goal["goal_id"]
     assert run["plan_snapshot"]["plan"]["version"] == 2
+    assert run["plan_snapshot"]["capabilities"]["akb_knowledge_sources"] == [
+        {
+            "provider": "akb",
+            "mcp_server": "akb__1",
+            "knowledge_base_code": "ops-runbook",
+            "access": "read",
+        }
+    ]
     assert "汇总核心服务指标和告警" in run["prompt_snapshot"]
     manager = server.app_runtime.cron_manager
     old_create = manager.create
@@ -320,6 +398,13 @@ async def test_digital_worker_profile_and_stage_goals(env):
     assert approved_run.json()["status"] == "queued"
     assert approved_run.json()["plan_id"] == plan["plan_id"]
     assert started == [approved_run.json()["cron_id"]]
+    linked_run = server.services.enterprise_scene_repo.get_run_by_cron_id(
+        approved_run.json()["cron_id"]
+    )
+    assert linked_run is not None and linked_run["run_id"] == run["run_id"]
+    assert linked_run["plan_snapshot"]["capabilities"]["knowledge_sources"] == run[
+        "plan_snapshot"
+    ]["capabilities"]["knowledge_sources"]
     incomplete_evidence = await client.post(
         f"/api/organizations/{organization_id}/digital-workers/{worker['worker_id']}"
         "/capability-proposals",
@@ -375,7 +460,7 @@ async def test_digital_worker_profile_and_stage_goals(env):
     assert proposal_response.status_code == 201, proposal_response.text
     proposal = proposal_response.json()
     assert proposal["status"] == "submitted"
-    assert proposal["base_capability_version"] == 1
+    assert proposal["base_capability_version"] == 2
     assert proposal["proposed_changes"]["skills"] == ["统一指标时间窗口径"]
     self_review = await client.post(
         f"/api/organizations/{organization_id}/digital-workers/{worker['worker_id']}"
@@ -397,8 +482,29 @@ async def test_digital_worker_profile_and_stage_goals(env):
         f"/api/organizations/{organization_id}/digital-workers", headers=owner_auth
     )
     worker_after_publish = workers_after_publish.json()[0]
-    assert worker_after_publish["capability_version"] == 2
-    assert worker_after_publish["capabilities"] == proposal_payload["proposed_changes"]
+    assert worker_after_publish["capability_version"] == 3
+    assert worker_after_publish["capabilities"] == {
+        **proposal_payload["proposed_changes"],
+        "knowledge_sources": [
+            {
+                "provider": "akb",
+                "mcp_server": "akb__1",
+                "knowledge_base_ref": "ops-runbook",
+                "selector_argument": "knowledgeBaseCode",
+                "read_tools": ["knowledge_query", "knowledge_search"],
+                "forbidden_arguments": ["knowledgeBaseId"],
+                "access": "read",
+            }
+        ],
+        "akb_knowledge_sources": [
+            {
+                "provider": "akb",
+                "mcp_server": "akb__1",
+                "knowledge_base_code": "ops-runbook",
+                "access": "read",
+            }
+        ],
+    }
     resources = await client.get(
         f"/api/organizations/{organization_id}/digital-workers/{worker['worker_id']}"
         "/authorized-resources",
@@ -408,6 +514,25 @@ async def test_digital_worker_profile_and_stage_goals(env):
     assert resources.json() == {
         "skills": [{"id": skill_package.id, "name": skill_package.name}],
         "knowledge_bases": [{"id": knowledge_base.id, "name": knowledge_base.name}],
+        "knowledge_sources": [
+            {
+                "provider": "akb",
+                "mcp_server": "akb__1",
+                "knowledge_base_ref": "ops-runbook",
+                "selector_argument": "knowledgeBaseCode",
+                "read_tools": ["knowledge_query", "knowledge_search"],
+                "forbidden_arguments": ["knowledgeBaseId"],
+                "access": "read",
+            }
+        ],
+        "akb_knowledge_sources": [
+            {
+                "provider": "akb",
+                "mcp_server": "akb__1",
+                "knowledge_base_code": "ops-runbook",
+                "access": "read",
+            }
+        ],
     }
     member_resources = await client.get(
         f"/api/organizations/{organization_id}/digital-workers/{worker['worker_id']}"
@@ -421,16 +546,52 @@ async def test_digital_worker_profile_and_stage_goals(env):
         json={"plan_id": plan["plan_id"]},
     )
     assert next_run.status_code == 201, next_run.text
-    assert next_run.json()["plan_snapshot"]["worker"]["capability_version"] == 2
-    assert next_run.json()["plan_snapshot"]["capabilities"] == proposal_payload["proposed_changes"]
-    assert "capability profile version: 2" in next_run.json()["prompt_snapshot"]
+    assert next_run.json()["plan_snapshot"]["worker"]["capability_version"] == 3
+    assert next_run.json()["plan_snapshot"]["capabilities"] == worker_after_publish[
+        "capabilities"
+    ]
+    assert "capability profile version: 3" in next_run.json()["prompt_snapshot"]
     assert skill_package.id in next_run.json()["plan_snapshot"]["capabilities"]["skill_package_ids"]
     assert (
         knowledge_base.id in next_run.json()["plan_snapshot"]["capabilities"]["knowledge_base_ids"]
     )
+    removed_akb_source = await client.put(
+        f"/api/organizations/{organization_id}/digital-workers/{worker['worker_id']}"
+        "/akb-knowledge-sources",
+        headers=owner_auth,
+        json={"expected_capability_version": 3, "sources": []},
+    )
+    assert removed_akb_source.status_code == 200, removed_akb_source.text
+    revoked_akb_approval = await client.post(
+        f"/api/organizations/{organization_id}/scene-runs/{next_run.json()['run_id']}/approve",
+        headers=manager_auth,
+        json={"note": "AKB source was removed after the run request"},
+    )
+    assert revoked_akb_approval.status_code == 409
+    assert revoked_akb_approval.json()["detail"]["code"] == (
+        "SCENE_KNOWLEDGE_SOURCE_AUTHORIZATION_CHANGED"
+    )
+    restored_akb_source = await client.put(
+        f"/api/organizations/{organization_id}/digital-workers/{worker['worker_id']}"
+        "/akb-knowledge-sources",
+        headers=owner_auth,
+        json={
+            "expected_capability_version": 4,
+            "sources": [
+                {"mcp_server": "akb__1", "knowledge_base_code": "ops-runbook"}
+            ],
+        },
+    )
+    assert restored_akb_source.status_code == 200, restored_akb_source.text
+    resource_run = await client.post(
+        f"/api/organizations/{organization_id}/scenes/{scene_id}/runs",
+        headers=owner_auth,
+        json={"plan_id": plan["plan_id"]},
+    )
+    assert resource_run.status_code == 201, resource_run.text
     server.services.agent_repo.update_config(agent_id, skill_package_ids=json.dumps([]))
     revoked_resource_approval = await client.post(
-        f"/api/organizations/{organization_id}/scene-runs/{next_run.json()['run_id']}/approve",
+        f"/api/organizations/{organization_id}/scene-runs/{resource_run.json()['run_id']}/approve",
         headers=manager_auth,
         json={"note": "此时技能授权已撤销"},
     )
@@ -439,7 +600,7 @@ async def test_digital_worker_profile_and_stage_goals(env):
         "SCENE_CAPABILITY_RESOURCE_CHANGED"
     )
     failed_run = await client.get(
-        f"/api/organizations/{organization_id}/scene-runs/{next_run.json()['run_id']}",
+        f"/api/organizations/{organization_id}/scene-runs/{resource_run.json()['run_id']}",
         headers=owner_auth,
     )
     assert failed_run.status_code == 200
@@ -518,3 +679,41 @@ async def test_digital_worker_profile_and_stage_goals(env):
         "digital_worker.capability_proposal_create",
         "digital_worker.capability_proposal_publish",
     }.issubset(actions)
+
+    scene_with_ragflow = server.services.enterprise_scene_repo.update(
+        scene_id,
+        {"mcp_servers": ["akb__1", "ragflow__1"]},
+        expected_version=2,
+        actor_id=1,
+    )
+    assert scene_with_ragflow is not None
+    product_binding = await client.put(
+        f"/api/organizations/{organization_id}/digital-workers/{worker['worker_id']}"
+        "/knowledge-sources",
+        headers=owner_auth,
+        json={
+            "expected_capability_version": 5,
+            "sources": [
+                {
+                    "provider": "ragflow",
+                    "mcp_server": "ragflow__1",
+                    "knowledge_base_ref": "service-dataset-8",
+                    "selector_argument": "dataset_id",
+                    "read_tools": ["retrieve", "ask"],
+                    "forbidden_arguments": [],
+                }
+            ],
+        },
+    )
+    assert product_binding.status_code == 200, product_binding.text
+    assert product_binding.json()["capabilities"]["knowledge_sources"] == [
+        {
+            "provider": "ragflow",
+            "mcp_server": "ragflow__1",
+            "knowledge_base_ref": "service-dataset-8",
+            "selector_argument": "dataset_id",
+            "read_tools": ["ask", "retrieve"],
+            "forbidden_arguments": [],
+            "access": "read",
+        }
+    ]
