@@ -8,7 +8,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from langchain_core.messages import HumanMessage
 
-from octop.infra.agents.middleware.knowledge_source_scope import CONFIG_KEY
+from octop.infra.agents.middleware.knowledge_source_scope import (
+    CONFIG_KEY,
+    MEMORY_CONFIG_KEY,
+    MEMORY_SERVERS_CONFIG_KEY,
+)
 from octop.infra.cron.delivery import CronDeliveryCommand, CronDeliveryService
 from octop.infra.gateway.process.message_keys import (
     COMPOSER_CTX_KEY,
@@ -129,9 +133,7 @@ async def test_scene_cron_passes_approved_product_knowledge_scope_to_tool_runtim
         }
     }
     repos = SimpleNamespace(
-        enterprise_scene_repo=SimpleNamespace(
-            get_run_by_cron_id=lambda _cron_id: scene_run
-        ),
+        enterprise_scene_repo=SimpleNamespace(get_run_by_cron_id=lambda _cron_id: scene_run),
         digital_worker_repo=SimpleNamespace(
             get_worker=lambda _worker_id: {"capabilities": {"knowledge_sources": sources}}
         ),
@@ -195,6 +197,50 @@ async def test_scene_cron_fails_closed_after_akb_binding_revocation() -> None:
         await service._build_agent_request(
             _command(mcp_servers=("akb__7",), mcp_servers_exact=True), session
         )
+
+
+@pytest.mark.asyncio
+async def test_scene_cron_passes_approved_memory_scope_to_tool_runtime() -> None:
+    session = _dashboard_session()
+    sources = [
+        {
+            "provider": "akb",
+            "mcp_server": "akb__7",
+            "scope_type": "TASK",
+            "scope_code": "weekly-report",
+            "read_tools": ["memory_recall"],
+            "access": "read",
+        }
+    ]
+    scene_run = {
+        "plan_snapshot": {
+            "worker": {"worker_id": "worker-1"},
+            "capabilities": {"memory_sources": sources},
+        }
+    }
+    repos = SimpleNamespace(
+        enterprise_scene_repo=SimpleNamespace(get_run_by_cron_id=lambda _cron_id: scene_run),
+        digital_worker_repo=SimpleNamespace(
+            get_worker=lambda _worker_id: {"capabilities": {"memory_sources": sources}}
+        ),
+        user_repo=SimpleNamespace(get=lambda _user_id: None),
+        knowledge_repo=SimpleNamespace(list_visible=lambda _user_id: [], list_all=lambda: []),
+    )
+    manager = MagicMock()
+    manager.get_row.return_value = SimpleNamespace(default_model=None)
+    manager.default_mcp_servers.return_value = []
+    manager.merge_turn_mcp_servers.side_effect = lambda _uid, names, **_kwargs: list(names)
+    manager.prepare_chat_mcp = AsyncMock(return_value=[])
+    manager.default_knowledge_base_ids.return_value = []
+    service = CronDeliveryService(gateway=MagicMock(), agent_manager=manager, repos=repos)
+
+    request = await service._build_agent_request(
+        _command(mcp_servers=("akb__7",), mcp_servers_exact=True), session
+    )
+
+    assert request["configurable"][MEMORY_CONFIG_KEY] == sources
+    assert request["configurable"][MEMORY_SERVERS_CONFIG_KEY] == ["akb__7"]
+    assert request["configurable"][CONFIG_KEY] == []
 
 
 @pytest.mark.asyncio

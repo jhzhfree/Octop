@@ -188,7 +188,44 @@ class CronDeliveryService:
             outbound,
             title_source=command.prompt,
         )
+        self._create_scene_memory_candidates(command, outbound)
         await self._notify_best_effort(session, command.agent_id, outbound)
+
+    def _create_scene_memory_candidates(self, command: CronDeliveryCommand, outbound: str) -> None:
+        """Stage bounded AKB memory proposals from a completed scene answer."""
+        scene_repo = getattr(self._repos, "enterprise_scene_repo", None)
+        worker_repo = getattr(self._repos, "digital_worker_repo", None)
+        if scene_repo is None or worker_repo is None or not outbound.strip():
+            return
+        run = scene_repo.get_run_by_cron_id(command.cron_id)
+        if not isinstance(run, dict):
+            return
+        snapshot = run.get("plan_snapshot") or {}
+        worker = snapshot.get("worker") or {}
+        capabilities = snapshot.get("capabilities") or {}
+        worker_id = str(worker.get("worker_id") or "")
+        if not worker_id or not isinstance(capabilities, dict):
+            return
+        from octop.infra.knowledge.sources import canonical_memory_sources  # noqa: PLC0415
+
+        content = outbound.strip()[:4000]
+        for source in canonical_memory_sources(capabilities):
+            if source.get("provider") != "akb" or source.get("mcp_server") not in run.get(
+                "mcp_servers", []
+            ):
+                continue
+            worker_repo.create_memory_candidate(
+                candidate_id=new_ulid(),
+                organization_id=str(run["organization_id"]),
+                worker_id=worker_id,
+                source_run_id=str(run["run_id"]),
+                provider="akb",
+                mcp_server=str(source["mcp_server"]),
+                scope_type=str(source["scope_type"]),
+                scope_code=source.get("scope_code"),
+                content=content,
+                created_by=int(run["requested_by"]),
+            )
 
     async def _build_agent_request(
         self,
@@ -257,9 +294,7 @@ class CronDeliveryService:
             request["mcp_servers"] = servers
         scene_repo = getattr(self._repos, "enterprise_scene_repo", None)
         scene_run = (
-            scene_repo.get_run_by_cron_id(command.cron_id)
-            if scene_repo is not None
-            else None
+            scene_repo.get_run_by_cron_id(command.cron_id) if scene_repo is not None else None
         )
         if isinstance(scene_run, dict):
             snapshot = scene_run.get("plan_snapshot")
@@ -268,24 +303,24 @@ class CronDeliveryService:
             capabilities = snapshot.get("capabilities")
             if not isinstance(capabilities, dict):
                 raise RuntimeError("Approved scene capability snapshot is invalid")
-            from octop.infra.knowledge.sources import canonical_knowledge_sources  # noqa: PLC0415
+            from octop.infra.knowledge.sources import (  # noqa: PLC0415
+                canonical_knowledge_sources,
+                canonical_memory_sources,
+            )
 
             approved_sources = canonical_knowledge_sources(capabilities)
+            approved_memory_sources = canonical_memory_sources(capabilities)
             worker = snapshot.get("worker")
             worker_id = str(worker.get("worker_id") or "") if isinstance(worker, dict) else ""
             if not worker_id:
                 raise RuntimeError("Approved scene worker snapshot is invalid")
             worker_repo = getattr(self._repos, "digital_worker_repo", None)
             worker = (
-                worker_repo.get_worker(worker_id)
-                if worker_id and worker_repo is not None
-                else None
+                worker_repo.get_worker(worker_id) if worker_id and worker_repo is not None else None
             )
             if worker is None:
                 raise RuntimeError("Approved scene worker is unavailable")
-            current_sources = canonical_knowledge_sources(
-                (worker or {}).get("capabilities", {})
-            )
+            current_sources = canonical_knowledge_sources((worker or {}).get("capabilities", {}))
             if approved_sources != current_sources:
                 raise RuntimeError("Approved knowledge-source bindings changed before execution")
             if any(
@@ -300,11 +335,31 @@ class CronDeliveryService:
                 for source in approved_sources
             ):
                 raise RuntimeError("Approved knowledge-source bindings are invalid")
+            current_memory_sources = canonical_memory_sources(
+                (worker or {}).get("capabilities", {})
+            )
+            if approved_memory_sources != current_memory_sources:
+                raise RuntimeError("Approved memory-source bindings changed before execution")
+            if any(
+                not isinstance(source, dict)
+                or source.get("access") != "read"
+                or source.get("read_tools") != ["memory_recall"]
+                or source.get("scope_type")
+                not in {"AGENT", "TEAM", "PROJECT", "TASK", "WORKFLOW", "SESSION"}
+                or source.get("mcp_server") not in servers
+                or (source.get("scope_type") != "AGENT" and not source.get("scope_code"))
+                for source in approved_memory_sources
+            ):
+                raise RuntimeError("Approved platform-memory bindings are invalid")
             from octop.infra.agents.middleware.knowledge_source_scope import (
                 CONFIG_KEY,
+                MEMORY_CONFIG_KEY,
+                MEMORY_SERVERS_CONFIG_KEY,
             )  # noqa: PLC0415
 
             request.setdefault("configurable", {})[CONFIG_KEY] = approved_sources
+            request["configurable"][MEMORY_CONFIG_KEY] = approved_memory_sources
+            request["configurable"][MEMORY_SERVERS_CONFIG_KEY] = list(servers)
         self._attach_turn_knowledge_config(request, command, session)
         return request
 

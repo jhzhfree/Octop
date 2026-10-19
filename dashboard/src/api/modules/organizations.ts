@@ -247,6 +247,44 @@ export interface DigitalWorkerCapabilityProposalCreateBody {
   expected_benefit: string;
   risk_notes: string;
 }
+export interface DigitalWorkerMemoryCandidate {
+  candidate_id: string;
+  organization_id: string;
+  worker_id: string;
+  source_run_id: string;
+  provider: string;
+  mcp_server: string;
+  scope_type: string;
+  scope_code: string | null;
+  content: string;
+  status: "pending" | "writing" | "written" | "rejected" | "failed";
+  memory_code: string | null;
+  created_by: number;
+  reviewed_by: number | null;
+  review_note: string;
+  error_summary: string | null;
+  created_at: number;
+  updated_at: number;
+}
+export interface DigitalWorkerKnowledgeDiagnostic {
+  provider: string;
+  mcp_server: string;
+  knowledge_base_ref: string;
+  connector_name?: string;
+  health: string;
+  message: string;
+  credential: {
+    state: "missing" | "expired" | "expires_soon" | "rotation_due" | "current";
+    expires_at: number | null;
+    rotated_at: number | null;
+  };
+}
+export interface DigitalWorkerKnowledgeDiagnostics {
+  worker_id: string;
+  checked_at: number;
+  summary: { total: number; healthy: number; attention_required: number };
+  sources: DigitalWorkerKnowledgeDiagnostic[];
+}
 
 export const organizationsApi = {
   list: () => request<OrganizationRecord[]>("/organizations"),
@@ -534,6 +572,40 @@ export const organizationsApi = {
         encodeURIComponent(proposalId) +
         "/review",
       { method: "POST", body: JSON.stringify({ approve, review_note }) },
+    ),
+  digitalWorkerMemoryCandidates: (id: string, status?: string) =>
+    request<DigitalWorkerMemoryCandidate[]>(
+      "/organizations/" +
+        encodeURIComponent(id) +
+        "/memory-candidates" +
+        (status ? "?status=" + encodeURIComponent(status) : ""),
+    ),
+  reviewDigitalWorkerMemoryCandidate: (
+    id: string,
+    candidateId: string,
+    approve: boolean,
+    review_note: string,
+    content?: string,
+  ) =>
+    request<DigitalWorkerMemoryCandidate>(
+      "/organizations/" +
+        encodeURIComponent(id) +
+        "/memory-candidates/" +
+        encodeURIComponent(candidateId) +
+        "/review",
+      {
+        method: "POST",
+        body: JSON.stringify({ approve, review_note, content }),
+      },
+    ),
+  diagnoseDigitalWorkerKnowledge: (organizationId: string, workerId: string) =>
+    request<DigitalWorkerKnowledgeDiagnostics>(
+      "/organizations/" +
+        encodeURIComponent(organizationId) +
+        "/digital-workers/" +
+        encodeURIComponent(workerId) +
+        "/knowledge-sources/diagnose",
+      { method: "POST" },
     ),
   scenes: (id: string) =>
     request<EnterpriseScene[]>(

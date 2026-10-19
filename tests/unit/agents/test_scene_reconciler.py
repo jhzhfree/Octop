@@ -1,4 +1,5 @@
 """Reconciler behavior without live services."""
+
 from types import SimpleNamespace
 from unittest.mock import Mock
 

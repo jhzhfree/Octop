@@ -599,6 +599,13 @@ class ConnectorService:
                     configs[shared_mcp_server_name(parent.instance_id, name)] = built
         return configs
 
+    def custom_harness_config_for_user(
+        self, user_id: int, server_name: str
+    ) -> dict[str, Any] | None:
+        """Return one authorized custom MCP runtime config without exposing it in APIs."""
+        config = self.custom_harness_configs(user_id).get(server_name)
+        return dict(config) if isinstance(config, dict) else None
+
     async def mcp_configs_for_user(self, user_id: int) -> dict[str, Any]:
         configs: dict[str, Any] = {}
         for inst in self._repo.list_visible(user_id):

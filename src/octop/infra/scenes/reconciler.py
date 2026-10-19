@@ -1,8 +1,9 @@
 """Trusted maintenance pass for scene runs; no user request is required."""
+
 from __future__ import annotations
 
-from typing import Any
 import time
+from typing import Any
 
 
 def reconcile_queued_scene_runs(
@@ -44,8 +45,6 @@ def reconcile_queued_scene_runs(
                 stats["pending"] += 1
             continue
         terminal = "succeeded" if cron.last_status == "ok" else "failed"
-        repos.enterprise_scene_repo.sync_cron_status(
-            run_id, cron_id=str(cron_id), status=terminal
-        )
+        repos.enterprise_scene_repo.sync_cron_status(run_id, cron_id=str(cron_id), status=terminal)
         stats[terminal] += 1
     return stats

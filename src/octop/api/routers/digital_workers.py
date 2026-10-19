@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from datetime import date
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from octop.api.deps import current_user, get_server
+from octop.infra.connectors.catalog import get_catalog_entry
+from octop.infra.connectors.probe import probe_connector
+from octop.infra.connectors.service import ConnectorService
 from octop.infra.digital_workers import DigitalWorkerError, DigitalWorkerService
+from octop.infra.digital_workers.memory import WorkerMemoryService
+from octop.infra.knowledge.diagnostics import credential_rotation_state
 
 router = APIRouter()
 
@@ -123,11 +129,48 @@ class ProductKnowledgeSourcesPutBody(BaseModel):
     sources: list[ProductKnowledgeSourceBinding] = Field(default_factory=list, max_length=20)
 
 
+class PlatformMemorySourceBinding(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9][a-z0-9._-]*$")
+    mcp_server: str = Field(min_length=1, max_length=128)
+    scope_type: Literal["AGENT", "TEAM", "PROJECT", "TASK", "WORKFLOW", "SESSION"] = "AGENT"
+    scope_code: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class PlatformMemorySourcesPutBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_capability_version: int = Field(ge=1)
+    sources: list[PlatformMemorySourceBinding] = Field(default_factory=list, max_length=20)
+
+
+class WorkerMemoryCandidateReviewBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    approve: bool
+    review_note: str = Field(default="", max_length=4000)
+    content: str | None = Field(default=None, min_length=1, max_length=4000)
+
+
 def _service(server: Any, user: Any) -> DigitalWorkerService:
     services = getattr(server, "services", None)
     if services is None:
         raise HTTPException(status_code=503, detail="database is not ready")
     return DigitalWorkerService(services.repos, user)
+
+
+def _memory_service(server: Any, user: Any) -> WorkerMemoryService:
+    services = getattr(server, "services", None)
+    if services is None:
+        raise HTTPException(status_code=503, detail="database is not ready")
+    connector_service = ConnectorService(
+        repo=services.repos.connector_repo,
+        secret_repo=services.secret_repo,
+        settings_repo=services.settings_repo,
+        config=services.config,
+    )
+    return WorkerMemoryService(services.repos, user, connector_service)
 
 
 def _call[T](callback: Callable[[], T]) -> T:
@@ -439,6 +482,190 @@ async def put_product_knowledge_sources(
             sources=[source.model_dump() for source in body.sources],
         )
     )
+
+
+@router.post(
+    "/organizations/{organization_id}/digital-workers/{worker_id}/knowledge-sources/diagnose",
+    summary="Diagnose a worker's approved knowledge connections",
+    description=(
+        "Checks every bound knowledge source against the caller-visible connector, tests its "
+        "upstream connection, and reports credential expiry or rotation reminders."
+    ),
+)
+async def diagnose_product_knowledge_sources(
+    organization_id: str,
+    worker_id: str,
+    user: Any = Depends(current_user),
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    services = getattr(server, "services", None)
+    if services is None:
+        raise HTTPException(status_code=503, detail="database is not ready")
+    worker = _call(lambda: _service(server, user).get_worker(organization_id, worker_id))
+    sources = (worker.get("capabilities") or {}).get("knowledge_sources", [])
+    now = int(time.time())
+    connectors = services.repos.connector_repo.list_visible(user.id)
+    by_server = {row.mcp_server_name: row for row in connectors}
+    connector_service = ConnectorService(
+        repo=services.repos.connector_repo,
+        secret_repo=services.secret_repo,
+        settings_repo=services.settings_repo,
+        config=services.config,
+    )
+    checks: list[dict[str, Any]] = []
+    probe_results: dict[str, dict[str, Any]] = {}
+    for source in sources if isinstance(sources, list) else []:
+        if not isinstance(source, dict):
+            continue
+        server_name = str(source.get("mcp_server") or "")
+        row = by_server.get(server_name)
+        item: dict[str, Any] = {
+            "provider": source.get("provider"),
+            "mcp_server": server_name,
+            "knowledge_base_ref": source.get("knowledge_base_ref"),
+            "health": "unknown",
+            "credential": {"state": "missing", "expires_at": None, "rotated_at": None},
+        }
+        if row is None:
+            item.update(
+                health="connector_unavailable", message="Connector is not visible to this account"
+            )
+            checks.append(item)
+            continue
+        item["connector_name"] = row.display_name
+        item["credential"] = credential_rotation_state(
+            has_credentials=row.has_credentials,
+            expires_at=row.credential_expires_at,
+            rotated_at=row.credential_rotated_at,
+            now=now,
+        )
+        if row.status != "active":
+            item.update(health="disabled", message="Connector is disabled")
+        elif not row.has_credentials:
+            item.update(health="credentials_missing", message="Connector credentials are missing")
+        elif item["credential"]["state"] == "expired":
+            item.update(health="credentials_expired", message="Connector credentials have expired")
+        elif row.instance_id not in probe_results:
+            entry = get_catalog_entry(row.kind)
+            if entry is None:
+                result = {"ok": False}
+            else:
+                credentials = connector_service.decrypt(row.instance_id)
+                try:
+                    result = await probe_connector(
+                        entry,
+                        credentials,
+                        instance_id=row.instance_id,
+                        config=services.config,
+                    )
+                except Exception:
+                    result = {"ok": False}
+            probe_results[row.instance_id] = result
+            item.update(
+                health="healthy" if result.get("ok") else "connection_failed",
+                message=(
+                    "Connection check passed"
+                    if result.get("ok")
+                    else "Connection check failed; review the service URL, credentials, and upstream availability"
+                ),
+            )
+        else:
+            result = probe_results[row.instance_id]
+            item.update(
+                health="healthy" if result.get("ok") else "connection_failed",
+                message="Connection check passed"
+                if result.get("ok")
+                else "Connection check failed",
+            )
+        checks.append(item)
+    return {
+        "worker_id": worker_id,
+        "checked_at": now,
+        "summary": {
+            "total": len(checks),
+            "healthy": sum(item["health"] == "healthy" for item in checks),
+            "attention_required": sum(
+                item["health"] != "healthy"
+                or item["credential"]["state"] in {"expires_soon", "rotation_due"}
+                for item in checks
+            ),
+        },
+        "sources": checks,
+    }
+
+
+@router.put(
+    "/organizations/{organization_id}/digital-workers/{worker_id}/memory-sources",
+    summary="Bind read-only platform memory to a virtual worker",
+    description=(
+        "Binds only memory_recall from a memory MCP connection already authorized by a scene. "
+        "Octop fixes the memory scope for each run; write and forget tools are rejected."
+    ),
+)
+async def put_platform_memory_sources(
+    organization_id: str,
+    worker_id: str,
+    body: PlatformMemorySourcesPutBody,
+    user: Any = Depends(current_user),
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    return _call(
+        lambda: _service(server, user).set_memory_sources(
+            organization_id,
+            worker_id,
+            expected_capability_version=body.expected_capability_version,
+            sources=[source.model_dump() for source in body.sources],
+        )
+    )
+
+
+@router.get(
+    "/organizations/{organization_id}/memory-candidates",
+    summary="List platform-memory candidates pending or completed review",
+)
+async def list_worker_memory_candidates(
+    organization_id: str,
+    worker_id: str | None = None,
+    status: Literal["pending", "writing", "written", "rejected", "failed"] | None = None,
+    limit: int = Query(default=200, ge=1, le=500),
+    user: Any = Depends(current_user),
+    server: Any = Depends(get_server),
+) -> list[dict[str, Any]]:
+    return _call(
+        lambda: _memory_service(server, user).list_candidates(
+            organization_id, worker_id=worker_id, status=status, limit=limit
+        )
+    )
+
+
+@router.post(
+    "/organizations/{organization_id}/memory-candidates/{candidate_id}/review",
+    summary="Approve or reject a platform-memory candidate",
+    description=(
+        "Approval writes the reviewed content to the already-bound AKB memory scope. "
+        "The request uses the candidate owner's encrypted AKB connector and a retry-safe idempotency key."
+    ),
+)
+async def review_worker_memory_candidate(
+    organization_id: str,
+    candidate_id: str,
+    body: WorkerMemoryCandidateReviewBody,
+    user: Any = Depends(current_user),
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    try:
+        return await _memory_service(server, user).review_candidate(
+            organization_id,
+            candidate_id,
+            approve=body.approve,
+            review_note=body.review_note,
+            content=body.content,
+        )
+    except DigitalWorkerError as exc:
+        raise HTTPException(
+            status_code=exc.status,
+            detail={"code": exc.code, "message": exc.message},
+        ) from exc
 
 
 @router.post(

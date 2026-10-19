@@ -118,6 +118,17 @@ async def test_digital_worker_profile_and_stage_goals(env, monkeypatch):
         f"/api/organizations/{organization_id}/digital-workers", headers=member_auth
     )
     assert visible.status_code == 200, visible.text
+    candidate_list = await client.get(
+        f"/api/organizations/{organization_id}/memory-candidates",
+        headers=manager_auth,
+    )
+    assert candidate_list.status_code == 200, candidate_list.text
+    assert candidate_list.json() == []
+    member_candidate_list = await client.get(
+        f"/api/organizations/{organization_id}/memory-candidates",
+        headers=member_auth,
+    )
+    assert member_candidate_list.status_code == 403
     assert visible.json()[0]["worker_id"] == worker["worker_id"]
     denied_patch = await client.patch(
         f"/api/organizations/{organization_id}/digital-workers/{worker['worker_id']}",
@@ -272,9 +283,7 @@ async def test_digital_worker_profile_and_stage_goals(env, monkeypatch):
         headers=owner_auth,
         json={
             "expected_capability_version": 1,
-            "sources": [
-                {"mcp_server": "akb__other", "knowledge_base_code": "ops-runbook"}
-            ],
+            "sources": [{"mcp_server": "akb__other", "knowledge_base_code": "ops-runbook"}],
         },
     )
     assert unauthorized_source.status_code == 409
@@ -284,9 +293,7 @@ async def test_digital_worker_profile_and_stage_goals(env, monkeypatch):
         headers=owner_auth,
         json={
             "expected_capability_version": 1,
-            "sources": [
-                {"mcp_server": "akb__1", "knowledge_base_code": "ops-runbook"}
-            ],
+            "sources": [{"mcp_server": "akb__1", "knowledge_base_code": "ops-runbook"}],
         },
     )
     assert bound_sources.status_code == 200, bound_sources.text
@@ -377,7 +384,7 @@ async def test_digital_worker_profile_and_stage_goals(env, monkeypatch):
     assert started == []
 
     async def stub_create(_spec):
-        return None
+        await old_create(_spec)
 
     async def record_run(cron_id: str, *, wait: bool = False) -> None:
         assert wait is False
@@ -402,9 +409,10 @@ async def test_digital_worker_profile_and_stage_goals(env, monkeypatch):
         approved_run.json()["cron_id"]
     )
     assert linked_run is not None and linked_run["run_id"] == run["run_id"]
-    assert linked_run["plan_snapshot"]["capabilities"]["knowledge_sources"] == run[
-        "plan_snapshot"
-    ]["capabilities"]["knowledge_sources"]
+    assert (
+        linked_run["plan_snapshot"]["capabilities"]["knowledge_sources"]
+        == run["plan_snapshot"]["capabilities"]["knowledge_sources"]
+    )
     incomplete_evidence = await client.post(
         f"/api/organizations/{organization_id}/digital-workers/{worker['worker_id']}"
         "/capability-proposals",
@@ -419,7 +427,9 @@ async def test_digital_worker_profile_and_stage_goals(env, monkeypatch):
     )
     assert incomplete_evidence.status_code == 409
     # Mark the approval-backed run successful so it can serve as improvement evidence.
-    server.services.enterprise_scene_repo.sync_cron_status(run["run_id"], status="succeeded")
+    server.services.enterprise_scene_repo.sync_cron_status(
+        run["run_id"], cron_id=approved_run.json()["cron_id"], status="succeeded"
+    )
     proposal_payload = {
         "source_run_id": run["run_id"],
         "source_summary": "运行完成了服务指标汇总和风险核查。",
@@ -533,6 +543,7 @@ async def test_digital_worker_profile_and_stage_goals(env, monkeypatch):
                 "access": "read",
             }
         ],
+        "memory_sources": [],
     }
     member_resources = await client.get(
         f"/api/organizations/{organization_id}/digital-workers/{worker['worker_id']}"
@@ -547,9 +558,10 @@ async def test_digital_worker_profile_and_stage_goals(env, monkeypatch):
     )
     assert next_run.status_code == 201, next_run.text
     assert next_run.json()["plan_snapshot"]["worker"]["capability_version"] == 3
-    assert next_run.json()["plan_snapshot"]["capabilities"] == worker_after_publish[
-        "capabilities"
-    ]
+    assert next_run.json()["plan_snapshot"]["capabilities"] == {
+        **worker_after_publish["capabilities"],
+        "memory_sources": [],
+    }
     assert "capability profile version: 3" in next_run.json()["prompt_snapshot"]
     assert skill_package.id in next_run.json()["plan_snapshot"]["capabilities"]["skill_package_ids"]
     assert (
@@ -577,12 +589,62 @@ async def test_digital_worker_profile_and_stage_goals(env, monkeypatch):
         headers=owner_auth,
         json={
             "expected_capability_version": 4,
-            "sources": [
-                {"mcp_server": "akb__1", "knowledge_base_code": "ops-runbook"}
-            ],
+            "sources": [{"mcp_server": "akb__1", "knowledge_base_code": "ops-runbook"}],
         },
     )
     assert restored_akb_source.status_code == 200, restored_akb_source.text
+    memory_source = await client.put(
+        f"/api/organizations/{organization_id}/digital-workers/{worker['worker_id']}"
+        "/memory-sources",
+        headers=owner_auth,
+        json={
+            "expected_capability_version": 5,
+            "sources": [
+                {
+                    "provider": "akb",
+                    "mcp_server": "akb__1",
+                    "scope_type": "TASK",
+                    "scope_code": "weekly-service-report",
+                }
+            ],
+        },
+    )
+    assert memory_source.status_code == 200, memory_source.text
+    assert memory_source.json()["capabilities"]["memory_sources"] == [
+        {
+            "provider": "akb",
+            "mcp_server": "akb__1",
+            "scope_type": "TASK",
+            "scope_code": "weekly-service-report",
+            "read_tools": ["memory_recall"],
+            "access": "read",
+        }
+    ]
+    memory_run = await client.post(
+        f"/api/organizations/{organization_id}/scenes/{scene_id}/runs",
+        headers=owner_auth,
+        json={"plan_id": plan["plan_id"]},
+    )
+    assert memory_run.status_code == 201, memory_run.text
+    memory_snapshot = memory_run.json()["plan_snapshot"]["capabilities"]["memory_sources"]
+    assert memory_snapshot == memory_source.json()["capabilities"]["memory_sources"]
+    assert "memory_recall" in memory_run.json()["prompt_snapshot"]
+    cleared_memory_source = await client.put(
+        f"/api/organizations/{organization_id}/digital-workers/{worker['worker_id']}"
+        "/memory-sources",
+        headers=owner_auth,
+        json={"expected_capability_version": 6, "sources": []},
+    )
+    assert cleared_memory_source.status_code == 200, cleared_memory_source.text
+    revoked_memory_approval = await client.post(
+        f"/api/organizations/{organization_id}/scene-runs/{memory_run.json()['run_id']}/approve",
+        headers=manager_auth,
+        json={"note": "memory source was removed after the run request"},
+    )
+    assert revoked_memory_approval.status_code == 409
+    assert revoked_memory_approval.json()["detail"]["code"] == (
+        "SCENE_MEMORY_SOURCE_AUTHORIZATION_CHANGED"
+    )
     resource_run = await client.post(
         f"/api/organizations/{organization_id}/scenes/{scene_id}/runs",
         headers=owner_auth,
@@ -692,14 +754,14 @@ async def test_digital_worker_profile_and_stage_goals(env, monkeypatch):
         "/knowledge-sources",
         headers=owner_auth,
         json={
-            "expected_capability_version": 5,
+            "expected_capability_version": 7,
             "sources": [
                 {
                     "provider": "ragflow",
                     "mcp_server": "ragflow__1",
                     "knowledge_base_ref": "service-dataset-8",
                     "selector_argument": "dataset_id",
-                    "read_tools": ["retrieve", "ask"],
+                    "read_tools": ["retrieve"],
                     "forbidden_arguments": [],
                 }
             ],
@@ -712,8 +774,16 @@ async def test_digital_worker_profile_and_stage_goals(env, monkeypatch):
             "mcp_server": "ragflow__1",
             "knowledge_base_ref": "service-dataset-8",
             "selector_argument": "dataset_id",
-            "read_tools": ["ask", "retrieve"],
+            "read_tools": ["retrieve"],
             "forbidden_arguments": [],
             "access": "read",
         }
     ]
+    diagnostic = await client.post(
+        f"/api/organizations/{organization_id}/digital-workers/{worker['worker_id']}"
+        "/knowledge-sources/diagnose",
+        headers=owner_auth,
+    )
+    assert diagnostic.status_code == 200, diagnostic.text
+    assert diagnostic.json()["summary"] == {"total": 1, "healthy": 0, "attention_required": 1}
+    assert diagnostic.json()["sources"][0]["health"] == "connector_unavailable"

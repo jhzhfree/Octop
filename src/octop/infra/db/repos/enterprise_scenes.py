@@ -230,9 +230,7 @@ class EnterpriseSceneRepo:
             ).fetchall()
         return [_decode(row) for row in rows]
 
-    def mark_queued_failed(
-        self, run_id: str, *, cron_id: str | None, summary: str
-    ) -> bool:
+    def mark_queued_failed(self, run_id: str, *, cron_id: str | None, summary: str) -> bool:
         """Only the still-queued matching execution may be failed."""
         with self._db.transaction() as conn:
             if cron_id is None:

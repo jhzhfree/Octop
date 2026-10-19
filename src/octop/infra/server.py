@@ -502,9 +502,13 @@ class OctopServer:
         # side-effecting Agent work.
         from octop.infra.scenes.reconciler import reconcile_queued_scene_runs
 
+        services = self.services
+        if services is None:
+            raise RuntimeError("scene reconciliation requires initialized services")
+
         def reconcile_scene_runs() -> None:
             try:
-                stats = reconcile_queued_scene_runs(self.services.repos)
+                stats = reconcile_queued_scene_runs(services.repos)
                 if stats["scanned"]:
                     logger.info("Enterprise scene reconciliation: %s", stats)
             except Exception:

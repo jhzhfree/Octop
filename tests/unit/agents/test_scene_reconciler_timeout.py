@@ -1,4 +1,5 @@
 """Timeout classification must never retry or fail an in-flight execution."""
+
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 

@@ -70,6 +70,10 @@ class DigitalWorkerService:
         self._organization_role(organization_id)
         return self.repos.digital_worker_repo.list_workers(organization_id)
 
+    def get_worker(self, organization_id: str, worker_id: str) -> dict[str, Any]:
+        """Return one worker after checking the caller's organization access."""
+        return self._worker(organization_id, worker_id)
+
     def create_worker(
         self,
         organization_id: str,
@@ -477,7 +481,107 @@ class DigitalWorkerService:
             "akb_knowledge_sources": list(
                 (worker.get("capabilities") or {}).get("akb_knowledge_sources", [])
             ),
+            "memory_sources": list((worker.get("capabilities") or {}).get("memory_sources", [])),
         }
+
+    def set_memory_sources(
+        self,
+        organization_id: str,
+        worker_id: str,
+        *,
+        expected_capability_version: int,
+        sources: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Bind read-only, scope-pinned platform memory MCP tools to a worker."""
+        self._require_manager(organization_id)
+        worker = self._worker(organization_id, worker_id)
+        agent = self.repos.agent_repo.get(str(worker["agent_id"]))
+        if agent is None or (
+            not self.actor.is_admin and agent.user_id != self.actor.id and not agent.is_shared
+        ):
+            raise DigitalWorkerError("ORGANIZATION_FORBIDDEN", "Agent access is not granted", 403)
+        if int(worker["capability_version"]) != expected_capability_version:
+            raise DigitalWorkerError(
+                "DIGITAL_WORKER_CAPABILITY_VERSION_CONFLICT",
+                "worker capabilities changed; reload before updating memory sources",
+                409,
+            )
+        available_mcp = {
+            str(name)
+            for scene in self.repos.enterprise_scene_repo.list_for_org(organization_id)
+            if scene.get("position_id") == worker["position_id"]
+            and scene.get("agent_id") == worker["agent_id"]
+            and bool(scene.get("enabled"))
+            for name in scene.get("mcp_servers", [])
+        }
+        valid_scopes = {"AGENT", "TEAM", "PROJECT", "TASK", "WORKFLOW", "SESSION"}
+        normalized: list[dict[str, Any]] = []
+        seen: set[tuple[str, str, str, str | None]] = set()
+        for source in sources:
+            provider = str(source.get("provider") or "").strip().lower()
+            mcp_server = str(source.get("mcp_server") or "").strip()
+            scope_type = str(source.get("scope_type") or "AGENT").strip().upper()
+            scope_code = str(source.get("scope_code") or "").strip() or None
+            if (
+                not provider
+                or len(provider) > 64
+                or re.fullmatch(r"[a-z0-9][a-z0-9._-]*", provider) is None
+                or not mcp_server
+                or len(mcp_server) > 128
+            ):
+                raise DigitalWorkerError(
+                    "DIGITAL_WORKER_MEMORY_SOURCE_INVALID",
+                    "provider and mcp_server must be valid identifiers",
+                    422,
+                )
+            if scope_type not in valid_scopes or (scope_type != "AGENT" and not scope_code):
+                raise DigitalWorkerError(
+                    "DIGITAL_WORKER_MEMORY_SOURCE_INVALID",
+                    "memory scope must be supported and non-Agent scopes require a scope_code",
+                    422,
+                )
+            if scope_code is not None and len(scope_code) > 128:
+                raise DigitalWorkerError(
+                    "DIGITAL_WORKER_MEMORY_SOURCE_INVALID", "scope_code is too long", 422
+                )
+            if mcp_server not in available_mcp:
+                raise DigitalWorkerError(
+                    "DIGITAL_WORKER_MEMORY_SOURCE_NOT_AUTHORIZED",
+                    "memory MCP source must be allowed by a scene for this worker's Agent and position",
+                    409,
+                )
+            identity = (provider, mcp_server, scope_type, scope_code)
+            if identity in seen:
+                continue
+            normalized.append(
+                {
+                    "provider": provider,
+                    "mcp_server": mcp_server,
+                    "scope_type": scope_type,
+                    "scope_code": scope_code,
+                    "read_tools": ["memory_recall"],
+                    "access": "read",
+                }
+            )
+            seen.add(identity)
+        updated = self.repos.digital_worker_repo.update_memory_sources(
+            worker_id,
+            normalized,
+            expected_capability_version=expected_capability_version,
+        )
+        if updated is None:
+            raise DigitalWorkerError(
+                "DIGITAL_WORKER_CAPABILITY_VERSION_CONFLICT",
+                "worker capabilities changed; reload before updating memory sources",
+                409,
+            )
+        self.repos.audit_repo.write(
+            actor=str(self.actor.id),
+            action="digital_worker.memory_sources_update",
+            target=worker_id,
+            payload=json.dumps(normalized, ensure_ascii=False),
+        )
+        return updated
 
     def set_akb_knowledge_sources(
         self,
@@ -589,24 +693,30 @@ class DigitalWorkerService:
                     "knowledge_base_ref is required",
                     422,
                 )
-            if not read_tools or len(read_tools) > 20 or any(
-                len(tool) > 128 or re.fullmatch(r"[A-Za-z0-9_-]+", tool) is None
-                for tool in read_tools
+            if (
+                not read_tools
+                or len(read_tools) > 20
+                or any(
+                    len(tool) > 128 or re.fullmatch(r"[A-Za-z0-9_-]+", tool) is None
+                    for tool in read_tools
+                )
             ):
                 raise DigitalWorkerError(
                     "DIGITAL_WORKER_KNOWLEDGE_SOURCE_INVALID",
                     "at least one valid read tool is required",
                     422,
                 )
-            if selector_argument and re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", selector_argument) is None:
+            if (
+                selector_argument
+                and re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", selector_argument) is None
+            ):
                 raise DigitalWorkerError(
                     "DIGITAL_WORKER_KNOWLEDGE_SOURCE_INVALID",
                     "selector_argument must be a simple MCP argument name",
                     422,
                 )
             if any(
-                len(argument) > 128
-                or re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", argument) is None
+                len(argument) > 128 or re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", argument) is None
                 for argument in forbidden_arguments
             ):
                 raise DigitalWorkerError(

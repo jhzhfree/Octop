@@ -29,6 +29,14 @@ def test_catalog_localizes_name_description_and_fields() -> None:
     assert "appends /api/v1" in str(en_fields["base_url"]["help"])
 
 
+def test_ragflow_catalog_describes_dataset_scoped_read_access() -> None:
+    entry = get_catalog_entry("ragflow")
+    assert entry is not None
+    assert entry.mcp_mode == "gateway"
+    assert entry.category == "knowledge"
+    assert "限定数据集" in entry.description.zh
+
+
 def test_every_catalog_entry_has_en_and_zh_copy() -> None:
     for entry in list_catalog():
         assert entry.name.en.strip()

@@ -62,6 +62,7 @@ are updating `catalog.json` in the same change.
 | `agently-cli` | Agent Mail | Agent Mail | office | custom_fields | gateway |
 | `obsidian-cli` | Obsidian | Obsidian | knowledge | custom_fields | gateway |
 | `weknora` | WeKnora | WeKnora | knowledge | custom_fields | gateway |
+| `ragflow` | RAGFlow | RAGFlow | knowledge | custom_fields | gateway |
 | `dify` | Dify | Dify | self_hosted | custom_fields | remote |
 
 ## MCP modes / MCP 模式

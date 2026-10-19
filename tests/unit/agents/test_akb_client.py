@@ -1,4 +1,5 @@
 """Offline contract tests for the AKB external API adapter."""
+
 import asyncio
 import json
 from unittest.mock import patch
@@ -27,7 +28,9 @@ def test_akb_search_contract():
             return False
 
         def read(self, n):
-            return json.dumps({"success": True, "data": {"hits": []}, "traceId": "trace-1"}).encode()
+            return json.dumps(
+                {"success": True, "data": {"hits": []}, "traceId": "trace-1"}
+            ).encode()
 
     class Opener:
         def open(self, request, timeout):
@@ -61,6 +64,8 @@ def test_akb_rejects_invalid_response():
         def open(self, request, timeout):
             return Response()
 
-    with patch("urllib.request.build_opener", return_value=Opener()):
-        with pytest.raises(AkbError, match="unsuccessful"):
-            asyncio.run(client.query("问题"))
+    with (
+        patch("urllib.request.build_opener", return_value=Opener()),
+        pytest.raises(AkbError, match="unsuccessful"),
+    ):
+        asyncio.run(client.query("问题"))

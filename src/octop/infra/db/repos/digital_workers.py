@@ -39,7 +39,9 @@ def _canonical_knowledge_sources(capabilities: dict[str, Any]) -> list[dict[str,
             continue
         provider = str(source.get("provider") or "").strip()
         mcp_server = str(source.get("mcp_server") or "").strip()
-        base_ref = str(source.get("knowledge_base_ref") or source.get("knowledge_base_code") or "").strip()
+        base_ref = str(
+            source.get("knowledge_base_ref") or source.get("knowledge_base_code") or ""
+        ).strip()
         if not provider or not mcp_server or not base_ref:
             continue
         read_tools = source.get("read_tools")
@@ -91,9 +93,7 @@ def _worker_dict(row: Any) -> dict[str, Any]:
     generic_sources = _canonical_knowledge_sources(capabilities)
     capabilities["knowledge_sources"] = generic_sources
     capabilities["akb_knowledge_sources"] = [
-        legacy
-        for source in generic_sources
-        if (legacy := _legacy_akb_source(source)) is not None
+        legacy for source in generic_sources if (legacy := _legacy_akb_source(source)) is not None
     ]
     result["capabilities"] = capabilities
     return result
@@ -215,10 +215,46 @@ class DigitalWorkerRepo:
                 capabilities = {}
             capabilities["knowledge_sources"] = sources
             capabilities["akb_knowledge_sources"] = [
-                legacy
-                for source in sources
-                if (legacy := _legacy_akb_source(source)) is not None
+                legacy for source in sources if (legacy := _legacy_akb_source(source)) is not None
             ]
+            cur = conn.execute(
+                "UPDATE digital_workers SET capabilities_json = ?, "
+                "capability_version = capability_version + 1, updated_at = ? "
+                "WHERE worker_id = ? AND capability_version = ?",
+                (
+                    json.dumps(capabilities, ensure_ascii=False),
+                    now_ts(),
+                    worker_id,
+                    expected_capability_version,
+                ),
+            )
+            if int(cur.rowcount or 0) != 1:
+                return None
+        return self.get_worker(worker_id)
+
+    def update_memory_sources(
+        self,
+        worker_id: str,
+        sources: list[dict[str, Any]],
+        *,
+        expected_capability_version: int,
+    ) -> dict[str, Any] | None:
+        """Replace platform-memory bindings with optimistic concurrency."""
+        with self._db.transaction() as conn:
+            row = conn.execute(
+                "SELECT capabilities_json FROM digital_workers "
+                "WHERE worker_id = ? AND capability_version = ?",
+                (worker_id, expected_capability_version),
+            ).fetchone()
+            if row is None:
+                return None
+            try:
+                capabilities = json.loads(row["capabilities_json"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                capabilities = {}
+            if not isinstance(capabilities, dict):
+                capabilities = {}
+            capabilities["memory_sources"] = sources
             cur = conn.execute(
                 "UPDATE digital_workers SET capabilities_json = ?, "
                 "capability_version = capability_version + 1, updated_at = ? "
@@ -556,3 +592,140 @@ class DigitalWorkerRepo:
         except _CapabilityReviewConflict:
             return None
         return self.get_capability_proposal(proposal_id)
+
+    @staticmethod
+    def _memory_candidate(row: Any) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        item = dict(row)
+        if not item.get("scope_code"):
+            item["scope_code"] = None
+        return item
+
+    def create_memory_candidate(
+        self,
+        *,
+        candidate_id: str,
+        organization_id: str,
+        worker_id: str,
+        source_run_id: str,
+        provider: str,
+        mcp_server: str,
+        scope_type: str,
+        scope_code: str | None,
+        content: str,
+        created_by: int,
+    ) -> dict[str, Any] | None:
+        now = now_ts()
+        with self._db.transaction() as conn:
+            conn.execute(
+                "INSERT INTO digital_worker_memory_candidates("
+                "candidate_id, organization_id, worker_id, source_run_id, provider, mcp_server, "
+                "scope_type, scope_code, content, created_by, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(source_run_id, provider, mcp_server, scope_type, scope_code) DO NOTHING",
+                (
+                    candidate_id,
+                    organization_id,
+                    worker_id,
+                    source_run_id,
+                    provider,
+                    mcp_server,
+                    scope_type,
+                    scope_code or "",
+                    content,
+                    created_by,
+                    now,
+                    now,
+                ),
+            )
+        with self._db.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM digital_worker_memory_candidates WHERE source_run_id = ? "
+                "AND provider = ? AND mcp_server = ? AND scope_type = ? AND scope_code = ?",
+                (source_run_id, provider, mcp_server, scope_type, scope_code or ""),
+            ).fetchone()
+        return self._memory_candidate(row)
+
+    def list_memory_candidates(
+        self,
+        organization_id: str,
+        *,
+        worker_id: str | None = None,
+        status: str | None = None,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM digital_worker_memory_candidates WHERE organization_id = ?"
+        params: list[Any] = [organization_id]
+        if worker_id is not None:
+            sql += " AND worker_id = ?"
+            params.append(worker_id)
+        if status is not None:
+            sql += " AND status = ?"
+            params.append(status)
+        sql += " ORDER BY created_at DESC, candidate_id LIMIT ?"
+        params.append(max(1, min(limit, 500)))
+        with self._db.connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        candidates: list[dict[str, Any]] = []
+        for row in rows:
+            candidate = self._memory_candidate(row)
+            if candidate is not None:
+                candidates.append(candidate)
+        return candidates
+
+    def get_memory_candidate(self, candidate_id: str) -> dict[str, Any] | None:
+        with self._db.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM digital_worker_memory_candidates WHERE candidate_id = ?",
+                (candidate_id,),
+            ).fetchone()
+        return self._memory_candidate(row)
+
+    def claim_memory_candidate(
+        self,
+        candidate_id: str,
+        *,
+        reviewer_id: int,
+        review_note: str,
+        content: str,
+    ) -> bool:
+        with self._db.transaction() as conn:
+            cur = conn.execute(
+                "UPDATE digital_worker_memory_candidates SET status = 'writing', content = ?, "
+                "reviewed_by = ?, review_note = ?, error_summary = NULL, updated_at = ? "
+                "WHERE candidate_id = ? AND (status IN ('pending','failed') OR "
+                "(status = 'writing' AND updated_at < ?))",
+                (content, reviewer_id, review_note, now_ts(), candidate_id, now_ts() - 300),
+            )
+        return int(cur.rowcount or 0) == 1
+
+    def reject_memory_candidate(
+        self, candidate_id: str, *, reviewer_id: int, review_note: str
+    ) -> bool:
+        with self._db.transaction() as conn:
+            cur = conn.execute(
+                "UPDATE digital_worker_memory_candidates SET status = 'rejected', "
+                "reviewed_by = ?, review_note = ?, updated_at = ? "
+                "WHERE candidate_id = ? AND status = 'pending'",
+                (reviewer_id, review_note, now_ts(), candidate_id),
+            )
+        return int(cur.rowcount or 0) == 1
+
+    def finish_memory_candidate(
+        self,
+        candidate_id: str,
+        *,
+        status: str,
+        memory_code: str | None = None,
+        error_summary: str | None = None,
+    ) -> bool:
+        if status not in {"written", "failed"}:
+            raise ValueError("invalid terminal memory-candidate status")
+        with self._db.transaction() as conn:
+            cur = conn.execute(
+                "UPDATE digital_worker_memory_candidates SET status = ?, memory_code = ?, "
+                "error_summary = ?, updated_at = ? WHERE candidate_id = ? AND status = 'writing'",
+                (status, memory_code, error_summary, now_ts(), candidate_id),
+            )
+        return int(cur.rowcount or 0) == 1

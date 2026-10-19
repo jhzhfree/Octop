@@ -669,6 +669,43 @@
       ]
     },
     {
+      "kind": "ragflow",
+      "name": { "en": "RAGFlow", "zh": "RAGFlow" },
+      "description": {
+        "en": "Connect a RAGFlow dataset for read-only, dataset-scoped retrieval",
+        "zh": "连接 RAGFlow 数据集，提供只读且限定数据集的检索"
+      },
+      "auth_kind": "custom_fields",
+      "doc_url": "https://ragflow.io/docs/http_api_reference",
+      "icon": "ragflow",
+      "color": "#4f46e5",
+      "phase": "available",
+      "mcp_mode": "gateway",
+      "category": "knowledge",
+      "auth_hint": {
+        "en": "Enter the RAGFlow service URL and an API key. Bind each worker to a dataset ID to scope retrieval.",
+        "zh": "填写 RAGFlow 服务地址和 API Key；为每个数字员工绑定数据集 ID 以限制检索范围。"
+      },
+      "credential_fields": [
+        {
+          "key": "base_url",
+          "label": { "en": "Service URL", "zh": "服务地址" },
+          "field_type": "url",
+          "placeholder": "https://ragflow.example.com",
+          "help": {
+            "en": "Octop appends /api/v1 when needed",
+            "zh": "必要时 Octop 会自动补齐 /api/v1"
+          }
+        },
+        {
+          "key": "api_key",
+          "label": { "en": "API Key", "zh": "API Key" },
+          "field_type": "password",
+          "secret": true
+        }
+      ]
+    },
+    {
       "kind": "dify",
       "name": { "en": "Dify", "zh": "Dify" },
       "description": {

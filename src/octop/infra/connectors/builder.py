@@ -56,6 +56,18 @@ def normalize_weknora_base_url(raw: str) -> str:
     return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
 
 
+def normalize_ragflow_base_url(raw: str) -> str:
+    """Normalize a RAGFlow origin or API base to its `/api/v1` root."""
+    url = validate_mcp_http_url(raw)
+    parsed = urlsplit(url)
+    if parsed.query or parsed.fragment:
+        raise ValueError("base_url must not contain a query string or fragment")
+    path = parsed.path.rstrip("/")
+    if not path.endswith("/api/v1"):
+        path = f"{path}/api/v1"
+    return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
+
+
 def mcp_server_name(kind: str, instance_id: str) -> str:
     return f"{kind}__{instance_id}"
 
@@ -473,6 +485,16 @@ def validate_create_credentials(
             if ids:
                 out["knowledge_base_ids"] = list(dict.fromkeys(ids))
             return out
+        if entry.kind == "ragflow":
+            base_url = normalize_ragflow_base_url(str(credentials.get("base_url") or ""))
+            api_key = str(credentials.get("api_key") or "").strip()
+            if not api_key:
+                raise ValueError("api_key is required for RAGFlow")
+            return {
+                "base_url": base_url,
+                "api_key": api_key,
+                "internal_token": new_internal_token(),
+            }
         if entry.kind == "dify":
             mcp_url = validate_mcp_http_url(str(credentials.get("mcp_url") or ""))
             if "/mcp/server/" not in mcp_url or not mcp_url.rstrip("/").endswith("/mcp"):

@@ -18,6 +18,6 @@ An Octop Agent appointment **does not** grant AKB rights. Before exposing this c
 
 ## Integration status
 
-This is a reusable read-only adapter with offline contract tests, **not** a deployed AKB connector, automatic retrieval, persistent memory, or production-ready integration. AKB's service must be running and its external API enabled for a real end-to-end test.
+AKB knowledge is connected through its MCP server and Octop's product-neutral worker binding. AKB platform memory is available through read-only `memory_recall`; successful scheduled runs can stage a candidate for manager review before an idempotent write. The configured API key remains authoritative for AKB namespace, Agent identity, permissions, and auditing. The AKB service must be available for live end-to-end checks.
 
-Remaining: P3 timeout/idempotency/recovery and audit, P4 step state and handoff orchestration, P5 credential provisioning, scoped retrieval, citation/evidence propagation, memory retention and review.
+Other knowledge products use the same worker binding. Octop currently includes a read-only RAGFlow REST adapter that fixes every retrieval request to the worker's approved dataset. On-demand source diagnostics test connector visibility and upstream health, and report expiry or 90-day rotation reminders without exposing secrets. Broader roadmap work includes run recovery and reliability, evidence propagation, memory retention controls, and multi-step orchestration.
