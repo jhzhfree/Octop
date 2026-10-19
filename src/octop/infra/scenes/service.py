@@ -310,7 +310,16 @@ class EnterpriseSceneService:
         if row["status"] != "queued" or not row["cron_id"]:
             return
         cron = self.repos.cron_repo.get(str(row["cron_id"]))
-        if cron is None or cron.last_status not in {"ok", "error"}:
+        if cron is None:
+            # A missing job cannot produce evidence of success. Record a terminal
+            # failure rather than leaving the run queued forever after deletion.
+            self.repos.enterprise_scene_repo.mark_failed(
+                str(row["run_id"]),
+                summary="Cron job disappeared before completion",
+                cron_id=str(row["cron_id"]),
+            )
+            return
+        if cron.last_status not in {"ok", "error"}:
             return
         self.repos.enterprise_scene_repo.sync_cron_status(
             str(row["run_id"]),
@@ -454,11 +463,17 @@ class EnterpriseSceneService:
                 raise SceneError("SCENE_RUN_ALREADY_DECIDED", "run was already decided", 409)
             await manager.run_now(cron_id)
         except Exception:
-            self.repos.enterprise_scene_repo.mark_failed(
-                run_id, summary="Approval execution could not be queued", cron_id=cron_id
-            )
-            if manager.get(cron_id) is not None:
-                await manager.delete(cron_id)
+            # The task may already have started when dispatch reports an error.
+            # Do not delete a queued job here: cancellation is not guaranteed
+            # and could race with the running task. Preserve the cron identity
+            # for reconciliation and operator investigation.
+            current = self.repos.enterprise_scene_repo.get_run(run_id)
+            if current is None or current["status"] == "awaiting_approval":
+                self.repos.enterprise_scene_repo.mark_failed(
+                    run_id, summary="Approval execution could not be queued"
+                )
+                if manager.get(cron_id) is not None:
+                    await manager.delete(cron_id)
             raise
         self.repos.audit_repo.write(
             actor=str(self.actor.id), action="scene.run_approved", target=run_id
