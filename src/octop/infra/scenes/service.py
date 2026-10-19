@@ -310,10 +310,12 @@ class EnterpriseSceneService:
         if row["status"] != "queued" or not row["cron_id"]:
             return
         cron = self.repos.cron_repo.get(str(row["cron_id"]))
-        if cron is None or cron.last_status is None:
+        if cron is None or cron.last_status not in {"ok", "error"}:
             return
         self.repos.enterprise_scene_repo.sync_cron_status(
-            str(row["run_id"]), status="succeeded" if cron.last_status == "ok" else "failed"
+            str(row["run_id"]),
+            cron_id=str(row["cron_id"]),
+            status="succeeded" if cron.last_status == "ok" else "failed",
         )
 
     async def decide_run(

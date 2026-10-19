@@ -238,10 +238,18 @@ class EnterpriseSceneRepo:
                     (summary, now_ts(), run_id, cron_id),
                 )
 
-    def sync_cron_status(self, run_id: str, *, status: str) -> None:
+    def sync_cron_status(self, run_id: str, *, cron_id: str, status: str) -> None:
+        if status not in {"succeeded", "failed"}:
+            raise ValueError("invalid terminal scene run status")
         with self._db.transaction() as conn:
             conn.execute(
                 "UPDATE enterprise_scene_runs SET status = ?, error_summary = ?, updated_at = ? "
-                "WHERE run_id = ? AND status = 'queued'",
-                (status, "Cron execution failed" if status == "failed" else None, now_ts(), run_id),
+                "WHERE run_id = ? AND cron_id = ? AND status = 'queued'",
+                (
+                    status,
+                    "Cron execution failed" if status == "failed" else None,
+                    now_ts(),
+                    run_id,
+                    cron_id,
+                ),
             )
