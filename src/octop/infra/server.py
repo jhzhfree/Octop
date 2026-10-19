@@ -497,6 +497,25 @@ class OctopServer:
 
         install_auto_backup_job(cron_mgr, server=self)
 
+        # Reconcile enterprise scene runs even when nobody opens the dashboard.
+        # The system job survives cron schedule reloads and never re-executes
+        # side-effecting Agent work.
+        from octop.infra.scenes.reconciler import reconcile_queued_scene_runs
+
+        def reconcile_scene_runs() -> None:
+            try:
+                stats = reconcile_queued_scene_runs(self.services.repos)
+                if stats["scanned"]:
+                    logger.info("Enterprise scene reconciliation: %s", stats)
+            except Exception:
+                logger.exception("Enterprise scene reconciliation failed")
+
+        cron_mgr.schedule_system_job(
+            "enterprise-scene-reconciliation",
+            trigger="cron:*/5 * * * *",
+            func=reconcile_scene_runs,
+        )
+
         registry.set_cron_manager(cron_mgr)
         registry.set_team_processor(gateway.processor.teams)
         hitl_session_store = gateway.processor.hitl_coordinator.session_policies
