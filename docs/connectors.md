@@ -10,6 +10,7 @@ Octop ships a catalog of OAuth / MCP connectors. Dashboard copy (`name`,
 `src/octop/infra/connectors/catalog.py` only loads and validates that file.
 
 You can also add **custom MCP** servers in the dashboard; they are not listed here.
+For AKB setup, use the **Add AKB Knowledge** preset. See [AKB integration](akb-integration.md).
 
 # 内置连接器
 
@@ -22,6 +23,7 @@ Octop 内置一组 OAuth / MCP 连接器。控制台展示的名称、描述、�
 `catalog.py` 只负责加载和校验，不再手写 `_CATALOG`。
 
 控制台还可以添加**自定义 MCP**，不在下表中。完整目录见下方表格。
+接入 AKB 时可使用 **添加 AKB 知识库** 预设，配置说明见 [AKB 集成指南](akb-integration.md)。
 
 ## Catalog / 目录
 

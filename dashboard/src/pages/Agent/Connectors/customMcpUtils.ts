@@ -254,6 +254,25 @@ export function newCard(
   };
 }
 
+export function newAkbCard(
+  index: number,
+  existingNames: Iterable<string>,
+): ServerCardState {
+  const names = new Set(Array.from(existingNames, (name) => name.trim()));
+  let suffix = 1;
+  let name = "akb";
+  while (names.has(name)) {
+    suffix += 1;
+    name = `akb-${suffix}`;
+  }
+  return {
+    ...newCard("streamable_http", index),
+    name,
+    displayName: "AKB 知识库",
+    collapsed: false,
+  };
+}
+
 /** Notify chat composer to refresh connector list after custom MCP save. */
 export const CONNECTORS_CHANGED_EVENT = "octop:connectors-changed";
 

@@ -5867,6 +5867,8 @@
       "modeVisual": "可视化",
       "modeJson": "</> JSON",
       "addHttp": "添加 HTTP Server",
+      "addAkb": "添加 AKB 知识库",
+      "akbHint": "使用绑定到目标知识库且仅授予 READ 权限的 AKB API Key。保存后可探测工具，并在 Agent 的 MCP 配置中选择此连接。",
       "addStdio": "添加 Stdio Server",
       "listTitle": "已添加的服务器",
       "emptyList": "尚未添加自定义 MCP，点击上方按钮开始配置",

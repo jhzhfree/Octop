@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button, Checkbox, Input, Segmented, Spin } from "antd";
 import { message } from "@/utils/antdMessage";
 
-import { Globe, Plus, Terminal } from "lucide-react";
+import { BookOpen, Globe, Plus, Terminal } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -20,6 +20,7 @@ import {
   hasHttpProbeTargets,
   mergeCustomMcpCards,
   newCard,
+  newAkbCard,
   notifyConnectorsChanged,
   oauthHintsFromServers,
   serversToCards,
@@ -214,6 +215,19 @@ export function CustomMcpTab({ focusServerName }: CustomMcpTabProps) {
   const handleAdd = (transport: CustomMcpTransport) => {
     setCards((prev) => {
       const next = [...prev, newCard(transport, prev.length)];
+      syncJsonFromCards(next);
+      return next;
+    });
+    setMode("visual");
+  };
+
+  const handleAddAkb = () => {
+    setCards((prev) => {
+      const card = newAkbCard(
+        prev.length,
+        prev.map((item) => item.name),
+      );
+      const next = [...prev, card];
       syncJsonFromCards(next);
       return next;
     });
@@ -698,6 +712,17 @@ export function CustomMcpTab({ focusServerName }: CustomMcpTabProps) {
                 <Globe size={18} />
                 <span>
                   {t("connectors.customMcp.addHttp", "添加 HTTP Server")}
+                </span>
+                <Plus size={16} />
+              </button>
+              <button
+                type="button"
+                className={styles.customMcpAddBtn}
+                onClick={handleAddAkb}
+              >
+                <BookOpen size={18} />
+                <span>
+                  {t("connectors.customMcp.addAkb", "添加 AKB 知识库")}
                 </span>
                 <Plus size={16} />
               </button>

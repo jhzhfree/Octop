@@ -246,7 +246,11 @@ export function CustomMcpServerCard({
                 <Input
                   value={card.url}
                   onChange={(e) => onUpdate(card.key, { url: e.target.value })}
-                  placeholder="https://mcp.example.com/mcp"
+                  placeholder={
+                    card.name.trim().startsWith("akb")
+                      ? "https://akb.example.com/api/mcp"
+                      : "https://mcp.example.com/mcp"
+                  }
                 />
               </div>
               <div className={styles.customMcpField}>
@@ -262,8 +266,20 @@ export function CustomMcpServerCard({
                     onUpdate(card.key, { headersText: e.target.value })
                   }
                   autoSize={{ minRows: 2, maxRows: 6 }}
-                  placeholder={"Authorization: Bearer sk-..."}
+                  placeholder={
+                    card.name.trim().startsWith("akb")
+                      ? "X-API-Key: your-read-only-key"
+                      : "Authorization: Bearer sk-..."
+                  }
                 />
+                {card.name.trim().startsWith("akb") ? (
+                  <div className={styles.customMcpFieldHint}>
+                    {t(
+                      "connectors.customMcp.akbHint",
+                      "使用绑定到目标知识库且仅授予 READ 权限的 AKB API Key。保存后可探测工具，并在 Agent 的 MCP 配置中选择此连接。",
+                    )}
+                  </div>
+                ) : null}
               </div>
             </>
           ) : (

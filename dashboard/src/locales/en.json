@@ -5867,6 +5867,8 @@
       "modeVisual": "Visual",
       "modeJson": "</> JSON",
       "addHttp": "Add HTTP Server",
+      "addAkb": "Add AKB Knowledge",
+      "akbHint": "Use an AKB API key bound to the target knowledge base with READ-only scope. Save and probe the tools, then select this connection in the Agent MCP settings.",
       "addStdio": "Add Stdio Server",
       "listTitle": "Configured servers",
       "emptyList": "No custom MCP yet — use the buttons above to add one",
