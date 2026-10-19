@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 25744)
-Total output lines: 2906
-
 import {
   Building2,
   BriefcaseBusiness,
@@ -938,7 +935,1157 @@ export default function OrganizationsPage() {
         ) : null,
     },
   ];
-  const positionColumns: ColumnsType<OrganizationPo…10744 tokens truncated…  direction="vertical"
+  const positionColumns: ColumnsType<OrganizationPosition> = [
+    { title: t("organizations.position"), dataIndex: "title", key: "title" },
+    { title: t("organizations.code"), dataIndex: "code", key: "code" },
+    {
+      title: t("organizations.department"),
+      dataIndex: "department_id",
+      key: "department",
+      render: (id: string | null) => (id ? departmentNames.get(id) : "—"),
+    },
+    {
+      title: t("organizations.reportsTo"),
+      dataIndex: "reports_to_position_id",
+      key: "reportsTo",
+      render: (id: string | null) => (id ? positionNames.get(id) : "—"),
+    },
+    {
+      title: t("organizations.appointments"),
+      dataIndex: "assignments",
+      key: "assignments",
+      render: (items: OrganizationPosition["assignments"]) =>
+        items.length
+          ? items.map((item) =>
+              canManage ? (
+                <Tag
+                  key={item.assignment_id}
+                  closable
+                  onClose={(event) => {
+                    event.preventDefault();
+                    if (!organizationId) return;
+                    void organizationsApi
+                      .unassign(organizationId, item.assignment_id)
+                      .then(() => load(organizationId))
+                      .catch(() =>
+                        message.error(t("organizations.operationFailed")),
+                      );
+                  }}
+                >
+                  {item.label}
+                </Tag>
+              ) : (
+                <Tag key={item.assignment_id}>{item.label}</Tag>
+              ),
+            )
+          : "—",
+    },
+    {
+      title: t("common.actions"),
+      key: "actions",
+      render: (_: unknown, row) =>
+        canManage ? (
+          <Space>
+            <Button
+              aria-label={t("common.edit")}
+              icon={<Pencil size={14} />}
+              onClick={() =>
+                openModal(
+                  "position",
+                  {
+                    ...row,
+                    capabilities: row.capabilities.join(", "),
+                  } as unknown as Record<string, unknown>,
+                  undefined,
+                  row,
+                )
+              }
+            />
+            <Button
+              aria-label={t("organizations.assign")}
+              icon={<UserRoundPlus size={14} />}
+              onClick={() =>
+                openModal("appointment", { position_id: row.position_id })
+              }
+            />
+            <Popconfirm
+              title={t("organizations.deletePositionConfirm")}
+              onConfirm={async () => {
+                if (!organizationId) return;
+                try {
+                  await organizationsApi.deletePosition(
+                    organizationId,
+                    row.position_id,
+                  );
+                  await load(organizationId);
+                } catch {
+                  message.error(t("organizations.operationFailed"));
+                }
+              }}
+            >
+              <Button
+                aria-label={t("common.delete")}
+                danger
+                icon={<Trash2 size={14} />}
+              />
+            </Popconfirm>
+          </Space>
+        ) : null,
+    },
+  ];
+  const memberColumns = [
+    {
+      title: t("organizations.person"),
+      key: "name",
+      render: (_: unknown, row: OrganizationChart["members"][number]) =>
+        row.display_name || row.username,
+    },
+    { title: t("organizations.userId"), dataIndex: "user_id", key: "user_id" },
+    {
+      title: t("organizations.memberRole"),
+      dataIndex: "role",
+      key: "role",
+      render: (role: string) => t("organizations.roles." + role),
+    },
+    {
+      title: t("common.actions"),
+      key: "actions",
+      render: (_: unknown, row: OrganizationChart["members"][number]) =>
+        canManageMembers && row.role !== "owner" ? (
+          <Popconfirm
+            title={t("organizations.removeMemberConfirm")}
+            onConfirm={async () => {
+              if (!organizationId) return;
+              try {
+                await organizationsApi.removeMember(
+                  organizationId,
+                  row.user_id,
+                );
+                await load(organizationId);
+              } catch {
+                message.error(t("organizations.operationFailed"));
+              }
+            }}
+          >
+            <Button
+              aria-label={t("organizations.removeMember")}
+              danger
+              icon={<UserRoundX size={14} />}
+            />
+          </Popconfirm>
+        ) : null,
+    },
+  ];
+  const workerColumns: ColumnsType<DigitalWorker> = [
+    { title: t("organizations.workerName"), dataIndex: "name", key: "name" },
+    {
+      title: t("organizations.position"),
+      dataIndex: "position_title",
+      key: "position",
+    },
+    { title: t("organizations.agent"), dataIndex: "agent_name", key: "agent" },
+    {
+      title: t("organizations.workerStatus"),
+      dataIndex: "status",
+      key: "status",
+      render: (status: DigitalWorker["status"]) => (
+        <Tag color={status === "active" ? "green" : "default"}>
+          {t("organizations.workerStatuses." + status)}
+        </Tag>
+      ),
+    },
+    {
+      title: t("organizations.duties"),
+      dataIndex: "responsibilities",
+      key: "responsibilities",
+      ellipsis: true,
+    },
+    {
+      title: t("common.actions"),
+      key: "actions",
+      render: (_: unknown, worker) => (
+        <Space>
+          <Button
+            icon={<Target size={14} />}
+            onClick={() => {
+              setSelectedGoal(undefined);
+              setWorkerPlans([]);
+              setSelectedWorker(worker);
+            }}
+          >
+            {t("organizations.manageGoals")}
+          </Button>
+          {canManage && worker.status !== "archived" && (
+            <Button onClick={() => void changeWorkerStatus(worker)}>
+              {t(
+                worker.status === "active"
+                  ? "organizations.pauseWorker"
+                  : "organizations.activateWorker",
+              )}
+            </Button>
+          )}
+        </Space>
+      ),
+    },
+  ];
+  const memoryCandidateColumns: ColumnsType<DigitalWorkerMemoryCandidate> = [
+    {
+      title: t("organizations.workerName"),
+      key: "worker",
+      render: (_: unknown, candidate) =>
+        digitalWorkers.find(
+          (worker) => worker.worker_id === candidate.worker_id,
+        )?.name ?? candidate.worker_id,
+    },
+    {
+      title: t("organizations.memoryCandidateScope"),
+      key: "scope",
+      render: (_: unknown, candidate) =>
+        `${candidate.scope_type}${
+          candidate.scope_code ? ` · ${candidate.scope_code}` : ""
+        }`,
+    },
+    {
+      title: t("organizations.memoryCandidateStatus"),
+      dataIndex: "status",
+      key: "status",
+      render: (status: DigitalWorkerMemoryCandidate["status"]) => (
+        <Tag
+          color={
+            status === "written"
+              ? "green"
+              : status === "rejected"
+              ? "default"
+              : status === "failed"
+              ? "red"
+              : "blue"
+          }
+        >
+          {t("organizations.memoryCandidateStatuses." + status)}
+        </Tag>
+      ),
+    },
+    {
+      title: t("common.actions"),
+      key: "actions",
+      render: (_: unknown, candidate) =>
+        canManage &&
+        Number(currentUser?.id) !== candidate.created_by &&
+        ["pending", "failed"].includes(candidate.status) ? (
+          <Button
+            onClick={() => {
+              memoryReviewForm.setFieldsValue({
+                content: candidate.content,
+                review_note: candidate.review_note,
+              });
+              setReviewingMemoryCandidate(candidate);
+            }}
+          >
+            {t("organizations.reviewMemoryCandidate")}
+          </Button>
+        ) : null,
+    },
+  ];
+  const goalColumns: ColumnsType<DigitalWorkerGoal> = [
+    { title: t("organizations.goalTitle"), dataIndex: "title", key: "title" },
+    {
+      title: t("organizations.goalPeriod"),
+      key: "period",
+      render: (_: unknown, goal) =>
+        [goal.period_start, goal.period_end].filter(Boolean).join(" — ") || "—",
+    },
+    {
+      title: t("organizations.successCriteria"),
+      dataIndex: "success_criteria",
+      key: "criteria",
+      ellipsis: true,
+    },
+    {
+      title: t("organizations.goalStatus"),
+      dataIndex: "status",
+      key: "status",
+      render: (status: DigitalWorkerGoal["status"]) => (
+        <Tag color={status === "completed" ? "green" : "blue"}>
+          {t("organizations.goalStatuses." + status)}
+        </Tag>
+      ),
+    },
+    {
+      title: t("common.actions"),
+      key: "actions",
+      render: (_: unknown, goal) => (
+        <Space>
+          <Button
+            icon={<ClipboardList size={14} />}
+            onClick={() => setSelectedGoal(goal)}
+          >
+            {t("organizations.managePlans")}
+          </Button>
+          {canManage &&
+            (goal.status === "draft" || goal.status === "active") && (
+              <Button onClick={() => void changeGoalStatus(goal)}>
+                {t(
+                  goal.status === "draft"
+                    ? "organizations.activateGoal"
+                    : "organizations.completeGoal",
+                )}
+              </Button>
+            )}
+        </Space>
+      ),
+    },
+  ];
+  const planColumns: ColumnsType<DigitalWorkerPlan> = [
+    { title: t("organizations.planTitle"), dataIndex: "title", key: "title" },
+    {
+      title: t("organizations.planSteps"),
+      key: "steps",
+      render: (_: unknown, plan) => plan.steps.length,
+    },
+    {
+      title: t("organizations.planStatus"),
+      dataIndex: "status",
+      key: "status",
+      render: (status: DigitalWorkerPlan["status"]) => (
+        <Tag color={status === "ready" ? "green" : "default"}>
+          {t("organizations.planStatuses." + status)}
+        </Tag>
+      ),
+    },
+    {
+      title: t("common.actions"),
+      key: "actions",
+      render: (_: unknown, plan) =>
+        plan.status !== "cancelled" ? (
+          <Space>
+            {canManage && plan.status === "draft" && (
+              <Button onClick={() => openPlanModal(plan)}>
+                {t("common.edit")}
+              </Button>
+            )}
+            {canManage && (
+              <Button onClick={() => void changePlanStatus(plan)}>
+                {t(
+                  plan.status === "draft"
+                    ? "organizations.preparePlan"
+                    : "organizations.reopenPlan",
+                )}
+              </Button>
+            )}
+            {plan.status === "ready" && (
+              <Button
+                type="primary"
+                icon={<Play size={14} />}
+                onClick={() => openPlanRunModal(plan)}
+              >
+                {t("organizations.requestRun")}
+              </Button>
+            )}
+          </Space>
+        ) : null,
+    },
+  ];
+  const capabilityProposalColumns: ColumnsType<DigitalWorkerCapabilityProposal> =
+    [
+      {
+        title: t("organizations.capabilityProposalEvidence"),
+        dataIndex: "source_run_id",
+        key: "source_run_id",
+        render: (runId: string) => runId.slice(0, 10),
+      },
+      {
+        title: t("organizations.capabilityVersion"),
+        dataIndex: "base_capability_version",
+        key: "base_capability_version",
+        render: (version: number) => `v${version}`,
+      },
+      {
+        title: t("organizations.capabilityProposalStatus"),
+        dataIndex: "status",
+        key: "status",
+        render: (status: DigitalWorkerCapabilityProposal["status"]) => (
+          <Tag
+            color={
+              status === "published"
+                ? "green"
+                : status === "rejected"
+                ? "red"
+                : "blue"
+            }
+          >
+            {t(`organizations.capabilityProposalStatuses.${status}`)}
+          </Tag>
+        ),
+      },
+      {
+        title: t("common.actions"),
+        key: "actions",
+        render: (_: unknown, proposal) =>
+          canManage &&
+          proposal.status === "submitted" &&
+          Number(currentUser?.id) !== proposal.created_by ? (
+            <Space>
+              <Popconfirm
+                title={t("organizations.capabilityProposalReviewConfirm")}
+                onConfirm={() => void reviewCapabilityProposal(proposal, true)}
+              >
+                <Button type="primary" size="small">
+                  {t("organizations.capabilityProposalPublish")}
+                </Button>
+              </Popconfirm>
+              <Popconfirm
+                title={t("organizations.capabilityProposalReviewConfirm")}
+                onConfirm={() => void reviewCapabilityProposal(proposal, false)}
+              >
+                <Button danger size="small">
+                  {t("organizations.capabilityProposalReject")}
+                </Button>
+              </Popconfirm>
+            </Space>
+          ) : null,
+      },
+    ];
+  const sceneColumns: ColumnsType<EnterpriseScene> = [
+    { title: t("organizations.sceneName"), dataIndex: "name", key: "name" },
+    {
+      title: t("organizations.sceneVersion"),
+      dataIndex: "version",
+      key: "version",
+      render: (version: number) => `v${version}`,
+    },
+    {
+      title: t("organizations.position"),
+      dataIndex: "position_id",
+      key: "position",
+      render: (id: string) => positionNames.get(id) ?? id,
+    },
+    {
+      title: t("organizations.agent"),
+      dataIndex: "agent_id",
+      key: "agent",
+      render: (id: string) =>
+        chart?.positions
+          .flatMap((position) => position.assignments)
+          .find(
+            (item) => item.subject_type === "agent" && item.subject_id === id,
+          )?.label ?? id,
+    },
+    {
+      title: t("organizations.sceneEnabled"),
+      dataIndex: "enabled",
+      key: "enabled",
+      render: (enabled: number | boolean) => (
+        <Tag color={enabled ? "green" : "default"}>
+          {t(enabled ? "organizations.enabled" : "organizations.disabled")}
+        </Tag>
+      ),
+    },
+    {
+      title: t("common.actions"),
+      key: "actions",
+      render: (_: unknown, scene) => (
+        <Space>
+          <Button onClick={() => void showSceneVersions(scene)}>
+            {t("organizations.versionHistory")}
+          </Button>
+          <Button
+            icon={<Play size={14} />}
+            disabled={!scene.enabled}
+            onClick={() => void requestSceneRun(scene)}
+          >
+            {t("organizations.requestRun")}
+          </Button>
+          {canManage && (
+            <Button
+              icon={<Pencil size={14} />}
+              onClick={() => openSceneModal(scene)}
+            >
+              {t("common.edit")}
+            </Button>
+          )}
+          {canManage && (
+            <Button
+              onClick={async () => {
+                if (!organizationId) return;
+                try {
+                  await organizationsApi.updateScene(
+                    organizationId,
+                    scene.scene_id,
+                    scene.version,
+                    { enabled: !scene.enabled },
+                  );
+                  await load(organizationId);
+                } catch {
+                  message.error(t("organizations.operationFailed"));
+                }
+              }}
+            >
+              {t(
+                scene.enabled
+                  ? "organizations.disable"
+                  : "organizations.enable",
+              )}
+            </Button>
+          )}
+        </Space>
+      ),
+    },
+  ];
+  const runColumns: ColumnsType<EnterpriseSceneRun> = [
+    {
+      title: t("organizations.sceneName"),
+      dataIndex: "scene_name",
+      key: "scene",
+    },
+    {
+      title: t("organizations.planSnapshot"),
+      key: "plan",
+      render: (_: unknown, run) => run.plan_snapshot?.plan.title ?? "—",
+    },
+    {
+      title: t("organizations.runStatus"),
+      dataIndex: "status",
+      key: "status",
+      render: (status: EnterpriseSceneRun["status"]) => (
+        <Tag
+          color={
+            status === "succeeded"
+              ? "green"
+              : status === "failed" || status === "rejected"
+              ? "red"
+              : "blue"
+          }
+        >
+          {t("organizations.runStatuses." + status)}
+        </Tag>
+      ),
+    },
+    {
+      title: t("organizations.requestedBy"),
+      dataIndex: "requested_by",
+      key: "requester",
+    },
+    {
+      title: t("organizations.approvedBy"),
+      dataIndex: "approved_by",
+      key: "approver",
+      render: (id: number | null) => id ?? "—",
+    },
+    {
+      title: t("organizations.createdAt"),
+      dataIndex: "created_at",
+      key: "created",
+      render: (ts: number) => formatServerDateTime(ts, timezone),
+    },
+    {
+      title: t("common.actions"),
+      key: "actions",
+      render: (_: unknown, run) =>
+        canManage && run.status === "awaiting_approval" ? (
+          <Space>
+            <Button
+              type="primary"
+              icon={<Check size={14} />}
+              onClick={() => void decideSceneRun(run, "approve")}
+            >
+              {t("organizations.approve")}
+            </Button>
+            <Button
+              danger
+              icon={<X size={14} />}
+              onClick={() => void decideSceneRun(run, "reject")}
+            >
+              {t("organizations.reject")}
+            </Button>
+          </Space>
+        ) : null,
+    },
+  ];
+
+  const modalTitle =
+    modalKind === "organization"
+      ? chart
+        ? t("organizations.editOrganization")
+        : t("organizations.createOrganization")
+      : modalKind === "department"
+      ? editingDepartment
+        ? t("organizations.editDepartment")
+        : t("organizations.addDepartment")
+      : modalKind === "position"
+      ? editingPosition
+        ? t("organizations.editPosition")
+        : t("organizations.addPosition")
+      : modalKind === "member"
+      ? t("organizations.addMember")
+      : t("organizations.assign");
+
+  return (
+    <div style={{ padding: 24, maxWidth: 1400, margin: "0 auto" }}>
+      <Space direction="vertical" size="large" style={{ width: "100%" }}>
+        <div>
+          <Typography.Title level={2}>
+            <Building2
+              size={24}
+              style={{ marginRight: 8, verticalAlign: "middle" }}
+            />
+            {t("organizations.title")}
+          </Typography.Title>
+          <Typography.Paragraph type="secondary">
+            {t("organizations.description")}
+          </Typography.Paragraph>
+        </div>
+        <Card>
+          <Space
+            wrap
+            style={{ width: "100%", justifyContent: "space-between" }}
+          >
+            <Select
+              aria-label={t("organizations.selectOrganization")}
+              style={{ minWidth: 280 }}
+              value={organizationId}
+              placeholder={t("organizations.selectOrganization")}
+              options={organizations.map((item) => ({
+                value: item.organization_id,
+                label: item.name,
+              }))}
+              onChange={(value) => {
+                setOrganizationId(value);
+                setSelectedWorker(undefined);
+                setSelectedGoal(undefined);
+                setWorkerPlans([]);
+                void load(value);
+              }}
+            />
+            <Space wrap>
+              {chart && canManageMembers && (
+                <Button
+                  icon={<Pencil size={14} />}
+                  onClick={() =>
+                    openModal(
+                      "organization",
+                      chart.organization as unknown as Record<string, unknown>,
+                    )
+                  }
+                >
+                  {t("organizations.editOrganization")}
+                </Button>
+              )}
+              {canManage && (
+                <>
+                  <Button
+                    icon={<Plus size={14} />}
+                    onClick={() => openModal("department")}
+                  >
+                    {t("organizations.addDepartment")}
+                  </Button>
+                  <Button
+                    type="primary"
+                    icon={<Plus size={14} />}
+                    onClick={() => openModal("position")}
+                  >
+                    {t("organizations.addPosition")}
+                  </Button>
+                </>
+              )}
+              {canManageMembers && (
+                <Button
+                  icon={<UserRoundPlus size={14} />}
+                  onClick={() => openModal("member")}
+                >
+                  {t("organizations.addMember")}
+                </Button>
+              )}
+              {chart && canManageMembers && (
+                <Popconfirm
+                  title={t("organizations.deleteOrganizationConfirm")}
+                  onConfirm={async () => {
+                    try {
+                      await organizationsApi.remove(
+                        chart.organization.organization_id,
+                      );
+                      setChart(undefined);
+                      setOrganizationId(undefined);
+                      await load();
+                    } catch {
+                      message.error(t("organizations.operationFailed"));
+                    }
+                  }}
+                >
+                  <Button danger icon={<Trash2 size={14} />}>
+                    {t("common.delete")}
+                  </Button>
+                </Popconfirm>
+              )}
+              {!chart && (
+                <Button
+                  type="primary"
+                  icon={<Plus size={14} />}
+                  onClick={() => openModal("organization")}
+                >
+                  {t("organizations.createOrganization")}
+                </Button>
+              )}
+            </Space>
+          </Space>
+        </Card>
+
+        {loading ? (
+          <Spin />
+        ) : !chart ? (
+          <Card>
+            <Empty description={t("organizations.empty")}>
+              <Button type="primary" onClick={() => openModal("organization")}>
+                {t("organizations.createOrganization")}
+              </Button>
+            </Empty>
+          </Card>
+        ) : (
+          <Tabs
+            items={[
+              {
+                key: "chart",
+                label: t("organizations.organizationChart"),
+                children: (
+                  <Space
+                    direction="vertical"
+                    size="large"
+                    style={{ width: "100%" }}
+                  >
+                    <Card title={t("organizations.departments")}>
+                      <Table
+                        rowKey="department_id"
+                        size="small"
+                        pagination={false}
+                        dataSource={chart.departments}
+                        columns={departmentColumns}
+                      />
+                    </Card>
+                    <Card title={t("organizations.positions")}>
+                      <Table
+                        rowKey="position_id"
+                        size="small"
+                        pagination={false}
+                        dataSource={chart.positions}
+                        columns={positionColumns}
+                      />
+                    </Card>
+                  </Space>
+                ),
+              },
+              {
+                key: "members",
+                label: t("organizations.members"),
+                children: (
+                  <Card>
+                    <Table
+                      rowKey="user_id"
+                      size="small"
+                      pagination={false}
+                      dataSource={chart.members}
+                      columns={memberColumns}
+                    />
+                  </Card>
+                ),
+              },
+              {
+                key: "digital-workers",
+                label: t("organizations.virtualWorkers"),
+                children: (
+                  <Space
+                    direction="vertical"
+                    size="large"
+                    style={{ width: "100%" }}
+                  >
+                    {canManage && (
+                      <Card
+                        title={t("organizations.memoryCandidates")}
+                        extra={
+                          <Button
+                            onClick={() => void refreshMemoryCandidates()}
+                          >
+                            {t("common.refresh")}
+                          </Button>
+                        }
+                      >
+                        <Typography.Paragraph type="secondary">
+                          {t("organizations.memoryCandidateGovernanceHint")}
+                        </Typography.Paragraph>
+                        <Table
+                          rowKey="candidate_id"
+                          size="small"
+                          pagination={{ pageSize: 5 }}
+                          dataSource={memoryCandidates}
+                          columns={memoryCandidateColumns}
+                          expandable={{
+                            expandedRowRender: (candidate) => (
+                              <div>
+                                <Typography.Paragraph>
+                                  <strong>
+                                    {t("organizations.memoryCandidateSource")}:
+                                  </strong>{" "}
+                                  {candidate.source_run_id}
+                                </Typography.Paragraph>
+                                <Typography.Paragraph
+                                  style={{ whiteSpace: "pre-wrap" }}
+                                >
+                                  {candidate.content}
+                                </Typography.Paragraph>
+                                {candidate.error_summary && (
+                                  <Typography.Text type="danger">
+                                    {candidate.error_summary}
+                                  </Typography.Text>
+                                )}
+                                {candidate.memory_code && (
+                                  <Typography.Text type="secondary">
+                                    {t("organizations.memoryCandidateReceipt")}:{" "}
+                                    {candidate.memory_code}
+                                  </Typography.Text>
+                                )}
+                              </div>
+                            ),
+                          }}
+                        />
+                      </Card>
+                    )}
+                    <Card
+                      title={t("organizations.virtualWorkers")}
+                      extra={
+                        canManage ? (
+                          <Button
+                            type="primary"
+                            icon={<BriefcaseBusiness size={14} />}
+                            onClick={openWorkerModal}
+                          >
+                            {t("organizations.createWorker")}
+                          </Button>
+                        ) : null
+                      }
+                    >
+                      <Typography.Paragraph type="secondary">
+                        {t("organizations.workerGovernanceHint")}
+                      </Typography.Paragraph>
+                      <Table
+                        rowKey="worker_id"
+                        size="small"
+                        pagination={{ pageSize: 8 }}
+                        dataSource={digitalWorkers}
+                        columns={workerColumns}
+                      />
+                    </Card>
+                    {selectedWorker && (
+                      <Card
+                        title={`${t("organizations.stageGoals")} · ${
+                          selectedWorker.name
+                        }`}
+                        extra={
+                          <Space>
+                            <Button
+                              onClick={() => {
+                                setSelectedWorker(undefined);
+                                setSelectedGoal(undefined);
+                                setWorkerPlans([]);
+                              }}
+                            >
+                              {t("common.close")}
+                            </Button>
+                            {canManage && (
+                              <Button
+                                type="primary"
+                                icon={<Plus size={14} />}
+                                onClick={() => {
+                                  goalForm.resetFields();
+                                  setGoalModalOpen(true);
+                                }}
+                              >
+                                {t("organizations.addGoal")}
+                              </Button>
+                            )}
+                          </Space>
+                        }
+                      >
+                        <Typography.Paragraph type="secondary">
+                          {selectedWorker.responsibilities || "—"}
+                        </Typography.Paragraph>
+                        <Table
+                          rowKey="goal_id"
+                          size="small"
+                          pagination={false}
+                          dataSource={workerGoals}
+                          columns={goalColumns}
+                        />
+                      </Card>
+                    )}
+                    {selectedWorker && (
+                      <Card
+                        title={`${t("organizations.capabilityProfile")} · ${
+                          selectedWorker.name
+                        }`}
+                        extra={
+                          canManage && selectedWorker.status === "active" ? (
+                            <Space>
+                              <Select
+                                style={{ minWidth: 260 }}
+                                placeholder={t(
+                                  "organizations.capabilityChooseEvidence",
+                                )}
+                                value={capabilityProposalRunId}
+                                onChange={setCapabilityProposalRunId}
+                                options={sceneRuns
+                                  .filter(
+                                    (run) =>
+                                      run.status === "succeeded" &&
+                                      run.plan_snapshot?.worker.worker_id ===
+                                        selectedWorker.worker_id &&
+                                      !capabilityProposals.some(
+                                        (proposal) =>
+                                          proposal.source_run_id === run.run_id,
+                                      ),
+                                  )
+                                  .map((run) => ({
+                                    value: run.run_id,
+                                    label: `${
+                                      run.scene_name
+                                    } · ${formatServerDateTime(
+                                      run.created_at,
+                                      timezone,
+                                    )}`,
+                                  }))}
+                              />
+                              <Button
+                                type="primary"
+                                disabled={!capabilityProposalRunId}
+                                onClick={() => {
+                                  const run = sceneRuns.find(
+                                    (item) =>
+                                      item.run_id === capabilityProposalRunId,
+                                  );
+                                  if (run) openCapabilityProposal(run);
+                                }}
+                              >
+                                {t("organizations.addCapabilityProposal")}
+                              </Button>
+                            </Space>
+                          ) : null
+                        }
+                      >
+                        <Typography.Paragraph type="secondary">
+                          {t("organizations.capabilityGovernanceHint", {
+                            version: selectedWorker.capability_version,
+                          })}
+                        </Typography.Paragraph>
+                        <Space wrap style={{ marginBottom: 16 }}>
+                          {selectedWorker.capabilities.skills.map((value) => (
+                            <Tag key={`skill-${value}`}>{value}</Tag>
+                          ))}
+                          {selectedWorker.capabilities.knowledge.map(
+                            (value) => (
+                              <Tag key={`knowledge-${value}`} color="blue">
+                                {value}
+                              </Tag>
+                            ),
+                          )}
+                          {selectedWorker.capabilities.operating_guidance.map(
+                            (value) => (
+                              <Tag key={`guidance-${value}`} color="purple">
+                                {value}
+                              </Tag>
+                            ),
+                          )}
+                          {selectedWorker.capabilities.skill_package_ids.map(
+                            (id) => (
+                              <Tag key={`package-${id}`} color="cyan">
+                                {authorizedWorkerResources.skills.find(
+                                  (item) => item.id === id,
+                                )?.name ?? id}
+                              </Tag>
+                            ),
+                          )}
+                          {selectedWorker.capabilities.knowledge_base_ids.map(
+                            (id) => (
+                              <Tag key={`kb-${id}`} color="geekblue">
+                                {authorizedWorkerResources.knowledge_bases.find(
+                                  (item) => item.id === id,
+                                )?.name ?? id}
+                              </Tag>
+                            ),
+                          )}
+                          {Object.values(selectedWorker.capabilities).every(
+                            (values) => values.length === 0,
+                          ) && (
+                            <Typography.Text type="secondary">
+                              —
+                            </Typography.Text>
+                          )}
+                        </Space>
+                        {canManage && (
+                          <div style={{ marginBottom: 16 }}>
+                            <Button
+                              loading={diagnosingKnowledge}
+                              onClick={() => void diagnoseWorkerKnowledge()}
+                            >
+                              {t("organizations.diagnoseKnowledgeSources")}
+                            </Button>
+                            {knowledgeDiagnostics?.worker_id ===
+                              selectedWorker.worker_id && (
+                              <div style={{ marginTop: 12 }}>
+                                <Typography.Text strong>
+                                  {t(
+                                    "organizations.knowledgeDiagnosticSummary",
+                                    {
+                                      healthy:
+                                        knowledgeDiagnostics.summary.healthy,
+                                      total: knowledgeDiagnostics.summary.total,
+                                      attention:
+                                        knowledgeDiagnostics.summary
+                                          .attention_required,
+                                    },
+                                  )}
+                                </Typography.Text>
+                                {knowledgeDiagnostics.sources.map((source) => (
+                                  <Typography.Paragraph
+                                    key={`${source.mcp_server}:${source.knowledge_base_ref}`}
+                                    style={{ margin: "6px 0" }}
+                                  >
+                                    <Tag
+                                      color={
+                                        source.health === "healthy"
+                                          ? "green"
+                                          : "orange"
+                                      }
+                                    >
+                                      {source.health}
+                                    </Tag>
+                                    {source.connector_name ?? source.mcp_server}
+                                    {" · "}
+                                    {source.knowledge_base_ref}
+                                    {" · "}
+                                    {t(
+                                      "organizations.credentialStates." +
+                                        source.credential.state,
+                                    )}
+                                  </Typography.Paragraph>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        <Table
+                          rowKey="proposal_id"
+                          size="small"
+                          pagination={{ pageSize: 5 }}
+                          dataSource={capabilityProposals}
+                          columns={capabilityProposalColumns}
+                          expandable={{
+                            expandedRowRender: (proposal) => (
+                              <div>
+                                <Typography.Paragraph>
+                                  <strong>
+                                    {t(
+                                      "organizations.capabilityProposalSummary",
+                                    )}
+                                    :
+                                  </strong>{" "}
+                                  {proposal.source_summary}
+                                </Typography.Paragraph>
+                                <Typography.Paragraph>
+                                  <strong>
+                                    {t("organizations.capabilityObservedGaps")}:
+                                  </strong>{" "}
+                                  {proposal.observed_gaps}
+                                </Typography.Paragraph>
+                                <Typography.Paragraph>
+                                  <strong>
+                                    {t(
+                                      "organizations.capabilityExpectedBenefit",
+                                    )}
+                                    :
+                                  </strong>{" "}
+                                  {proposal.expected_benefit}
+                                </Typography.Paragraph>
+                                {proposal.risk_notes && (
+                                  <Typography.Paragraph>
+                                    <strong>
+                                      {t("organizations.capabilityRiskNotes")}:
+                                    </strong>{" "}
+                                    {proposal.risk_notes}
+                                  </Typography.Paragraph>
+                                )}
+                                {proposal.review_note && (
+                                  <Typography.Paragraph>
+                                    <strong>
+                                      {t("organizations.capabilityReviewNote")}:
+                                    </strong>{" "}
+                                    {proposal.review_note}
+                                  </Typography.Paragraph>
+                                )}
+                              </div>
+                            ),
+                          }}
+                        />
+                      </Card>
+                    )}
+                    {selectedWorker && selectedGoal && (
+                      <Card
+                        title={`${t("organizations.workPlans")} · ${
+                          selectedGoal.title
+                        }`}
+                        extra={
+                          <Space>
+                            <Button onClick={() => setSelectedGoal(undefined)}>
+                              {t("common.close")}
+                            </Button>
+                            {canManage && selectedGoal.status === "active" && (
+                              <Button
+                                type="primary"
+                                icon={<Plus size={14} />}
+                                onClick={() => openPlanModal()}
+                              >
+                                {t("organizations.addPlan")}
+                              </Button>
+                            )}
+                          </Space>
+                        }
+                      >
+                        <Typography.Paragraph type="secondary">
+                          {t("organizations.planGovernanceHint")}
+                        </Typography.Paragraph>
+                        <Table
+                          rowKey="plan_id"
+                          size="small"
+                          pagination={false}
+                          dataSource={workerPlans}
+                          columns={planColumns}
+                          expandable={{
+                            expandedRowRender: (plan) => (
+                              <div>
+                                <Typography.Paragraph>
+                                  <strong>
+                                    {t("organizations.planApproach")}:
+                                  </strong>{" "}
+                                  {plan.approach || "—"}
+                                </Typography.Paragraph>
+                                <ol>
+                                  {plan.steps.map((step, index) => (
+                                    <li key={`${plan.plan_id}-${index}`}>
+                                      {step.action} — {step.expected_output}
+                                    </li>
+                                  ))}
+                                </ol>
+                              </div>
+                            ),
+                          }}
+                        />
+                      </Card>
+                    )}
+                  </Space>
+                ),
+              },
+              {
+                key: "scenes",
+                label: t("organizations.scenes"),
+                children: (
+                  <Space
+                    direction="vertical"
                     size="large"
                     style={{ width: "100%" }}
                   >
