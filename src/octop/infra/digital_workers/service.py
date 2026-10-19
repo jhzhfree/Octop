@@ -26,6 +26,15 @@ class DigitalWorkerService:
     def _audit(self, action: str, target: str) -> None:
         self.repos.audit_repo.write(actor=str(self.actor.id), action=action, target=target)
 
+    @staticmethod
+    def _required_text(value: str, field: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise DigitalWorkerError(
+                "DIGITAL_WORKER_FIELD_REQUIRED", f"{field} cannot be blank", 422
+            )
+        return normalized
+
     def _organization_role(self, organization_id: str) -> str:
         organization = self.repos.organization_repo.get(organization_id)
         if organization is None:
@@ -89,7 +98,7 @@ class DigitalWorkerService:
             position_id=position_id,
             agent_id=agent_id,
             owner_user_id=self.actor.id,
-            name=name.strip(),
+            name=self._required_text(name, "name"),
             responsibilities=(
                 responsibilities if responsibilities is not None else position["duties"]
             ).strip(),
@@ -118,9 +127,10 @@ class DigitalWorkerService:
                 "DIGITAL_WORKER_VERSION_CONFLICT", "worker profile was updated", 409
             )
         normalized = dict(updates)
-        for field in ("name", "responsibilities"):
-            if field in normalized:
-                normalized[field] = normalized[field].strip()
+        if "name" in normalized:
+            normalized["name"] = self._required_text(normalized["name"], "name")
+        if "responsibilities" in normalized:
+            normalized["responsibilities"] = normalized["responsibilities"].strip()
         next_status = normalized.get("status")
         allowed_transitions = {
             "draft": {"active", "archived"},
@@ -183,9 +193,9 @@ class DigitalWorkerService:
             )
         goal = self.repos.digital_worker_repo.create_goal(
             worker_id=worker_id,
-            title=title.strip(),
+            title=self._required_text(title, "title"),
             description=description.strip(),
-            success_criteria=success_criteria.strip(),
+            success_criteria=self._required_text(success_criteria, "success_criteria"),
             period_start=period_start,
             period_end=period_end,
             created_by=self.actor.id,
@@ -226,7 +236,11 @@ class DigitalWorkerService:
             )
         for field in ("title", "description", "success_criteria"):
             if field in normalized:
-                normalized[field] = normalized[field].strip()
+                normalized[field] = (
+                    self._required_text(normalized[field], field)
+                    if field in {"title", "success_criteria"}
+                    else normalized[field].strip()
+                )
         start = normalized.get("period_start", current["period_start"])
         end = normalized.get("period_end", current["period_end"])
         if start and end and start > end:
@@ -287,12 +301,17 @@ class DigitalWorkerService:
         self._require_manager(organization_id)
         self._goal(organization_id, worker_id, goal_id)
         normalized_steps = [
-            {"action": step["action"].strip(), "expected_output": step["expected_output"].strip()}
+            {
+                "action": self._required_text(step["action"], "step action"),
+                "expected_output": self._required_text(
+                    step["expected_output"], "step expected_output"
+                ),
+            }
             for step in steps
         ]
         plan = self.repos.digital_worker_repo.create_plan(
             goal_id=goal_id,
-            title=title.strip(),
+            title=self._required_text(title, "title"),
             approach=approach.strip(),
             steps=normalized_steps,
             created_by=self.actor.id,
@@ -318,14 +337,16 @@ class DigitalWorkerService:
             )
         normalized = dict(updates)
         if "title" in normalized:
-            normalized["title"] = normalized["title"].strip()
+            normalized["title"] = self._required_text(normalized["title"], "title")
         if "approach" in normalized:
             normalized["approach"] = normalized["approach"].strip()
         if "steps" in normalized:
             normalized["steps"] = [
                 {
-                    "action": step["action"].strip(),
-                    "expected_output": step["expected_output"].strip(),
+                    "action": self._required_text(step["action"], "step action"),
+                    "expected_output": self._required_text(
+                        step["expected_output"], "step expected_output"
+                    ),
                 }
                 for step in normalized["steps"]
             ]
@@ -515,10 +536,10 @@ class DigitalWorkerService:
             proposal_id=new_ulid(),
             worker_id=worker_id,
             source_run_id=source_run_id,
-            source_summary=source_summary.strip(),
-            observed_gaps=observed_gaps.strip(),
+            source_summary=self._required_text(source_summary, "source_summary"),
+            observed_gaps=self._required_text(observed_gaps, "observed_gaps"),
             proposed_changes=normalized,
-            expected_benefit=expected_benefit.strip(),
+            expected_benefit=self._required_text(expected_benefit, "expected_benefit"),
             risk_notes=risk_notes.strip(),
             base_capability_version=int(worker["capability_version"]),
             created_by=self.actor.id,

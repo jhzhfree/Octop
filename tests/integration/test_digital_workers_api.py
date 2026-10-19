@@ -76,6 +76,12 @@ async def test_digital_worker_profile_and_stage_goals(env):
         json={"subject_type": "agent", "subject_id": agent_id},
     )
     assert appointment.status_code == 201, appointment.text
+    blank_name = await client.post(
+        f"/api/organizations/{organization_id}/digital-workers",
+        headers=owner_auth,
+        json={"position_id": position_id, "agent_id": agent_id, "name": "   "},
+    )
+    assert blank_name.status_code == 422
     created = await client.post(
         f"/api/organizations/{organization_id}/digital-workers",
         headers=owner_auth,
@@ -86,6 +92,12 @@ async def test_digital_worker_profile_and_stage_goals(env):
     assert worker["responsibilities"] == "Review service health and report risks"
     assert worker["status"] == "draft"
     assert worker["version"] == 1
+    blank_name_update = await client.patch(
+        f"/api/organizations/{organization_id}/digital-workers/{worker['worker_id']}",
+        headers=owner_auth,
+        json={"expected_version": 1, "name": "   "},
+    )
+    assert blank_name_update.status_code == 422
 
     duplicate = await client.post(
         f"/api/organizations/{organization_id}/digital-workers",
@@ -121,6 +133,12 @@ async def test_digital_worker_profile_and_stage_goals(env):
     assert goal_response.status_code == 201, goal_response.text
     goal = goal_response.json()
     assert goal["status"] == "draft"
+    blank_goal = await client.post(
+        f"/api/organizations/{organization_id}/digital-workers/{worker['worker_id']}/goals",
+        headers=owner_auth,
+        json={"title": "  ", "success_criteria": "  "},
+    )
+    assert blank_goal.status_code == 422
     member_goals = await client.get(
         f"/api/organizations/{organization_id}/digital-workers/{worker['worker_id']}/goals",
         headers=member_auth,
@@ -151,6 +169,23 @@ async def test_digital_worker_profile_and_stage_goals(env):
     plan = plan_response.json()
     assert plan["status"] == "draft"
     assert plan["steps"] == []
+    blank_plan = await client.post(
+        f"/api/organizations/{organization_id}/digital-workers/{worker['worker_id']}"
+        f"/goals/{goal['goal_id']}/plans",
+        headers=owner_auth,
+        json={"title": "   "},
+    )
+    assert blank_plan.status_code == 422
+    blank_step = await client.patch(
+        f"/api/organizations/{organization_id}/digital-workers/{worker['worker_id']}"
+        f"/goals/{goal['goal_id']}/plans/{plan['plan_id']}",
+        headers=owner_auth,
+        json={
+            "expected_version": 1,
+            "steps": [{"action": "  ", "expected_output": "report"}],
+        },
+    )
+    assert blank_step.status_code == 422
     member_plans = await client.get(
         f"/api/organizations/{organization_id}/digital-workers/{worker['worker_id']}"
         f"/goals/{goal['goal_id']}/plans",
@@ -314,6 +349,13 @@ async def test_digital_worker_profile_and_stage_goals(env):
         "expected_benefit": "减少周报中的口径歧义。",
         "risk_notes": "需确认指标定义仍适用于当前服务版本。",
     }
+    blank_proposal = await client.post(
+        f"/api/organizations/{organization_id}/digital-workers/{worker['worker_id']}"
+        "/capability-proposals",
+        headers=owner_auth,
+        json={**proposal_payload, "source_summary": "   "},
+    )
+    assert blank_proposal.status_code == 422
     unauthorized_resource = await client.post(
         f"/api/organizations/{organization_id}/digital-workers/{worker['worker_id']}"
         "/capability-proposals",
