@@ -382,7 +382,15 @@ class EnterpriseSceneService:
                 not skill_refs.issubset(configured_skills)
                 or not knowledge_refs.issubset(configured_knowledge)
                 or any(self.repos.skill_package_repo.get(item) is None for item in skill_refs)
-                or any(self.repos.knowledge_repo.get_base(item) is None for item in knowledge_refs)
+                or any(
+                    (base := self.repos.knowledge_repo.get_base(item)) is None
+                    or (
+                        not requester.is_admin
+                        and base.owner_user_id != requester_id
+                        and not base.shared
+                    )
+                    for item in knowledge_refs
+                )
             ):
                 self.repos.enterprise_scene_repo.mark_failed(
                     run_id,
