@@ -461,7 +461,18 @@ class EnterpriseSceneService:
             ):
                 await manager.delete(cron_id)
                 raise SceneError("SCENE_RUN_ALREADY_DECIDED", "run was already decided", 409)
-            await manager.run_now(cron_id)
+            try:
+                await manager.run_now(cron_id)
+            except Exception:
+                # The DB transition is already committed. A dispatch error
+                # cannot prove that execution did not start, so retain the
+                # job and return its durable queued state for reconciliation.
+                self.repos.audit_repo.write(
+                    actor=str(self.actor.id),
+                    action="scene.run_dispatch_uncertain",
+                    target=run_id,
+                )
+                return self.get_run(organization_id, run_id)
         except Exception:
             # The task may already have started when dispatch reports an error.
             # Do not delete a queued job here: cancellation is not guaranteed
