@@ -339,7 +339,25 @@ class EnterpriseSceneService:
             )
             return self.get_run(organization_id, run_id)
 
+        requester_id = int(run["requested_by"])
+        requester = self.repos.user_repo.get(requester_id)
+        if requester is None or requester.disabled:
+            raise SceneError("SCENE_REQUESTER_UNAVAILABLE", "requester is inactive", 409)
+        if not requester.is_admin and self.repos.organization_repo.get_member(
+            organization_id, requester_id
+        ) is None:
+            raise SceneError(
+                "SCENE_REQUESTER_FORBIDDEN", "requester left the organization", 409
+            )
         agent = self.repos.agent_repo.get(str(run["agent_id"]))
+        if agent is not None and not requester.is_admin and (
+            agent.user_id != requester_id and not agent.is_shared
+        ):
+            raise SceneError(
+                "SCENE_REQUESTER_AGENT_FORBIDDEN",
+                "requester no longer has Agent access",
+                409,
+            )
         if agent is None or not agent.enabled:
             self.repos.enterprise_scene_repo.mark_failed(run_id, summary="Agent is unavailable")
             raise SceneError("SCENE_AGENT_UNAVAILABLE", "Agent is unavailable", 409)
