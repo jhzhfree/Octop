@@ -136,6 +136,8 @@ class PlatformMemorySourceBinding(BaseModel):
     mcp_server: str = Field(min_length=1, max_length=128)
     scope_type: Literal["AGENT", "TEAM", "PROJECT", "TASK", "WORKFLOW", "SESSION"] = "AGENT"
     scope_code: str | None = Field(default=None, min_length=1, max_length=128)
+    read_enabled: bool = True
+    capture_enabled: bool = True
 
 
 class PlatformMemorySourcesPutBody(BaseModel):

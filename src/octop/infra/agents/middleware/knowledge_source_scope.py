@@ -140,6 +140,7 @@ def enforce_memory_source_args(
         source
         for source in server_sources
         if source.get("access") == "read"
+        and source.get("read_enabled", True)
         and isinstance(source.get("read_tools"), list)
         and tool in source["read_tools"]
     ]

@@ -93,6 +93,8 @@ def canonical_memory_sources(capabilities: Any) -> list[dict[str, Any]]:
                 "scope_type": scope_type,
                 "scope_code": str(source.get("scope_code") or "").strip() or None,
                 "read_tools": tools,
+                "read_enabled": bool(source.get("read_enabled", True)),
+                "capture_enabled": bool(source.get("capture_enabled", True)),
                 "access": "read",
             }
         )

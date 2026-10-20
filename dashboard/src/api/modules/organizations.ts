@@ -645,7 +645,12 @@ export const organizationsApi = {
         encodeURIComponent(sceneId) +
         "/versions",
     ),
-  requestSceneRun: (id: string, sceneId: string, planId?: string) =>
+  requestSceneRun: (
+    id: string,
+    sceneId: string,
+    planId?: string,
+    memoryPolicy?: { useMemory?: boolean; captureMemory?: boolean },
+  ) =>
     request<EnterpriseSceneRun>(
       "/organizations/" +
         encodeURIComponent(id) +
@@ -653,7 +658,14 @@ export const organizationsApi = {
         encodeURIComponent(sceneId) +
         "/runs",
       planId
-        ? { method: "POST", body: JSON.stringify({ plan_id: planId }) }
+        ? {
+            method: "POST",
+            body: JSON.stringify({
+              plan_id: planId,
+              use_memory: memoryPolicy?.useMemory ?? true,
+              capture_memory: memoryPolicy?.captureMemory ?? true,
+            }),
+          }
         : { method: "POST" },
     ),
   sceneRuns: (id: string) =>

@@ -36,6 +36,8 @@ PUT /api/organizations/{organization_id}/digital-workers/{worker_id}/memory-sour
 
 For an Agent-wide memory scope, use `"scope_type": "AGENT"` and omit `scope_code`. Other scopes require an explicit code. The API only accepts the standardized `memory_recall` tool and records the change in the organization audit log.
 
+Each virtual-worker memory binding can also set `read_enabled` and `capture_enabled` (both default to `true` for existing clients). `read_enabled` controls whether the worker may recall that scope. `capture_enabled` controls whether a successful run may stage a candidate for that scope; it never permits direct Agent writes. At plan-run request time, `use_memory` and `capture_memory` can further disable recall or candidate generation for that run. These run-level switches only reduce the worker's configured permissions and are stored in the run snapshot.
+
 For backward compatibility, an AKB source can still be bound through `PUT /api/organizations/{organization_id}/digital-workers/{worker_id}/akb-knowledge-sources`:
 
 ```json
@@ -61,7 +63,7 @@ Octop stores custom MCP credentials through its encrypted connector-credential s
 
 AKB validates the API Key, knowledge-base binding, and `READ` scope on each retrieval call. A READ-only Key also prevents AKB from advertising the `ingest_text` tool. An Agent cannot use an MCP argument to widen the Key's scope. `knowledgeBaseCode` gives the integration a stable selector while numeric `knowledgeBaseId` remains backward compatible. `permissionTags` narrows retrieval; AKB ACL remains authoritative. AKB records MCP query source, query ID, and citations for audit and replay.
 
-For memory, Octop snapshots the worker's scope binding when a run is requested, checks it again at approval and execution, injects the approved `scopeType`/`scopeCode`, and rejects changes to that binding. Runs can use only `memory_recall`. After a successful scheduled run, Octop stages a bounded candidate from the visible final response for each bound AKB scope. An organization owner or manager other than the requester can review, edit, approve, or reject it:
+For memory, Octop snapshots the worker's scope binding and run switches when a run is requested, checks the binding again at approval and execution, injects the approved `scopeType`/`scopeCode`, and rejects changes to that binding. Runs can use only `memory_recall`. After a successful scheduled run, Octop stages a bounded candidate from the visible final response only for scopes with candidate generation enabled. An organization owner or manager other than the requester can review, edit, approve, or reject it:
 
 ```http
 GET  /api/organizations/{organization_id}/memory-candidates?status=pending

@@ -205,6 +205,7 @@ class WorkerMemoryService:
             )
             == expected
             for source in sources
+            if source.get("capture_enabled", True)
         ):
             raise DigitalWorkerError(
                 "DIGITAL_WORKER_MEMORY_BINDING_CHANGED",
@@ -237,6 +238,7 @@ class WorkerMemoryService:
                 )
                 == expected
                 for source in sources
+                if source.get("capture_enabled", True)
             )
         ):
             raise DigitalWorkerError(

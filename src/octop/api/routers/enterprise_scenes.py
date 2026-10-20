@@ -37,6 +37,8 @@ class SceneDecisionBody(BaseModel):
 
 class SceneRunRequestBody(BaseModel):
     plan_id: str | None = Field(default=None, min_length=1, max_length=128)
+    use_memory: bool = True
+    capture_memory: bool = True
 
 
 class SceneRecord(BaseModel):
@@ -222,7 +224,11 @@ async def request_scene_run(
         raise HTTPException(status_code=403, detail="Scene connector access is not granted")
     return _call(
         lambda: service.request_run(
-            organization_id, scene_id, plan_id=body.plan_id if body is not None else None
+            organization_id,
+            scene_id,
+            plan_id=body.plan_id if body is not None else None,
+            use_memory=body.use_memory if body is not None else True,
+            capture_memory=body.capture_memory if body is not None else True,
         )
     )
 

@@ -210,6 +210,8 @@ class CronDeliveryService:
 
         content = outbound.strip()[:4000]
         for source in canonical_memory_sources(capabilities):
+            if not source.get("capture_enabled", True):
+                continue
             if source.get("provider") != "akb" or source.get("mcp_server") not in run.get(
                 "mcp_servers", []
             ):
@@ -338,7 +340,8 @@ class CronDeliveryService:
             current_memory_sources = canonical_memory_sources(
                 (worker or {}).get("capabilities", {})
             )
-            if approved_memory_sources != current_memory_sources:
+            approved_bindings = snapshot.get("memory_source_bindings", approved_memory_sources)
+            if approved_bindings != current_memory_sources:
                 raise RuntimeError("Approved memory-source bindings changed before execution")
             if any(
                 not isinstance(source, dict)
@@ -358,7 +361,9 @@ class CronDeliveryService:
             )  # noqa: PLC0415
 
             request.setdefault("configurable", {})[CONFIG_KEY] = approved_sources
-            request["configurable"][MEMORY_CONFIG_KEY] = approved_memory_sources
+            request["configurable"][MEMORY_CONFIG_KEY] = [
+                source for source in approved_memory_sources if source.get("read_enabled", True)
+            ]
             request["configurable"][MEMORY_SERVERS_CONFIG_KEY] = list(servers)
         self._attach_turn_knowledge_config(request, command, session)
         return request

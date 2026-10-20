@@ -561,6 +561,8 @@ async def test_digital_worker_profile_and_stage_goals(env, monkeypatch):
     assert next_run.json()["plan_snapshot"]["capabilities"] == {
         **worker_after_publish["capabilities"],
         "memory_sources": [],
+        "memory_source_bindings": [],
+        "memory_policy": {"use_memory": True, "capture_memory": True},
     }
     assert "capability profile version: 3" in next_run.json()["prompt_snapshot"]
     assert skill_package.id in next_run.json()["plan_snapshot"]["capabilities"]["skill_package_ids"]
@@ -617,6 +619,8 @@ async def test_digital_worker_profile_and_stage_goals(env, monkeypatch):
             "scope_type": "TASK",
             "scope_code": "weekly-service-report",
             "read_tools": ["memory_recall"],
+            "read_enabled": True,
+            "capture_enabled": True,
             "access": "read",
         }
     ]
@@ -629,6 +633,24 @@ async def test_digital_worker_profile_and_stage_goals(env, monkeypatch):
     memory_snapshot = memory_run.json()["plan_snapshot"]["capabilities"]["memory_sources"]
     assert memory_snapshot == memory_source.json()["capabilities"]["memory_sources"]
     assert "memory_recall" in memory_run.json()["prompt_snapshot"]
+    memory_opt_out = await client.post(
+        f"/api/organizations/{organization_id}/scenes/{scene_id}/runs",
+        headers=owner_auth,
+        json={
+            "plan_id": plan["plan_id"],
+            "use_memory": False,
+            "capture_memory": False,
+        },
+    )
+    assert memory_opt_out.status_code == 201, memory_opt_out.text
+    opt_out_capabilities = memory_opt_out.json()["plan_snapshot"]["capabilities"]
+    assert opt_out_capabilities["memory_policy"] == {
+        "use_memory": False,
+        "capture_memory": False,
+    }
+    assert opt_out_capabilities["memory_sources"][0]["read_enabled"] is False
+    assert opt_out_capabilities["memory_sources"][0]["capture_enabled"] is False
+    assert "Before doing the work, recall" not in memory_opt_out.json()["prompt_snapshot"]
     cleared_memory_source = await client.put(
         f"/api/organizations/{organization_id}/digital-workers/{worker['worker_id']}"
         "/memory-sources",

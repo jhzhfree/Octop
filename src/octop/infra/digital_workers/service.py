@@ -560,6 +560,8 @@ class DigitalWorkerService:
                     "scope_type": scope_type,
                     "scope_code": scope_code,
                     "read_tools": ["memory_recall"],
+                    "read_enabled": bool(source.get("read_enabled", True)),
+                    "capture_enabled": bool(source.get("capture_enabled", True)),
                     "access": "read",
                 }
             )

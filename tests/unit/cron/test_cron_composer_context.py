@@ -209,6 +209,8 @@ async def test_scene_cron_passes_approved_memory_scope_to_tool_runtime() -> None
             "scope_type": "TASK",
             "scope_code": "weekly-report",
             "read_tools": ["memory_recall"],
+            "read_enabled": True,
+            "capture_enabled": True,
             "access": "read",
         }
     ]

@@ -23,6 +23,7 @@ import {
   Select,
   Space,
   Spin,
+  Switch,
   Table,
   Tabs,
   Tag,
@@ -543,7 +544,11 @@ export default function OrganizationsPage() {
     );
     setRunRequestPlan(plan);
     runRequestForm.resetFields();
-    runRequestForm.setFieldsValue({ scene_id: matching[0]?.scene_id });
+    runRequestForm.setFieldsValue({
+      scene_id: matching[0]?.scene_id,
+      use_memory: true,
+      capture_memory: true,
+    });
     setRunRequestOpen(true);
   }
 
@@ -555,6 +560,10 @@ export default function OrganizationsPage() {
         organizationId,
         String(values.scene_id ?? ""),
         runRequestPlan.plan_id,
+        {
+          useMemory: values.use_memory !== false,
+          captureMemory: values.capture_memory !== false,
+        },
       );
       setRunRequestOpen(false);
       await load(organizationId);
@@ -2638,6 +2647,21 @@ export default function OrganizationsPage() {
                   : []
               }
             />
+          </Form.Item>
+          <Form.Item
+            name="use_memory"
+            label={t("organizations.runMemoryRecall")}
+            valuePropName="checked"
+          >
+            <Switch />
+          </Form.Item>
+          <Form.Item
+            name="capture_memory"
+            label={t("organizations.runMemoryCandidate")}
+            valuePropName="checked"
+            extra={t("organizations.runMemoryCandidateHint")}
+          >
+            <Switch />
           </Form.Item>
         </Form>
       </Modal>
