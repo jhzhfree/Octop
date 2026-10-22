@@ -148,6 +148,33 @@ async def test_approval_rejects_candidate_not_present_in_run_snapshot(
 
 
 @pytest.mark.asyncio
+async def test_failed_memory_candidate_can_be_rejected_without_retrying_akb(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, repos, _connector = _service()
+    failed = {**_candidate(), "status": "failed"}
+    rejected = {**failed, "status": "rejected", "reviewed_by": 22}
+    repos.digital_worker_repo.get_memory_candidate.side_effect = [failed, rejected]
+    repos.digital_worker_repo.reject_memory_candidate.return_value = True
+    capture = AsyncMock()
+    monkeypatch.setattr(
+        "octop.infra.digital_workers.memory._akb_memory_client",
+        lambda _config: SimpleNamespace(capture=capture),
+    )
+
+    result = await service.review_candidate(
+        "org1", str(failed["candidate_id"]), approve=False, review_note="Do not retry"
+    )
+
+    assert result["status"] == "rejected"
+    repos.digital_worker_repo.reject_memory_candidate.assert_called_once_with(
+        str(failed["candidate_id"]), reviewer_id=22, review_note="Do not retry"
+    )
+    repos.audit_repo.write.assert_called_once()
+    capture.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_akb_capture_payload_contains_source_scope_and_retry_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

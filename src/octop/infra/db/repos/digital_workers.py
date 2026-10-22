@@ -707,7 +707,7 @@ class DigitalWorkerRepo:
             cur = conn.execute(
                 "UPDATE digital_worker_memory_candidates SET status = 'rejected', "
                 "reviewed_by = ?, review_note = ?, updated_at = ? "
-                "WHERE candidate_id = ? AND status = 'pending'",
+                "WHERE candidate_id = ? AND status IN ('pending','failed')",
                 (reviewer_id, review_note, now_ts(), candidate_id),
             )
         return int(cur.rowcount or 0) == 1
