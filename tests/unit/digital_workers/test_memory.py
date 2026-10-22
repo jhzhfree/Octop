@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from octop.infra.cron.delivery import CronDeliveryCommand, CronDeliveryService
 from octop.infra.digital_workers.memory import WorkerMemoryService
 from octop.infra.knowledge.akb_client import AkbMemoryClient, AkbMemoryConfig
 
@@ -30,6 +31,7 @@ def _run() -> dict[str, object]:
         "run_id": "01JABCDEF0123456789ABCDEFGH",
         "organization_id": "org1",
         "requested_by": 11,
+        "mcp_servers": ["akb__1"],
         "status": "succeeded",
         "plan_snapshot": {
             "worker": {"worker_id": "worker1"},
@@ -181,3 +183,136 @@ async def test_akb_capture_payload_contains_source_scope_and_retry_key(
         "importance": 3,
         "expiresInDays": 180,
     }
+
+
+@pytest.mark.asyncio
+async def test_successful_run_candidate_review_writes_scoped_memory_to_akb(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = _run()
+    queued_run = {**run, "status": "queued"}
+    candidate_state: dict[str, object] = {}
+
+    def create_candidate(**values: object) -> dict[str, object]:
+        candidate_state.update(values)
+        candidate_state.update(status="pending", created_by=11)
+        return candidate_state
+
+    def claim_candidate(
+        _candidate_id: str, *, reviewer_id: int, review_note: str, content: str
+    ) -> bool:
+        candidate_state.update(
+            status="writing", reviewed_by=reviewer_id, review_note=review_note, content=content
+        )
+        return True
+
+    def finish_candidate(
+        _candidate_id: str,
+        *,
+        status: str,
+        memory_code: str | None = None,
+        error_summary: str | None = None,
+    ) -> bool:
+        candidate_state.update(status=status, memory_code=memory_code, error_summary=error_summary)
+        return True
+
+    repos = MagicMock()
+    repos.enterprise_scene_repo.get_run_by_cron_id.return_value = queued_run
+    repos.enterprise_scene_repo.get_run.return_value = run
+    repos.organization_repo.get_member.return_value = {"role": "manager"}
+    repos.digital_worker_repo.create_memory_candidate.side_effect = create_candidate
+    repos.digital_worker_repo.get_memory_candidate.side_effect = lambda _candidate_id: (
+        candidate_state or None
+    )
+    repos.digital_worker_repo.get_worker.return_value = {
+        "capabilities": run["plan_snapshot"]["capabilities"]  # type: ignore[index]
+    }
+    repos.digital_worker_repo.claim_memory_candidate.side_effect = claim_candidate
+    repos.digital_worker_repo.finish_memory_candidate.side_effect = finish_candidate
+    repos.user_repo.get.return_value = SimpleNamespace(disabled=False)
+    connector = MagicMock()
+    connector.custom_harness_config_for_user.return_value = {
+        "transport": "streamable_http",
+        "url": "https://akb.example.com/api/mcp",
+        "headers": {"X-API-Key": "secret"},
+    }
+
+    delivery = CronDeliveryService(gateway=MagicMock(), agent_manager=MagicMock(), repos=repos)
+    command = CronDeliveryCommand(
+        cron_id="cron-1",
+        cron_name="Weekly report",
+        agent_id="agent-1",
+        user_id=11,
+        session_key="agent-1:dashboard:11:dm",
+        prompt="Prepare the weekly report",
+        fresh_thread=False,
+        task_type="agent",
+        model=None,
+        mcp_servers=("akb__1",),
+        mcp_servers_exact=True,
+    )
+    delivery._create_scene_memory_candidates(command, "  Reviewed weekly result  ")
+
+    assert candidate_state["content"] == "Reviewed weekly result"
+    assert candidate_state["source_run_id"] == run["run_id"]
+    assert candidate_state["scope_code"] == "weekly-report"
+
+    client = AkbMemoryClient(AkbMemoryConfig("https://akb.example.com", "secret"))
+    captured_payloads: list[dict[str, object]] = []
+
+    def fake_capture(payload: dict[str, object]) -> dict[str, object]:
+        captured_payloads.append(payload)
+        return {"memory_code": "MEM-APPROVED"}
+
+    monkeypatch.setattr(client, "_capture", fake_capture)
+    monkeypatch.setattr(
+        "octop.infra.digital_workers.memory._akb_memory_client", lambda _config: client
+    )
+    memory_service = WorkerMemoryService(repos, SimpleNamespace(id=22, is_admin=False), connector)
+
+    reviewed = await memory_service.review_candidate(
+        "org1",
+        str(candidate_state["candidate_id"]),
+        approve=True,
+        review_note="Reviewed against the run output",
+        content="Approved durable result",
+    )
+
+    assert reviewed["status"] == "written"
+    assert reviewed["memory_code"] == "MEM-APPROVED"
+    assert captured_payloads[0]["content"] == "Approved durable result"
+    assert captured_payloads[0]["scopeType"] == "TASK"
+    assert captured_payloads[0]["scopeCode"] == "weekly-report"
+    assert captured_payloads[0]["sourceRef"] == run["run_id"]
+    assert captured_payloads[0]["idempotencyKey"] == f"octop:{candidate_state['candidate_id']}"
+
+
+def test_run_level_capture_opt_out_does_not_stage_memory_candidate() -> None:
+    run = _run()
+    queued_run = {**run, "status": "queued"}
+    run["plan_snapshot"]["capabilities"]["memory_sources"][0][  # type: ignore[index]
+        "capture_enabled"
+    ] = False
+    worker_repo = MagicMock()
+    repos = SimpleNamespace(
+        enterprise_scene_repo=SimpleNamespace(get_run_by_cron_id=lambda _cron_id: queued_run),
+        digital_worker_repo=worker_repo,
+    )
+    delivery = CronDeliveryService(gateway=MagicMock(), agent_manager=MagicMock(), repos=repos)
+    command = CronDeliveryCommand(
+        cron_id="cron-1",
+        cron_name="Weekly report",
+        agent_id="agent-1",
+        user_id=11,
+        session_key="agent-1:dashboard:11:dm",
+        prompt="Prepare the weekly report",
+        fresh_thread=False,
+        task_type="agent",
+        model=None,
+        mcp_servers=("akb__1",),
+        mcp_servers_exact=True,
+    )
+
+    delivery._create_scene_memory_candidates(command, "A successful result")
+
+    worker_repo.create_memory_candidate.assert_not_called()
