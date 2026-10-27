@@ -1,0 +1,461 @@
+"""Management facade for external knowledge sources.
+
+Owns source configuration, credential decryption, capability probing and
+multi-source retrieval. Callers never see raw credentials.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from typing import Any
+
+from octop.infra.connectors.crypto import decrypt_credentials, encrypt_credentials
+from octop.infra.db.repos._base import now_ts
+from octop.infra.db.repos.connectors import ConnectorRepo
+from octop.infra.db.repos.external_knowledge import (
+    TARGET_TYPES,
+    ExternalKnowledgeRepo,
+    ExternalSourceRow,
+)
+from octop.infra.db.repos.secrets import SecretRepo
+from octop.infra.knowledge.external.fuse import rrf_fuse
+from octop.infra.knowledge.external.registry import get_adapter, supported_kinds
+from octop.infra.knowledge.external.types import (
+    DEFAULT_TOP_K,
+    MAX_TIMEOUT_SECONDS,
+    MAX_TOP_K,
+    SOURCE_KINDS,
+    ExternalChunk,
+    ExternalSearchResult,
+    ExternalSourceError,
+    ExternalSourceSpec,
+    SourceWarning,
+)
+from octop.infra.utils.ulid import new_ulid
+
+logger = logging.getLogger(__name__)
+
+
+def _split_list(raw: str) -> tuple[str, ...]:
+    return tuple(item.strip() for item in (raw or "").split(",") if item.strip())
+
+
+def _join_list(items: Any) -> str:
+    if isinstance(items, (list, tuple)):
+        return ",".join(str(item).strip() for item in items if str(item).strip())
+    return str(items or "")
+
+
+class ExternalKnowledgeService:
+    def __init__(
+        self,
+        repo: ExternalKnowledgeRepo,
+        connector_repo: ConnectorRepo,
+        secret_repo: SecretRepo,
+    ) -> None:
+        self._repo = repo
+        self._connector_repo = connector_repo
+        self._secret_repo = secret_repo
+
+    # ---------------------------------------------------------------- config
+
+    @staticmethod
+    def supported_kinds() -> list[str]:
+        return supported_kinds()
+
+    def to_spec(self, row: ExternalSourceRow) -> ExternalSourceSpec:
+        return ExternalSourceSpec(
+            binding_id=row.source_id,
+            display_name=row.display_name,
+            kind=row.kind,
+            endpoint=row.endpoint,
+            ref=row.ref,
+            top_k=max(1, min(row.top_k, MAX_TOP_K)),
+            min_score=max(0.0, min(row.min_score, 1.0)),
+            timeout_seconds=min(row.timeout_ms / 1000.0, MAX_TIMEOUT_SECONDS),
+            allow_insecure_http=row.allow_insecure_http,
+            selector_argument=row.selector_argument,
+            forbidden_arguments=_split_list(row.forbidden_arguments),
+            read_tools=_split_list(row.read_tools),
+            enabled=row.enabled,
+            instance_id=row.instance_id,
+            owner_user_id=row.owner_user_id,
+            shared=row.shared,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+        )
+
+    def credentials_for(self, row: ExternalSourceRow) -> dict[str, Any]:
+        """Decrypt credentials, preferring a linked connector instance."""
+        blob = row.credential_blob
+        if row.instance_id:
+            instance = self._connector_repo.get(row.instance_id)
+            if instance is not None and instance.credential_blob:
+                blob = instance.credential_blob
+        if not blob:
+            raise ExternalSourceError(
+                "INVALID_ARGUMENT", "credentials are missing", origin=row.kind
+            )
+        try:
+            return decrypt_credentials(self._secret_repo, blob)
+        except Exception as exc:  # noqa: BLE001 - never leak key material
+            logger.warning("external knowledge credentials unreadable for source=%s", row.source_id)
+            raise ExternalSourceError(
+                "INVALID_CREDENTIALS", "stored credentials could not be read", origin=row.kind
+            ) from exc
+
+    def list_sources(self, *, user_id: int, is_admin: bool) -> list[dict[str, Any]]:
+        rows = self._repo.list_visible(user_id, is_admin=is_admin)
+        result: list[dict[str, Any]] = []
+        bindings: dict[str, list[dict[str, str]]] = {}
+        for binding in self._repo.list_bindings():
+            bindings.setdefault(binding.source_id, []).append(
+                {"target_type": binding.target_type, "target_id": binding.target_id}
+            )
+        for row in rows:
+            spec = self.to_spec(row)
+            result.append(
+                {
+                    **self._public_source(row, spec),
+                    "can_manage": is_admin or row.owner_user_id == user_id,
+                    "bindings": bindings.get(row.source_id, []),
+                }
+            )
+        return result
+
+    @staticmethod
+    def _public_source(row: ExternalSourceRow, spec: ExternalSourceSpec) -> dict[str, Any]:
+        """Public projection: no credentials, no key material."""
+        return {
+            "source_id": row.source_id,
+            "display_name": row.display_name,
+            "kind": row.kind,
+            "endpoint": row.endpoint,
+            "ref": row.ref,
+            "top_k": spec.top_k,
+            "min_score": spec.min_score,
+            "timeout_ms": row.timeout_ms,
+            "allow_insecure_http": row.allow_insecure_http,
+            "selector_argument": row.selector_argument,
+            "forbidden_arguments": list(spec.forbidden_arguments),
+            "read_tools": list(spec.read_tools),
+            "enabled": row.enabled,
+            "shared": row.shared,
+            "owner_user_id": row.owner_user_id,
+            "instance_id": row.instance_id,
+            "has_credentials": row.has_credentials or bool(row.instance_id),
+            "created_at": row.created_at,
+            "updated_at": row.updated_at,
+        }
+
+    def create_source(
+        self,
+        *,
+        user_id: int,
+        kind: str,
+        display_name: str,
+        endpoint: str,
+        api_key: str = "",
+        instance_id: str = "",
+        ref: str = "",
+        top_k: int = DEFAULT_TOP_K,
+        min_score: float = 0.0,
+        timeout_ms: int = 10_000,
+        allow_insecure_http: bool = False,
+        selector_argument: str = "",
+        forbidden_arguments: Any = None,
+        read_tools: Any = None,
+        shared: bool = False,
+    ) -> dict[str, Any]:
+        if kind not in SOURCE_KINDS:
+            raise ExternalSourceError("INVALID_ARGUMENT", f"unsupported kind: {kind}")
+        name = (display_name or "").strip()
+        if not name:
+            raise ExternalSourceError("INVALID_ARGUMENT", "display_name is required")
+        if not (endpoint or "").strip():
+            raise ExternalSourceError("INVALID_ARGUMENT", "endpoint is required")
+        if timeout_ms <= 0 or timeout_ms > int(MAX_TIMEOUT_SECONDS * 1000):
+            raise ExternalSourceError("INVALID_ARGUMENT", "timeout_ms must be between 1 and 60000")
+        if top_k < 1 or top_k > MAX_TOP_K:
+            raise ExternalSourceError("INVALID_ARGUMENT", f"top_k must be 1-{MAX_TOP_K}")
+        if not 0.0 <= min_score <= 1.0:
+            raise ExternalSourceError("INVALID_ARGUMENT", "min_score must be within [0, 1]")
+        blob: bytes | None = None
+        if instance_id:
+            if self._connector_repo.get(instance_id) is None:
+                raise ExternalSourceError("INVALID_ARGUMENT", "connector instance does not exist")
+        elif api_key.strip():
+            blob = encrypt_credentials(self._secret_repo, {"api_key": api_key.strip()})
+        source_id = new_ulid()
+        self._repo.create(
+            source_id=source_id,
+            owner_user_id=user_id,
+            kind=kind,
+            display_name=name,
+            endpoint=endpoint.strip(),
+            instance_id=instance_id,
+            ref=(ref or "").strip(),
+            top_k=top_k,
+            min_score=min_score,
+            timeout_ms=timeout_ms,
+            allow_insecure_http=allow_insecure_http,
+            selector_argument=selector_argument.strip(),
+            forbidden_arguments=_join_list(forbidden_arguments),
+            read_tools=_join_list(read_tools),
+            shared=shared,
+            credential_blob=blob,
+        )
+        row = self._require_get(source_id)
+        return self._public_source(row, self.to_spec(row))
+
+    def update_source(
+        self,
+        source_id: str,
+        *,
+        user_id: int,
+        is_admin: bool,
+        **fields: Any,
+    ) -> dict[str, Any]:
+        row = self._require_manage(source_id, user_id=user_id, is_admin=is_admin)
+        api_key = fields.pop("api_key", None)
+        forbidden = fields.pop("forbidden_arguments", None)
+        read_tools = fields.pop("read_tools", None)
+        shared = fields.pop("shared", None)
+        enabled = fields.pop("enabled", None)
+        allow_insecure = fields.pop("allow_insecure_http", None)
+        replace_credentials = False
+        blob: bytes | None = None
+        if isinstance(api_key, str) and api_key.strip() and not row.instance_id:
+            blob = encrypt_credentials(self._secret_repo, {"api_key": api_key.strip()})
+            replace_credentials = True
+        self._repo.update(
+            source_id,
+            display_name=fields.get("display_name"),
+            endpoint=fields.get("endpoint"),
+            ref=fields.get("ref"),
+            top_k=fields.get("top_k"),
+            min_score=fields.get("min_score"),
+            timeout_ms=fields.get("timeout_ms"),
+            allow_insecure_http=(None if allow_insecure is None else bool(allow_insecure)),
+            selector_argument=fields.get("selector_argument"),
+            forbidden_arguments=(None if forbidden is None else _join_list(forbidden)),
+            read_tools=None if read_tools is None else _join_list(read_tools),
+            enabled=None if enabled is None else bool(enabled),
+            shared=None if shared is None else bool(shared),
+            credential_blob=blob,
+            replace_credentials=replace_credentials,
+        )
+        updated = self._require_get(source_id)
+        return self._public_source(updated, self.to_spec(updated))
+
+    def delete_source(self, source_id: str, *, user_id: int, is_admin: bool) -> None:
+        self._require_manage(source_id, user_id=user_id, is_admin=is_admin)
+        self._repo.delete(source_id)
+
+    # ------------------------------------------------------------- bindings
+
+    def set_binding(
+        self,
+        source_id: str,
+        *,
+        user_id: int,
+        is_admin: bool,
+        target_type: str,
+        target_id: str,
+        enabled: bool = True,
+    ) -> dict[str, Any]:
+        self._require_manage(source_id, user_id=user_id, is_admin=is_admin)
+        if target_type not in TARGET_TYPES:
+            raise ExternalSourceError("INVALID_ARGUMENT", f"unsupported target type: {target_type}")
+        target = (target_id or "").strip()
+        if not target:
+            raise ExternalSourceError("INVALID_ARGUMENT", "target_id is required")
+        self._repo.set_binding(
+            source_id=source_id,
+            target_type=target_type,
+            target_id=target,
+            enabled=enabled,
+        )
+        return {
+            "source_id": source_id,
+            "target_type": target_type,
+            "target_id": target,
+            "enabled": enabled,
+        }
+
+    def delete_binding(
+        self,
+        source_id: str,
+        *,
+        user_id: int,
+        is_admin: bool,
+        target_type: str,
+        target_id: str,
+    ) -> None:
+        self._require_manage(source_id, user_id=user_id, is_admin=is_admin)
+        self._repo.delete_binding(source_id=source_id, target_type=target_type, target_id=target_id)
+
+    def list_bindings(self, source_id: str) -> list[dict[str, Any]]:
+        return [
+            {
+                "source_id": binding.source_id,
+                "target_type": binding.target_type,
+                "target_id": binding.target_id,
+                "enabled": binding.enabled,
+            }
+            for binding in self._repo.list_bindings(source_id)
+        ]
+
+    def specs_for_target(self, target_type: str, target_id: str) -> list[ExternalSourceSpec]:
+        """Enabled sources bound to one agent or local knowledge base."""
+        specs: list[ExternalSourceSpec] = []
+        for source_id in self._repo.list_source_ids_for_target(target_type, target_id):
+            row = self._repo.get(source_id)
+            if row is None or not row.enabled:
+                continue
+            specs.append(self.to_spec(row))
+        return specs
+
+    def specs_for_targets(
+        self, target_type: str, target_ids: list[str]
+    ) -> list[ExternalSourceSpec]:
+        seen: set[str] = set()
+        specs: list[ExternalSourceSpec] = []
+        for target_id in target_ids:
+            for spec in self.specs_for_target(target_type, target_id):
+                if spec.binding_id in seen:
+                    continue
+                seen.add(spec.binding_id)
+                specs.append(spec)
+        return specs
+
+    # -------------------------------------------------- probe and retrieval
+
+    async def probe(self, source_id: str, *, user_id: int, is_admin: bool) -> dict[str, Any]:
+        row = self._require_manage(source_id, user_id=user_id, is_admin=is_admin)
+        adapter = get_adapter(row.kind)
+        if adapter is None:
+            raise ExternalSourceError(
+                "INVALID_ARGUMENT", f"unsupported kind: {row.kind}", origin=row.kind
+            )
+        spec = self.to_spec(row)
+        creds = self.credentials_for(row)
+        try:
+            result = await adapter.probe(spec, creds)
+        except ExternalSourceError as exc:
+            return {"ok": False, "code": exc.code, "message": str(exc)}
+        except Exception:  # noqa: BLE001 - upstreams are untrusted
+            logger.warning("external knowledge probe failed source=%s", source_id, exc_info=True)
+            return {"ok": False, "code": "UNEXPECTED", "message": "probe failed"}
+        return {
+            "ok": result.ok,
+            "code": "" if result.ok else "PROBE_FAILED",
+            "message": result.message,
+            "tools": result.tools,
+            "refs": result.refs,
+        }
+
+    async def search_source(
+        self,
+        source_id: str,
+        query: str,
+        *,
+        user_id: int,
+        is_admin: bool,
+        top_k: int = 0,
+    ) -> dict[str, Any]:
+        row = self._require_manage(source_id, user_id=user_id, is_admin=is_admin)
+        spec = self.to_spec(row)
+        result = await self._search_spec(spec, query, top_k=top_k or spec.top_k)
+        return {
+            "source_id": source_id,
+            "chunks": [self._chunk_public(chunk) for chunk in result.chunks],
+            "warnings": [vars(warning) for warning in result.warnings],
+            "trace_ids": result.trace_ids,
+        }
+
+    async def _search_spec(
+        self, spec: ExternalSourceSpec, query: str, *, top_k: int
+    ) -> ExternalSearchResult:
+        row = self._repo.get(spec.binding_id)
+        if row is None:
+            raise ExternalSourceError(
+                "NOT_FOUND", "external knowledge source does not exist", origin=spec.kind
+            )
+        adapter = get_adapter(spec.kind)
+        if adapter is None:
+            raise ExternalSourceError(
+                "INVALID_ARGUMENT", f"unsupported kind: {spec.kind}", origin=spec.kind
+            )
+        creds = self.credentials_for(row)
+        return await adapter.search(spec, creds, query, top_k=top_k)
+
+    async def retrieve(
+        self,
+        *,
+        query: str,
+        specs: list[ExternalSourceSpec],
+        limit: int = DEFAULT_TOP_K,
+    ) -> dict[str, Any]:
+        """Search every enabled source and fuse the results by rank."""
+        if not query.strip() or not specs or limit <= 0:
+            return {"chunks": [], "warnings": []}
+        outcomes = await asyncio.gather(
+            *[self._search_spec(spec, query, top_k=spec.top_k) for spec in specs],
+            return_exceptions=True,
+        )
+        groups: list[list[ExternalChunk]] = []
+        warnings: list[SourceWarning] = []
+        for spec, outcome in zip(specs, outcomes, strict=True):
+            if isinstance(outcome, BaseException):
+                code = "UNEXPECTED"
+                message = "retrieval failed"
+                if isinstance(outcome, ExternalSourceError):
+                    code = outcome.code
+                    message = str(outcome)
+                else:
+                    logger.warning(
+                        "external retrieval failed source=%s", spec.binding_id, exc_info=outcome
+                    )
+                warnings.append(SourceWarning(origin=spec.kind, code=code, message=message))
+                continue
+            groups.append(outcome.chunks)
+            warnings.extend(outcome.warnings)
+        fused = rrf_fuse(
+            groups, limit=limit, key=lambda chunk: f"{chunk.origin}:{chunk.dedupe_key()}"
+        )
+        return {
+            "chunks": [self._chunk_public(chunk) for chunk in fused],
+            "warnings": [vars(warning) for warning in warnings],
+        }
+
+    # -------------------------------------------------------------- helpers
+
+    @staticmethod
+    def _chunk_public(chunk: ExternalChunk) -> dict[str, Any]:
+        return {
+            "id": chunk.id,
+            "content": chunk.content,
+            "score": chunk.score,
+            "source": chunk.source,
+            "metadata": chunk.metadata,
+            "origin": chunk.origin,
+            "ref": chunk.ref,
+        }
+
+    def _require_get(self, source_id: str) -> ExternalSourceRow:
+        row = self._repo.get(source_id)
+        if row is None:
+            raise ExternalSourceError("NOT_FOUND", "external knowledge source does not exist")
+        return row
+
+    def _require_manage(self, source_id: str, *, user_id: int, is_admin: bool) -> ExternalSourceRow:
+        row = self._require_get(source_id)
+        if not is_admin and row.owner_user_id != user_id:
+            raise ExternalSourceError("FORBIDDEN", "not allowed to manage this source")
+        return row
+
+    @staticmethod
+    def now_ts() -> int:
+        return now_ts()

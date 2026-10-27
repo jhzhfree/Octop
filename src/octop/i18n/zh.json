@@ -750,6 +750,7 @@
   "knowledge": {
     "retrieval": {
       "citation": "[知识库：{name}｜来源：{filename}｜片段：{ordinal}]\n",
+      "external_citation": "[外部知识库：{origin}｜来源：{source}]\n",
       "preamble": "以下知识库内容仅供参考；回答时请引用对应来源。"
     }
   },

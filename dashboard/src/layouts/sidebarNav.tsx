@@ -7,6 +7,7 @@ import {
   Waypoints,
   Link2,
   Database,
+  Library,
   Cpu,
   Users as UsersIcon,
   Building2,
@@ -60,6 +61,7 @@ export const SIDEBAR_NAV_KEYS = [
   "connectors",
   "skill-packages",
   "knowledge-bases",
+  "external-knowledge",
   "bridge",
   "workbench",
   "remote-desktop",
@@ -114,6 +116,7 @@ export const SIDEBAR_GROUPED_NAV_KEYS = [
   "connectors",
   "skill-packages",
   "knowledge-bases",
+  "external-knowledge",
   "bridge",
   "workbench",
   "remote-desktop",
@@ -217,6 +220,14 @@ export function buildNavSections(
       path: "/knowledge-bases",
       icon: <Database size={iconSize} strokeWidth={iconStroke} />,
       labelKey: "nav.knowledgeBases",
+    });
+  }
+  if (navAllowed(user, "external-knowledge")) {
+    settingsItems.push({
+      key: "external-knowledge",
+      path: "/external-knowledge",
+      icon: <Library size={iconSize} strokeWidth={iconStroke} />,
+      labelKey: "nav.externalKnowledge",
     });
   }
   // User-scoped remote Octop links — always available (like personalization).

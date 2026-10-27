@@ -16,6 +16,7 @@ from octop.infra.db.repos.connectors import ConnectorRepo
 from octop.infra.db.repos.cron import CronJobRepo
 from octop.infra.db.repos.digital_workers import DigitalWorkerRepo
 from octop.infra.db.repos.enterprise_scenes import EnterpriseSceneRepo
+from octop.infra.db.repos.external_knowledge import ExternalKnowledgeRepo
 from octop.infra.db.repos.invites import InviteRepo
 from octop.infra.db.repos.knowledge import KnowledgeRepo
 from octop.infra.db.repos.organizations import OrganizationRepo
@@ -62,6 +63,7 @@ class RepoBundle:
     skill_package_repo: SkillPackageRepo
     published_expert_repo: PublishedExpertRepo
     knowledge_repo: KnowledgeRepo
+    external_knowledge_repo: ExternalKnowledgeRepo
     organization_repo: OrganizationRepo
     enterprise_scene_repo: EnterpriseSceneRepo
     digital_worker_repo: DigitalWorkerRepo
@@ -95,6 +97,7 @@ class RepoBundle:
             skill_package_repo=SkillPackageRepo(db),
             published_expert_repo=PublishedExpertRepo(db),
             knowledge_repo=KnowledgeRepo(db),
+            external_knowledge_repo=ExternalKnowledgeRepo(db),
             organization_repo=OrganizationRepo(db),
             enterprise_scene_repo=EnterpriseSceneRepo(db),
             digital_worker_repo=DigitalWorkerRepo(db),
@@ -198,6 +201,10 @@ class SharedServices:
     @property
     def knowledge_repo(self) -> KnowledgeRepo:
         return self.repos.knowledge_repo
+
+    @property
+    def external_knowledge_repo(self) -> ExternalKnowledgeRepo:
+        return self.repos.external_knowledge_repo
 
     @property
     def organization_repo(self) -> OrganizationRepo:

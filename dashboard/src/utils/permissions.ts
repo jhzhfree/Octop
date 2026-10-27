@@ -40,6 +40,7 @@ export const NAV_PERMISSIONS = {
   connectors: PERM.connectors,
   "skill-packages": PERM.skillPackages,
   "knowledge-bases": PERM.knowledgeBasesPage,
+  "external-knowledge": PERM.knowledgeBasesPage,
   workbench: PERM.workbench,
   "remote-desktop": ["desktop", "mobile"],
   "remote-phone": PERM.mobile,

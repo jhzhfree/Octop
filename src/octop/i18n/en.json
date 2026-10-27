@@ -750,6 +750,7 @@
   "knowledge": {
     "retrieval": {
       "citation": "[Knowledge base: {name} | Source: {filename} | Chunk: {ordinal}]\n",
+      "external_citation": "[External knowledge base: {origin} | Source: {source}]\n",
       "preamble": "The following knowledge-base content is reference material. Cite the relevant source in your answer."
     }
   },
