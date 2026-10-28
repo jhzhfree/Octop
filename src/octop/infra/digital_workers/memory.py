@@ -8,6 +8,10 @@ from urllib.parse import urlsplit, urlunsplit
 
 from octop.infra.digital_workers.service import DigitalWorkerError
 from octop.infra.knowledge.akb_client import AkbMemoryClient, AkbMemoryConfig
+from octop.infra.knowledge.akb_identity import (
+    OctopIdentity,
+    delegated_identity_enabled,
+)
 from octop.infra.knowledge.sources import canonical_memory_sources
 from octop.infra.utils.ssrf_guard import validate_https_url
 
@@ -146,7 +150,21 @@ class WorkerMemoryService:
             config = self.connector_service.custom_harness_config_for_user(
                 int(candidate["created_by"]), str(candidate["mcp_server"])
             )
-            client = _akb_memory_client(config)
+            identity = None
+            if delegated_identity_enabled() and not run.get("cron_id"):
+                agent_id = str(run.get("agent_id") or "").strip()
+                if not agent_id:
+                    raise DigitalWorkerError(
+                        "DIGITAL_WORKER_MEMORY_SOURCE_INVALID",
+                        "source run has no trusted Agent identity",
+                        409,
+                    )
+                identity = OctopIdentity(
+                    user_id=str(candidate["created_by"]),
+                    agent_id=agent_id,
+                    trace_id=str(run.get("run_id") or candidate["source_run_id"]),
+                )
+            client = _akb_memory_client(config, octop_identity=identity)
             result = await client.capture(
                 content=text,
                 scope_type=str(candidate["scope_type"]),
@@ -248,7 +266,11 @@ class WorkerMemoryService:
             )
 
 
-def _akb_memory_client(config: dict[str, Any] | None) -> AkbMemoryClient:
+def _akb_memory_client(
+    config: dict[str, Any] | None,
+    *,
+    octop_identity: OctopIdentity | None = None,
+) -> AkbMemoryClient:
     if not isinstance(config, dict) or config.get("transport") not in {"http", "streamable_http"}:
         raise DigitalWorkerError(
             "DIGITAL_WORKER_MEMORY_CONNECTOR_UNAVAILABLE",
@@ -279,7 +301,13 @@ def _akb_memory_client(config: dict[str, Any] | None) -> AkbMemoryClient:
         if header == "authorization" and value.lower().startswith("bearer "):
             api_key = value[7:].strip()
     try:
-        return AkbMemoryClient(AkbMemoryConfig(base_url=base_url, api_key=api_key))
+        return AkbMemoryClient(
+            AkbMemoryConfig(
+                base_url=base_url,
+                api_key=api_key,
+                octop_identity=octop_identity,
+            )
+        )
     except ValueError:
         raise DigitalWorkerError(
             "DIGITAL_WORKER_MEMORY_CONNECTOR_INVALID",
