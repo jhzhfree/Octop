@@ -93,3 +93,5 @@ class ExternalSourceSpec:
     shared: bool = False
     created_at: int = 0
     updated_at: int = 0
+    # Per-call Octop delegation is injected only from trusted server runtime context.
+    octop_identity: Any = None
