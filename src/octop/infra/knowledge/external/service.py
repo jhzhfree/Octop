@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import replace
 from typing import Any
 
 from octop.infra.connectors.crypto import decrypt_credentials, encrypt_credentials
@@ -19,6 +20,7 @@ from octop.infra.db.repos.external_knowledge import (
     ExternalSourceRow,
 )
 from octop.infra.db.repos.secrets import SecretRepo
+from octop.infra.knowledge.akb_identity import OctopIdentity
 from octop.infra.knowledge.external.fuse import rrf_fuse
 from octop.infra.knowledge.external.registry import get_adapter, supported_kinds
 from octop.infra.knowledge.external.types import (
@@ -397,17 +399,24 @@ class ExternalKnowledgeService:
         query: str,
         specs: list[ExternalSourceSpec],
         limit: int = DEFAULT_TOP_K,
+        octop_identity: OctopIdentity | None = None,
     ) -> dict[str, Any]:
         """Search every enabled source and fuse the results by rank."""
         if not query.strip() or not specs or limit <= 0:
             return {"chunks": [], "warnings": []}
+        runtime_specs = [
+            replace(spec, octop_identity=octop_identity)
+            if spec.kind in {"akb-rest", "akb-mcp"}
+            else spec
+            for spec in specs
+        ]
         outcomes = await asyncio.gather(
-            *[self._search_spec(spec, query, top_k=spec.top_k) for spec in specs],
+            *[self._search_spec(spec, query, top_k=spec.top_k) for spec in runtime_specs],
             return_exceptions=True,
         )
         groups: list[list[ExternalChunk]] = []
         warnings: list[SourceWarning] = []
-        for spec, outcome in zip(specs, outcomes, strict=True):
+        for spec, outcome in zip(runtime_specs, outcomes, strict=True):
             if isinstance(outcome, BaseException):
                 code = "UNEXPECTED"
                 message = "retrieval failed"
