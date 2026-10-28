@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from octop.infra.knowledge.akb_identity import OctopIdentity, issue_assertion
 from octop.infra.knowledge.external.http import post_json, validate_endpoint
 from octop.infra.knowledge.external.normalize import (
     extract_items,
@@ -37,20 +38,24 @@ def _url(spec: ExternalSourceSpec) -> str:
     return base + "/api/mcp"
 
 
-def _headers(creds: dict[str, Any]) -> dict[str, str]:
+def _headers(spec: ExternalSourceSpec, creds: dict[str, Any]) -> dict[str, str]:
     api_key = str(creds.get("api_key") or "").strip()
     if not api_key:
         raise ExternalSourceError("INVALID_ARGUMENT", "AKB API key is missing", origin=ORIGIN)
-    return {
+    headers = {
         "X-API-Key": api_key,
         "Content-Type": "application/json",
         "Accept": "application/json, text/event-stream",
     }
+    if isinstance(spec.octop_identity, OctopIdentity):
+        headers["X-Octop-Identity"] = issue_assertion(spec.octop_identity)
+    return headers
 
 
 async def _rpc(
     url: str,
-    headers: dict[str, str],
+    spec: ExternalSourceSpec,
+    creds: dict[str, Any],
     method: str,
     params: dict[str, Any],
     *,
@@ -59,7 +64,7 @@ async def _rpc(
 ) -> dict[str, Any]:
     body = await post_json(
         url,
-        headers=headers,
+        headers=_headers(spec, creds),
         payload={"jsonrpc": "2.0", "id": request_id, "method": method, "params": params},
         timeout_seconds=timeout,
         origin=ORIGIN,
@@ -131,11 +136,11 @@ async def search(
     top_k: int,
 ) -> ExternalSearchResult:
     url = _url(spec)
-    headers = _headers(creds)
     capped = max(1, min(top_k, MAX_TOP_K))
     await _rpc(
         url,
-        headers,
+        spec,
+        creds,
         "initialize",
         {
             "protocolVersion": _OFFERED_PROTOCOL,
@@ -146,7 +151,8 @@ async def search(
     )
     result = await _rpc(
         url,
-        headers,
+        spec,
+        creds,
         "tools/call",
         {"name": _tool_name(spec), "arguments": _arguments(spec, query, capped)},
         timeout=spec.timeout_seconds,
@@ -162,10 +168,10 @@ async def search(
 
 async def probe(spec: ExternalSourceSpec, creds: dict[str, Any]) -> SourceProbeResult:
     url = _url(spec)
-    headers = _headers(creds)
     result = await _rpc(
         url,
-        headers,
+        spec,
+        creds,
         "initialize",
         {
             "protocolVersion": _OFFERED_PROTOCOL,
@@ -175,7 +181,9 @@ async def probe(spec: ExternalSourceSpec, creds: dict[str, Any]) -> SourceProbeR
         timeout=spec.timeout_seconds,
     )
     negotiated = result.get("protocolVersion")
-    listed = await _rpc(url, headers, "tools/list", {}, timeout=spec.timeout_seconds, request_id=2)
+    listed = await _rpc(
+        url, spec, creds, "tools/list", {}, timeout=spec.timeout_seconds, request_id=2
+    )
     tools_raw = listed.get("tools")
     tools = [
         str(tool.get("name"))
@@ -194,7 +202,8 @@ async def probe(spec: ExternalSourceSpec, creds: dict[str, Any]) -> SourceProbeR
         try:
             bases = await _rpc(
                 url,
-                headers,
+                spec,
+                creds,
                 "tools/call",
                 {"name": "list_knowledge_bases", "arguments": {}},
                 timeout=spec.timeout_seconds,
