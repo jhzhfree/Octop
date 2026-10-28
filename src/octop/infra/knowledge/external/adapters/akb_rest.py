@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from octop.infra.knowledge.akb_identity import OctopIdentity, issue_assertion
 from octop.infra.knowledge.external.http import post_json, validate_endpoint
 from octop.infra.knowledge.external.normalize import (
     extract_items,
@@ -38,12 +39,15 @@ def _headers(spec: ExternalSourceSpec, creds: dict[str, Any]) -> dict[str, str]:
         raise ExternalSourceError(
             "INVALID_ARGUMENT", "an AKB knowledge base reference is required", origin=ORIGIN
         )
-    return {
+    headers = {
         "X-API-Key": api_key,
         "X-Knowledge-Base-Id": spec.ref,
         "Content-Type": "application/json",
         "Accept": "application/json",
     }
+    if isinstance(spec.octop_identity, OctopIdentity):
+        headers["X-Octop-Identity"] = issue_assertion(spec.octop_identity)
+    return headers
 
 
 async def search(
