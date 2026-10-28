@@ -1,6 +1,6 @@
 # AKB knowledge and memory integration
 
-Octop connects to AKB through AKB's MCP server. Agent owners can attach the connection using Octop's existing MCP selection flow; AKB remains responsible for knowledge governance, retrieval permissions, and citations.
+Octop connects to AKB through AKB's MCP server. Agent owners can attach the connection using Octop's existing MCP selection flow; AKB remains responsible for knowledge governance, retrieval permissions, and citations. The built-in external-knowledge adapters can also send a signed, short-lived Octop identity assertion when the AKB identity integration is enabled.
 
 Virtual workers can also use AKB's platform memory as run context. This binding is read-only: Octop pins the memory scope, requires `memory_recall` before the planned work, and blocks `memory_capture` and `memory_forget` during the run.
 
@@ -11,6 +11,25 @@ Virtual workers can also use AKB's platform memory as run context. This binding 
 3. Set the URL to `https://<AKB host>/api/mcp` and add `X-API-Key: <key>`.
 4. Save and probe the connection. The probe should list tools such as `knowledge_search` and `knowledge_query`.
 5. Attach the saved MCP server to the Agent. The Agent can then use the AKB search tool and return AKB citations.
+
+### Optional Octop user identity binding
+
+AKB and Octop may use different identity providers. When AKB has registered Octop's issuer, audience, public signing key, and Octop instance ID, configure these variables on the Octop backend to enable delegated identity for the built-in external-knowledge REST/MCP adapters:
+
+| Variable | Purpose |
+| --- | --- |
+| `OCTOP_AKB_IDENTITY_ENABLED=true` | Enables server-selected `AGENT_DELEGATED_USER` on interactive turns. |
+| `OCTOP_AKB_IDENTITY_ISSUER` | Issuer registered in AKB for this Octop identity provider. |
+| `OCTOP_AKB_IDENTITY_AUDIENCE` | AKB audience expected by the identity assertion validator. |
+| `OCTOP_AKB_INSTANCE_ID` | Stable Octop instance identifier registered in AKB. |
+| `OCTOP_AKB_IDENTITY_PRIVATE_KEY` | RS256 signing key; mount through the deployment secret mechanism, never commit it. Newlines may be encoded as `\\n`. |
+| `OCTOP_AKB_IDENTITY_KEY_ID` | Optional key ID (`kid`) for signing-key rotation. |
+
+Octop signs a fresh JWT for each AKB request with a 60-second lifetime, unique `jti`, the authenticated Octop user ID as `sub`, the server-selected Agent ID, instance ID, and a thread/run trace reference. It sends the assertion only in `X-Octop-Identity`, alongside the existing `X-API-Key`; it never forwards the Octop login token. AKB still validates the key, principal binding, scopes, resource ACL, assertion signature, expiry, audience, and one-time `jti`. A delegated key must be bound in AKB to the matching Octop user principal and Agent relationship.
+
+When identity signing is disabled, existing API-key-only behavior remains. With identity enabled, interactive built-in knowledge retrieval uses `AGENT_DELEGATED_USER`; cron retrieval uses the service key without a user assertion (`AGENT_SERVICE`). Manager-approved memory writes use the candidate owner's delegated identity for non-cron runs and service identity for cron runs. Incomplete signing configuration fails closed for requests that require delegation.
+
+This assertion is currently attached by Octop's built-in external-knowledge REST/MCP adapters and approved memory-capture REST client. Octop's generic saved MCP connector transport continues to use its configured static headers; it does not yet inject per-request user assertions. For that path AKB sees the configured service identity until dynamic connector authentication is implemented.
 
 For platform memory, create an AKB API key with `MEMORY_READ` and `MEMORY_WRITE`. Set its `memoryNamespace` to the intended sharing boundary and `memoryAgentCode` to a stable virtual-worker identity. `MEMORY_WRITE` is used only by Octop's manager-approved candidate workflow; run-time Agent tools remain read-only. Keep the key in the encrypted connector store. The key's namespace and Agent identity are authoritative; Octop cannot override them.
 
@@ -72,7 +91,7 @@ POST /api/organizations/{organization_id}/memory-candidates/{candidate_id}/revie
 
 Approval is the only path that writes memory. Octop uses the requester's encrypted AKB connector, retains the run and reviewer provenance, and sends a stable idempotency key so a retry does not create duplicate memory. The candidate must still match both the successful run snapshot and the worker's current memory binding. Write credentials are never exposed to the model. Rejection, failure, and successful AKB `memoryCode` receipts remain visible in the candidate list and audit log.
 
-The configured API Key is the identity AKB sees. For user-specific AKB permissions, use a key and connection scoped to that principal or team. A shared broad-scope key does not inherit Octop's user identity automatically.
+For generic saved MCP connectors, the configured API Key remains the identity AKB sees until dynamic connector authentication is implemented. For user-specific AKB permissions on those connectors, use a key and connection scoped to that principal or team. Assertion-backed built-in adapters pass the authenticated Octop user separately; AKB still requires the API Key and assertion principal binding to agree.
 
 ## Product boundary
 
