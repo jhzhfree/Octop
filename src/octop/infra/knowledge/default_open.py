@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from octop.infra.db.repos.knowledge import KnowledgeBaseRow
+from octop.infra.knowledge.akb_identity import delegated_identity_enabled
 
 
 def merge_knowledge_base_ids(
@@ -59,5 +60,21 @@ def stamp_turn_knowledge_config(
     configurable["knowledge_base_catalog"] = catalog_for_selected_bases(visible_bases, selected_ids)
     configurable["user_is_admin"] = is_admin
     configurable["locale"] = locale
+    # Do not preserve identity controls from caller-supplied configurable data.
+    configurable.pop("octop_akb_identity_mode", None)
+    configurable.pop("octop_trace_id", None)
+    if delegated_identity_enabled():
+        # These values come from the server-built request, never from model or
+        # client supplied tool arguments.
+        configurable.pop("agent_id", None)
+        if request.get("agent_id"):
+            configurable["agent_id"] = str(request["agent_id"])
+        if request.get("thread_id"):
+            configurable["octop_trace_id"] = str(request["thread_id"])
+        configurable["octop_akb_identity_mode"] = (
+            "AGENT_SERVICE"
+            if str(request.get("source") or "").lower() == "cron"
+            else "AGENT_DELEGATED_USER"
+        )
     request["configurable"] = configurable
     return selected_ids
