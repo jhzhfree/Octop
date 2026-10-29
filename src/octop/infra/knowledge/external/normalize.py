@@ -12,14 +12,16 @@ _CONTENT_KEYS = ("content", "text", "passage", "chunk", "snippet", "chunkText")
 _ID_KEYS = ("id", "chunk_id", "chunkId", "evidenceCode", "evidence_code", "docId", "doc_id")
 _SOURCE_KEYS = (
     "source",
+    "sourceName",
+    "source_name",
     "documentName",
     "document_name",
     "documentKeyword",
     "document_keyword",
-    "sourceUri",
-    "source_uri",
     "docName",
     "doc_name",
+    "sourceUri",
+    "source_uri",
     "title",
     "url",
 )
@@ -68,6 +70,22 @@ def _score_from(raw: Mapping[str, Any]) -> float:
     return 0.0
 
 
+def _source_from(raw: Mapping[str, Any]) -> str:
+    """Provenance for one record.
+
+    The REST channel puts it at the top level, but MCP candidates keep it in
+    ``metadata`` (``sourceName`` / ``docName``); without the nested lookup every
+    MCP chunk would lose the document it came from.
+    """
+    direct = _first_str(raw, _SOURCE_KEYS)
+    if direct:
+        return direct
+    nested = raw.get("metadata")
+    if isinstance(nested, Mapping):
+        return _first_str(nested, _SOURCE_KEYS)
+    return ""
+
+
 def _stable_id(raw: Mapping[str, Any], content: str, index: int) -> str:
     explicit = _first_str(raw, _ID_KEYS)
     if explicit:
@@ -100,7 +118,7 @@ def chunk_from_mapping(
         id=_stable_id(raw, clipped, index),
         content=clipped,
         score=_score_from(raw),
-        source=_first_str(raw, _SOURCE_KEYS),
+        source=_source_from(raw),
         metadata=metadata,
         origin=origin,
         ref=ref,

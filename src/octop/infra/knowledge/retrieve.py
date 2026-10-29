@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from octop.i18n import tr
+from octop.infra.knowledge.akb_identity import OctopIdentity
 from octop.infra.knowledge.citations import append_citations_marker, citations_from_ranked
 from octop.infra.knowledge.embed import embed_knowledge_texts
 from octop.infra.knowledge.external.fuse import rrf_fuse
@@ -34,6 +35,7 @@ async def retrieve_context(
     locale: str = "en",
     visible_bases: Sequence[Any] | None = None,
     external_specs: Sequence[ExternalSourceSpec] | None = None,
+    octop_identity: OctopIdentity | None = None,
 ) -> str:
     """Return formatted readable context, skipping unavailable or failed retrieval.
 
@@ -63,7 +65,9 @@ async def retrieve_context(
         except Exception:
             logger.warning("knowledge retrieval skipped for user=%s", user_id, exc_info=True)
             ranked = []
-    external_chunks = await _external_chunks(services, external_specs, query, k=k)
+    external_chunks = await _external_chunks(
+        services, external_specs, query, k=k, octop_identity=octop_identity
+    )
     if not external_chunks:
         if not ranked:
             return ""
@@ -83,13 +87,14 @@ async def _external_chunks(
     query: str | None,
     *,
     k: int,
+    octop_identity: OctopIdentity | None = None,
 ) -> list[ExternalChunk]:
     """Retrieve from external sources; a failing source degrades to empty."""
     if not specs:
         return []
     try:
         result = await _external_service(services).retrieve(
-            query=(query or "").strip(), specs=list(specs), limit=k
+            query=(query or "").strip(), specs=list(specs), limit=k, octop_identity=octop_identity
         )
     except Exception:
         logger.warning("external knowledge retrieval failed", exc_info=True)
@@ -117,7 +122,6 @@ def _external_service(services: Any) -> ExternalKnowledgeService:
         services.external_knowledge_repo,
         services.connector_repo,
         services.secret_repo,
-        services.config,
     )
 
 

@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Form, Select } from "antd";
 
 import { connectorsApi } from "../../../api/modules/connectors";
+import { externalKnowledgeApi } from "../../../api/modules/externalKnowledge";
 import { knowledgeBasesApi } from "../../../api/modules/knowledgeBases";
 import { useCurrentUser } from "../../../hooks/useCurrentUser";
 
@@ -24,6 +25,10 @@ export default function ExpertComposerDefaultsFields({
     { value: string; label: string }[]
   >([]);
   const [connectorsLoading, setConnectorsLoading] = useState(false);
+  const [externalSources, setExternalSources] = useState<
+    { value: string; label: string }[]
+  >([]);
+  const [externalLoading, setExternalLoading] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -82,6 +87,34 @@ export default function ExpertComposerDefaultsFields({
     };
   }, [agentId, currentUserId]);
 
+  // External sources are mounted through the binding table, which needs the
+  // agent id, so the picker only exists once the expert is saved.
+  useEffect(() => {
+    if (!agentId) return;
+    let cancelled = false;
+    setExternalLoading(true);
+    externalKnowledgeApi
+      .list()
+      .then((rows) => {
+        if (cancelled) return;
+        setExternalSources(
+          (rows ?? []).map((row) => ({
+            value: row.source_id,
+            label: row.display_name || row.source_id,
+          })),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setExternalSources([]);
+      })
+      .finally(() => {
+        if (!cancelled) setExternalLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [agentId]);
+
   return (
     <>
       <Form.Item
@@ -117,6 +150,23 @@ export default function ExpertComposerDefaultsFields({
           placeholder={t("experts.connectorsPlaceholder")}
         />
       </Form.Item>
+      {agentId ? (
+        <Form.Item
+          name="external_knowledge_source_ids"
+          label={t("experts.externalKnowledgeLabel")}
+          extra={t("experts.externalKnowledgeHint")}
+        >
+          <Select
+            mode="multiple"
+            allowClear
+            showSearch
+            optionFilterProp="label"
+            loading={externalLoading}
+            options={externalSources}
+            placeholder={t("experts.externalKnowledgePlaceholder")}
+          />
+        </Form.Item>
+      ) : null}
     </>
   );
 }

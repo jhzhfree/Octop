@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from octop.infra.knowledge.akb_identity import OctopIdentity, issue_assertion
 from octop.infra.knowledge.external.http import get_json, post_json, validate_endpoint
-from octop.infra.knowledge.external.identity import IDENTITY_HEADER
 from octop.infra.knowledge.external.normalize import (
     extract_items,
     filter_chunks,
@@ -66,8 +66,8 @@ def _headers(spec: ExternalSourceSpec, creds: dict[str, Any]) -> dict[str, str]:
         "Content-Type": "application/json",
         "Accept": "application/json",
     }
-    if spec.identity_token:
-        headers[IDENTITY_HEADER] = spec.identity_token
+    if isinstance(spec.octop_identity, OctopIdentity):
+        headers["X-Octop-Identity"] = issue_assertion(spec.octop_identity)
     return headers
 
 

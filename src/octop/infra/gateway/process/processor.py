@@ -1566,6 +1566,15 @@ class GlobalProcessor:
             else self._knowledge_services.knowledge_repo.list_visible(user_id)
         )
         extra_ids = self._agent_manager.default_knowledge_base_ids(agent_id) if agent_id else None
+        # External sources mounted on the expert itself, so the tool stays
+        # available (and describes them) even with no internal base selected.
+        external_catalog = (
+            self._agent_manager.mounted_external_catalog(
+                agent_id, user_id=user_id, is_admin=is_admin
+            )
+            if agent_id
+            else []
+        )
         stamp_turn_knowledge_config(
             request,
             visible_bases=bases,
@@ -1574,6 +1583,7 @@ class GlobalProcessor:
             extra_ids=extra_ids,
             is_admin=is_admin,
             locale=locale,
+            external_catalog=external_catalog,
         )
 
     async def _resolve_turn_mcp_servers(

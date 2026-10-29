@@ -136,3 +136,25 @@ def test_middleware_hides_tool_when_catalog_empty() -> None:
 
     names = [getattr(t, "name", None) for t in (captured[0].tools or [])]
     assert names == ["other"]
+
+
+def test_middleware_keeps_tool_for_external_sources_only() -> None:
+    """An expert mounting only external sources still needs the tool."""
+    request = ModelRequest(model=MagicMock(), messages=[], tools=[_dummy_tool("stale")])
+    captured: list[ModelRequest] = []
+
+    def handler(req: ModelRequest) -> object:
+        captured.append(req)
+        return object()
+
+    with _configurable(
+        knowledge_base_catalog=[],
+        external_knowledge_catalog=[
+            {"id": "src-1", "name": "AKB HR", "description": "external source (akb-mcp)"}
+        ],
+    ):
+        KnowledgeSearchHintMiddleware().wrap_model_call(request, handler)
+
+    tools = list(captured[0].tools or [])
+    assert [getattr(t, "name", None) for t in tools] == ["search_knowledge"]
+    assert "AKB HR" in tools[0].description

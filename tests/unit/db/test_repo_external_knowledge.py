@@ -168,6 +168,42 @@ def test_update_source_toggles_and_patches(
     assert updated["read_tools"] == ["knowledge_search"]
 
 
+def test_update_source_can_switch_kind(
+    service: ExternalKnowledgeService, owner_id: int, db: DatabasePool
+) -> None:
+    created = service.create_source(
+        user_id=owner_id,
+        kind="akb-mcp",
+        display_name="AKB",
+        endpoint="https://akb.example.com",
+        api_key="k",
+    )
+    source_id = created["source_id"]
+    updated = service.update_source(source_id, user_id=owner_id, is_admin=False, kind="akb-rest")
+    assert updated["kind"] == "akb-rest"
+    # The edit form sends kind on every patch, so it has to survive a reload —
+    # not just come back in the response.
+    reloaded = ExternalKnowledgeRepo(db).get(source_id)
+    assert reloaded is not None
+    assert reloaded.kind == "akb-rest"
+    assert service.list_sources(user_id=owner_id, is_admin=False)[0]["kind"] == "akb-rest"
+
+
+def test_update_source_rejects_unknown_kind(
+    service: ExternalKnowledgeService, owner_id: int
+) -> None:
+    created = service.create_source(
+        user_id=owner_id,
+        kind="akb-mcp",
+        display_name="AKB",
+        endpoint="https://akb.example.com",
+        api_key="k",
+    )
+    with pytest.raises(ExternalSourceError) as excinfo:
+        service.update_source(created["source_id"], user_id=owner_id, is_admin=False, kind="nope")
+    assert excinfo.value.code == "INVALID_ARGUMENT"
+
+
 def test_other_users_cannot_manage(service: ExternalKnowledgeService, owner_id: int) -> None:
     created = service.create_source(
         user_id=owner_id,
@@ -179,3 +215,36 @@ def test_other_users_cannot_manage(service: ExternalKnowledgeService, owner_id: 
     with pytest.raises(ExternalSourceError) as excinfo:
         service.delete_source(created["source_id"], user_id=owner_id + 99, is_admin=False)
     assert excinfo.value.code == "FORBIDDEN"
+
+
+def test_expert_can_mount_external_sources(
+    service: ExternalKnowledgeService, owner_id: int, db: DatabasePool
+) -> None:
+    """An expert is an agent, so mounting means binding to its agent id."""
+    first = service.create_source(
+        user_id=owner_id,
+        kind="akb-mcp",
+        display_name="AKB MCP",
+        endpoint="https://akb.example.com",
+        api_key="k",
+    )
+    second = service.create_source(
+        user_id=owner_id,
+        kind="akb-rest",
+        display_name="AKB REST",
+        endpoint="https://akb.example.com",
+        api_key="k",
+    )
+    repo = ExternalKnowledgeRepo(db)
+    repo.replace_bindings_for_target("agent", "agent-1", [first["source_id"]])
+    assert repo.list_source_ids_for_target("agent", "agent-1") == [first["source_id"]]
+
+    # Editing mounts replaces the set: a stale mount would keep an unmounted
+    # source in every retrieval.
+    repo.replace_bindings_for_target("agent", "agent-1", [second["source_id"]])
+    assert repo.list_source_ids_for_target("agent", "agent-1") == [second["source_id"]]
+    assert [spec.binding_id for spec in service.specs_for_target("agent", "agent-1")] == [
+        second["source_id"]
+    ]
+    # Agent scope and knowledge-base scope stay independent.
+    assert service.specs_for_target("knowledge_base", "kb-1") == []

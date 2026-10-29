@@ -2589,6 +2589,56 @@ class AgentManager:
             )
         return normalized
 
+    def external_source_ids_for_agent(self, agent_id: str) -> list[str]:
+        """External knowledge sources mounted on this agent (expert)."""
+        return self._repos.external_knowledge_repo.list_source_ids_for_target("agent", agent_id)
+
+    def mounted_external_catalog(
+        self, agent_id: str, *, user_id: int, is_admin: bool
+    ) -> list[dict[str, str]]:
+        """``{id, name, description}`` rows for the sources this agent mounts.
+
+        Feeds the tool description, so a model can see an external base is
+        attached even when no internal knowledge base is selected.
+        """
+        repo = self._repos.external_knowledge_repo
+        mounted = set(repo.list_source_ids_for_target("agent", agent_id))
+        if not mounted:
+            return []
+        catalog: list[dict[str, str]] = []
+        for row in repo.list_visible(user_id, is_admin=is_admin):
+            if row.source_id not in mounted:
+                continue
+            catalog.append(
+                {
+                    "id": row.source_id,
+                    "name": row.display_name or row.source_id,
+                    "description": f"external source ({row.kind})",
+                }
+            )
+        return catalog
+
+    def set_agent_external_sources(
+        self, agent_id: str, *, user_id: int, is_admin: bool, source_ids: list[str]
+    ) -> list[str]:
+        """Mount exactly *source_ids* as this agent's external knowledge bases.
+
+        Mirrors ``validate_knowledge_base_ids``: every id is re-checked against
+        what the caller can see, so an agent cannot be pointed at another
+        user's source and quietly read from it on every turn.
+        """
+        repo = self._repos.external_knowledge_repo
+        normalized = skill_package_ids_list({"skill_package_ids": source_ids})
+        visible = {row.source_id for row in repo.list_visible(user_id, is_admin=is_admin)}
+        unknown = [source_id for source_id in normalized if source_id not in visible]
+        if unknown:
+            raise OctopError(
+                ErrorCode.KNOWLEDGE_NOT_FOUND,
+                f"external knowledge source(s) not found: {', '.join(unknown)}",
+            )
+        repo.replace_bindings_for_target("agent", agent_id, normalized)
+        return repo.list_source_ids_for_target("agent", agent_id)
+
     def validate_mcp_servers(self, user_id: int, mcp_servers: list[str]) -> list[str]:
         """Normalize MCP server names and ensure they are available to *user_id*."""
         normalized = skill_package_ids_list({"skill_package_ids": mcp_servers})
@@ -3508,6 +3558,13 @@ class AgentManager:
                     knowledge_repo=self._repos.knowledge_repo,
                     settings_repo=self._repos.settings_repo,
                     provider_repo=self._repos.provider_repo,
+                    # External sources live in their own tables: leaving these
+                    # out makes every binding lookup degrade to "nothing bound"
+                    # instead of raising, so an expert's external bases would
+                    # silently never be searched.
+                    external_knowledge_repo=self._repos.external_knowledge_repo,
+                    connector_repo=self._repos.connector_repo,
+                    secret_repo=self._repos.secret_repo,
                 )
             )
 

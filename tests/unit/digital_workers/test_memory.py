@@ -99,7 +99,7 @@ async def test_approval_captures_only_reviewed_content_with_stable_idempotency_k
     capture = AsyncMock(return_value={"memory_code": "MEM-123"})
     monkeypatch.setattr(
         "octop.infra.digital_workers.memory._akb_memory_client",
-        lambda _config: SimpleNamespace(capture=capture),
+        lambda _config, **_identity: SimpleNamespace(capture=capture),
     )
 
     result = await service.review_candidate(
@@ -135,7 +135,7 @@ async def test_approval_rejects_candidate_not_present_in_run_snapshot(
     capture = AsyncMock()
     monkeypatch.setattr(
         "octop.infra.digital_workers.memory._akb_memory_client",
-        lambda _config: SimpleNamespace(capture=capture),
+        lambda _config, **_identity: SimpleNamespace(capture=capture),
     )
 
     with pytest.raises(Exception, match="approved memory binding"):
@@ -159,7 +159,7 @@ async def test_failed_memory_candidate_can_be_rejected_without_retrying_akb(
     capture = AsyncMock()
     monkeypatch.setattr(
         "octop.infra.digital_workers.memory._akb_memory_client",
-        lambda _config: SimpleNamespace(capture=capture),
+        lambda _config, **_identity: SimpleNamespace(capture=capture),
     )
 
     result = await service.review_candidate(
@@ -293,7 +293,8 @@ async def test_successful_run_candidate_review_writes_scoped_memory_to_akb(
 
     monkeypatch.setattr(client, "_capture", fake_capture)
     monkeypatch.setattr(
-        "octop.infra.digital_workers.memory._akb_memory_client", lambda _config: client
+        "octop.infra.digital_workers.memory._akb_memory_client",
+        lambda _config, **_identity: client,
     )
     memory_service = WorkerMemoryService(repos, SimpleNamespace(id=22, is_admin=False), connector)
 

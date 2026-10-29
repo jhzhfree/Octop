@@ -20,8 +20,8 @@ from octop.infra.db.repos.external_knowledge import (
     ExternalSourceRow,
 )
 from octop.infra.db.repos.secrets import SecretRepo
+from octop.infra.knowledge.akb_identity import OctopIdentity
 from octop.infra.knowledge.external.fuse import rrf_fuse
-from octop.infra.knowledge.external.identity import identity_token
 from octop.infra.knowledge.external.registry import get_adapter, supported_kinds
 from octop.infra.knowledge.external.types import (
     DEFAULT_TOP_K,
@@ -55,13 +55,10 @@ class ExternalKnowledgeService:
         repo: ExternalKnowledgeRepo,
         connector_repo: ConnectorRepo,
         secret_repo: SecretRepo,
-        config: Any = None,
     ) -> None:
         self._repo = repo
         self._connector_repo = connector_repo
         self._secret_repo = secret_repo
-        # Optional: only AKB's delegated-identity mode needs it.
-        self._config = config
 
     # ---------------------------------------------------------------- config
 
@@ -89,20 +86,6 @@ class ExternalKnowledgeService:
             shared=row.shared,
             created_at=row.created_at,
             updated_at=row.updated_at,
-        )
-
-    def identity_for(self, row: ExternalSourceRow) -> str:
-        """Fresh AKB identity assertion, or ``""`` when delegation is off.
-
-        Only AKB understands the header; every other kind keeps credential-only
-        access so enabling the feature cannot change unrelated traffic.
-        """
-        if self._config is None or not row.kind.startswith("akb"):
-            return ""
-        return identity_token(
-            self._config,
-            self._secret_repo,
-            subject=f"user:{row.owner_user_id}",
         )
 
     def credentials_for(self, row: ExternalSourceRow) -> dict[str, Any]:
@@ -238,18 +221,24 @@ class ExternalKnowledgeService:
     ) -> dict[str, Any]:
         row = self._require_manage(source_id, user_id=user_id, is_admin=is_admin)
         api_key = fields.pop("api_key", None)
+        kind = fields.pop("kind", None)
         forbidden = fields.pop("forbidden_arguments", None)
         read_tools = fields.pop("read_tools", None)
         shared = fields.pop("shared", None)
         enabled = fields.pop("enabled", None)
         allow_insecure = fields.pop("allow_insecure_http", None)
         replace_credentials = False
+        # Switching the adapter re-points the source at different upstream
+        # semantics, so it is allowed but validated exactly like create.
+        if kind is not None and kind not in SOURCE_KINDS:
+            raise ExternalSourceError("INVALID_ARGUMENT", f"unsupported kind: {kind}")
         blob: bytes | None = None
         if isinstance(api_key, str) and api_key.strip() and not row.instance_id:
             blob = encrypt_credentials(self._secret_repo, {"api_key": api_key.strip()})
             replace_credentials = True
         self._repo.update(
             source_id,
+            kind=kind,
             display_name=fields.get("display_name"),
             endpoint=fields.get("endpoint"),
             ref=fields.get("ref"),
@@ -358,7 +347,7 @@ class ExternalKnowledgeService:
             raise ExternalSourceError(
                 "INVALID_ARGUMENT", f"unsupported kind: {row.kind}", origin=row.kind
             )
-        spec = replace(self.to_spec(row), identity_token=self.identity_for(row))
+        spec = self.to_spec(row)
         creds = self.credentials_for(row)
         try:
             result = await adapter.probe(spec, creds)
@@ -385,7 +374,7 @@ class ExternalKnowledgeService:
             raise ExternalSourceError(
                 "INVALID_ARGUMENT", f"unsupported kind: {row.kind}", origin=row.kind
             )
-        spec = replace(self.to_spec(row), identity_token=self.identity_for(row))
+        spec = self.to_spec(row)
         return await adapter.list_refs(spec, self.credentials_for(row))
 
     async def search_source(
@@ -422,7 +411,7 @@ class ExternalKnowledgeService:
             )
         creds = self.credentials_for(row)
         return await adapter.search(
-            replace(spec, identity_token=self.identity_for(row)),
+            spec,
             creds,
             query,
             top_k=top_k,
@@ -434,17 +423,24 @@ class ExternalKnowledgeService:
         query: str,
         specs: list[ExternalSourceSpec],
         limit: int = DEFAULT_TOP_K,
+        octop_identity: OctopIdentity | None = None,
     ) -> dict[str, Any]:
         """Search every enabled source and fuse the results by rank."""
         if not query.strip() or not specs or limit <= 0:
             return {"chunks": [], "warnings": []}
+        runtime_specs = [
+            replace(spec, octop_identity=octop_identity)
+            if spec.kind in {"akb-rest", "akb-mcp"}
+            else spec
+            for spec in specs
+        ]
         outcomes = await asyncio.gather(
-            *[self._search_spec(spec, query, top_k=spec.top_k) for spec in specs],
+            *[self._search_spec(spec, query, top_k=spec.top_k) for spec in runtime_specs],
             return_exceptions=True,
         )
         groups: list[list[ExternalChunk]] = []
         warnings: list[SourceWarning] = []
-        for spec, outcome in zip(specs, outcomes, strict=True):
+        for spec, outcome in zip(runtime_specs, outcomes, strict=True):
             if isinstance(outcome, BaseException):
                 code = "UNEXPECTED"
                 message = "retrieval failed"

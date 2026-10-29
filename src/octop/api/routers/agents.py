@@ -76,6 +76,15 @@ class AgentPatchBody(AgentRuntimeFields):
     skill_package_ids: list[str] | None = None
     knowledge_base_ids: list[str] | None = None
     mcp_servers: list[str] | None = None
+    external_knowledge_source_ids: list[str] | None = None
+
+
+def _external_source_ids(server: Any | None, agent_id: str) -> list[str]:
+    """External knowledge sources mounted on this agent (empty if no registry)."""
+    registry = getattr(getattr(server, "app_runtime", None), "agent_registry", None)
+    if registry is None:
+        return []
+    return list(registry.external_source_ids_for_agent(agent_id))
 
 
 def _attach_unread_counts(
@@ -187,6 +196,7 @@ def _row_dict(
             else id_list_from_row(row, "mcp_servers")
         ),
         "published_expert_id": row.published_expert_id,
+        "external_knowledge_source_ids": _external_source_ids(server, row.agent_id),
         "welcome_message": welcome_from_row(row),
         "is_shared": bool(int(getattr(row, "is_shared", 0) or 0)),
         "is_owner": row.user_id is not None and row.user_id == viewer_user_id,
@@ -405,6 +415,7 @@ async def patch_agent(
             "skill_package_ids",
             "knowledge_base_ids",
             "mcp_servers",
+            "external_knowledge_source_ids",
         }
     }
     if body.config is not None:
@@ -432,6 +443,15 @@ async def patch_agent(
         refreshed = server.app_runtime.agent_registry.get_row(agent_id)
         if refreshed is not None:
             row = refreshed
+    if body.external_knowledge_source_ids is not None:
+        # Mounted on the binding table, not on the agent row: this is a
+        # separate call so a failed validation cannot half-write the agent.
+        server.app_runtime.agent_registry.set_agent_external_sources(
+            agent_id,
+            user_id=user.id,
+            is_admin=user.role == "admin",
+            source_ids=body.external_knowledge_source_ids,
+        )
     if body.is_shared is not None:
         row = await server.app_runtime.agent_registry.set_shared(agent_id, body.is_shared)
     return _row_dict(

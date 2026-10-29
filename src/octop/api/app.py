@@ -17,6 +17,7 @@ from octop.api.middleware.jwt_auth import install as install_jwt_auth
 from octop.api.middleware.setup_lockdown import install as install_setup_lockdown
 from octop.api.openapi_meta import API_DESCRIPTION, OPENAPI_TAGS, configure_openapi
 from octop.infra.errors import ErrorCode, OctopError
+from octop.infra.knowledge.akb_identity import jwks_document
 from octop.infra.server import OctopServer
 from octop.infra.utils.locale import resolve_request_locale
 
@@ -155,6 +156,17 @@ def build_app(server: OctopServer) -> FastAPI:
         if body is None:
             raise HTTPException(status_code=404, detail="challenge not found")
         return PlainTextResponse(body)
+
+    # AKB fetches this to verify X-Octop-Identity. It sits outside /api/ like
+    # the ACME challenge: the JWT middleware only guards /api/, and a key set
+    # is public by definition.
+    @app.get("/.well-known/jwks.json", include_in_schema=False)
+    async def akb_identity_jwks() -> JSONResponse:
+        document = jwks_document()
+        return JSONResponse(
+            content=document,
+            headers={"Cache-Control": "no-store, max-age=0"},
+        )
 
     from octop.api.routers import (
         acp,

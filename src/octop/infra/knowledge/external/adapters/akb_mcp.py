@@ -11,8 +11,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from octop.infra.knowledge.akb_identity import OctopIdentity, issue_assertion
 from octop.infra.knowledge.external.http import post_json, validate_endpoint
-from octop.infra.knowledge.external.identity import IDENTITY_HEADER
 from octop.infra.knowledge.external.normalize import (
     extract_items,
     filter_chunks,
@@ -57,23 +57,26 @@ def _headers(spec: ExternalSourceSpec, creds: dict[str, Any]) -> dict[str, str]:
         "Content-Type": "application/json",
         "Accept": "application/json, text/event-stream",
     }
-    if spec.identity_token:
-        headers[IDENTITY_HEADER] = spec.identity_token
+    if isinstance(spec.octop_identity, OctopIdentity):
+        headers["X-Octop-Identity"] = issue_assertion(spec.octop_identity)
     return headers
 
 
 async def _rpc(
     url: str,
-    headers: dict[str, str],
+    spec: ExternalSourceSpec,
+    creds: dict[str, Any],
     method: str,
     params: dict[str, Any],
     *,
     timeout: float,
     request_id: int = 1,
 ) -> dict[str, Any]:
+    # One assertion per HTTP request: AKB treats a repeated jti as a replay, so
+    # the initialize and the tool call cannot share a header set.
     body = await post_json(
         url,
-        headers=headers,
+        headers=_headers(spec, creds),
         payload={"jsonrpc": "2.0", "id": request_id, "method": method, "params": params},
         timeout_seconds=timeout,
         origin=ORIGIN,
@@ -147,11 +150,11 @@ async def search(
     top_k: int,
 ) -> ExternalSearchResult:
     url = _url(spec)
-    headers = _headers(spec, creds)
     capped = max(1, min(top_k, MAX_TOP_K))
     await _rpc(
         url,
-        headers,
+        spec,
+        creds,
         "initialize",
         {
             "protocolVersion": _OFFERED_PROTOCOL,
@@ -162,7 +165,8 @@ async def search(
     )
     result = await _rpc(
         url,
-        headers,
+        spec,
+        creds,
         "tools/call",
         {"name": _tool_name(spec), "arguments": _arguments(spec, query, capped)},
         timeout=spec.timeout_seconds,
@@ -176,10 +180,11 @@ async def search(
     )
 
 
-async def _initialize(spec: ExternalSourceSpec, headers: dict[str, str]) -> str:
+async def _initialize(spec: ExternalSourceSpec, creds: dict[str, Any]) -> str:
     result = await _rpc(
         _url(spec),
-        headers,
+        spec,
+        creds,
         "initialize",
         {
             "protocolVersion": _OFFERED_PROTOCOL,
@@ -194,11 +199,11 @@ async def _initialize(spec: ExternalSourceSpec, headers: dict[str, str]) -> str:
 
 async def list_refs(spec: ExternalSourceSpec, creds: dict[str, Any]) -> list[dict[str, str]]:
     """List the knowledge bases this credential may read (``list_knowledge_bases``)."""
-    headers = _headers(spec, creds)
-    await _initialize(spec, headers)
+    await _initialize(spec, creds)
     bases = await _rpc(
         _url(spec),
-        headers,
+        spec,
+        creds,
         "tools/call",
         {"name": "list_knowledge_bases", "arguments": {}},
         timeout=spec.timeout_seconds,
@@ -217,9 +222,10 @@ async def list_refs(spec: ExternalSourceSpec, creds: dict[str, Any]) -> list[dic
 
 async def probe(spec: ExternalSourceSpec, creds: dict[str, Any]) -> SourceProbeResult:
     url = _url(spec)
-    headers = _headers(spec, creds)
-    negotiated = await _initialize(spec, headers)
-    listed = await _rpc(url, headers, "tools/list", {}, timeout=spec.timeout_seconds, request_id=2)
+    negotiated = await _initialize(spec, creds)
+    listed = await _rpc(
+        url, spec, creds, "tools/list", {}, timeout=spec.timeout_seconds, request_id=2
+    )
     tools_raw = listed.get("tools")
     tools = [
         str(tool.get("name"))

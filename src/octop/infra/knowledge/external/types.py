@@ -93,6 +93,5 @@ class ExternalSourceSpec:
     shared: bool = False
     created_at: int = 0
     updated_at: int = 0
-    # Fresh per-call identity assertion (AKB ``X-Octop-Identity``); empty when
-    # delegated identity is not configured for this instance.
-    identity_token: str = ""
+    # Per-call Octop delegation is injected only from trusted server runtime context.
+    octop_identity: Any = None

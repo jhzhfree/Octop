@@ -41,20 +41,27 @@ def catalog_for_selected_bases(
 
 
 def _catalog_from_config() -> list[dict[str, str]]:
+    """Internal bases plus externally mounted sources, both from the turn config.
+
+    An expert can mount external sources without selecting any internal base,
+    so the external catalog has to count as "something is attached" —
+    otherwise the tool would be hidden and the mount silently unreachable.
+    """
     cfg = get_config().get("configurable") or {}
-    raw = cfg.get("knowledge_base_catalog")
-    if not isinstance(raw, list):
-        return []
     out: list[dict[str, str]] = []
-    for item in raw:
-        if not isinstance(item, Mapping):
+    for key in ("knowledge_base_catalog", "external_knowledge_catalog"):
+        raw = cfg.get(key)
+        if not isinstance(raw, list):
             continue
-        kb_id = str(item.get("id") or "").strip()
-        name = str(item.get("name") or "").strip() or kb_id
-        description = str(item.get("description") or "").strip()
-        if not name:
-            continue
-        out.append({"id": kb_id or name, "name": name, "description": description})
+        for item in raw:
+            if not isinstance(item, Mapping):
+                continue
+            item_id = str(item.get("id") or "").strip()
+            name = str(item.get("name") or "").strip() or item_id
+            description = str(item.get("description") or "").strip()
+            if not name:
+                continue
+            out.append({"id": item_id or name, "name": name, "description": description})
     return out
 
 

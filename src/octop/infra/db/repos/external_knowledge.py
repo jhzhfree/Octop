@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from octop.infra.db.pool import DatabasePool
@@ -164,6 +165,7 @@ class ExternalKnowledgeRepo:
         self,
         source_id: str,
         *,
+        kind: str | None = None,
         display_name: str | None = None,
         endpoint: str | None = None,
         ref: str | None = None,
@@ -182,6 +184,7 @@ class ExternalKnowledgeRepo:
         assignments: list[str] = []
         values: list[object] = []
         optional: dict[str, object] = {
+            "kind": kind,
             "display_name": display_name,
             "endpoint": endpoint,
             "ref": ref,
@@ -254,6 +257,28 @@ class ExternalKnowledgeRepo:
                 "WHERE source_id = ? AND target_type = ? AND target_id = ?",
                 (source_id, target_type, target_id),
             )
+
+    def replace_bindings_for_target(
+        self, target_type: str, target_id: str, source_ids: Sequence[str]
+    ) -> None:
+        """Bind exactly *source_ids* to one target, dropping everything else.
+
+        One transaction, because an agent's mounted set is edited as a whole:
+        a partial write would leave stale sources mounted.
+        """
+        with self._db.transaction() as conn:
+            conn.execute(
+                "DELETE FROM external_knowledge_bindings WHERE target_type = ? AND target_id = ?",
+                (target_type, target_id),
+            )
+            for source_id in source_ids:
+                conn.execute(
+                    "INSERT INTO external_knowledge_bindings("
+                    "source_id, target_type, target_id, enabled, created_at"
+                    ") VALUES (?, ?, ?, 1, ?) "
+                    "ON CONFLICT(source_id, target_type, target_id) DO UPDATE SET enabled = 1",
+                    (str(source_id), target_type, target_id, now_ts()),
+                )
 
     def list_source_ids_for_target(self, target_type: str, target_id: str) -> list[str]:
         with self._db.connect() as conn:

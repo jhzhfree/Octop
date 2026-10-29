@@ -26,22 +26,30 @@ Other knowledge products use the same worker binding. Octop currently includes a
 
 AKB can run with an *application* API key plus a delegated caller identity. Octop then signs a short-lived assertion so AKB can intersect the key's grants with the Octop instance and user behind the call.
 
-Enable it only after AKB turns on the matching server-side check (`EXTERNAL_OCTOP_IDENTITY_ENABLED`); Octop sends the header only when both `enabled` and `instance_id` are set, and silently falls back to credential-only access otherwise.
+Enable it only after AKB turns on the matching server-side check (`EXTERNAL_OCTOP_IDENTITY_ENABLED`). Octop signs only when the deployment provisions the signing material below, and stays on credential-only access otherwise.
 
-```json
-{
-  "akb_identity": {
-    "enabled": true,
-    "issuer": "octop",
-    "audience": "akb",
-    "instance_id": "octop-prod"
-  }
-}
+| Variable | Purpose |
+| --- | --- |
+| `OCTOP_AKB_IDENTITY_ENABLED=true` | Enables server-selected `AGENT_DELEGATED_USER` on interactive turns. |
+| `OCTOP_AKB_IDENTITY_ISSUER` | Issuer registered in AKB for this Octop identity provider. |
+| `OCTOP_AKB_IDENTITY_AUDIENCE` | AKB audience expected by the assertion validator. |
+| `OCTOP_AKB_INSTANCE_ID` | Stable Octop instance identifier registered in AKB. |
+| `OCTOP_AKB_IDENTITY_PRIVATE_KEY` | RS256 signing key; mount through the deployment secret mechanism, never commit it. Newlines may be encoded as `\n`. |
+| `OCTOP_AKB_IDENTITY_KEY_ID` | Optional key ID (`kid`) for signing-key rotation. |
+
+Octop signs a fresh assertion per request: RS256, a 60-second lifetime, a one-time `jti`, the authenticated Octop user as `sub`, the server-selected Agent ID, the instance ID, and a trace reference. Only AKB sources (`akb-mcp`, `akb-rest`) and the AKB memory client receive the header, always alongside `X-API-Key`; the Octop login token is never forwarded. An Agent ID is required — a request that cannot name a trusted Agent fails closed instead of sending an unscoped assertion.
+
+### Public key set (JWKS)
+
+AKB verifies assertions through `NimbusJwtDecoder.withJwkSetUri`, so Octop publishes the matching public key:
+
+```
+GET /.well-known/jwks.json
 ```
 
-Environment overrides: `OCTOP_AKB_IDENTITY_ENABLED`, `OCTOP_AKB_IDENTITY_ISSUER`, `OCTOP_AKB_IDENTITY_AUDIENCE`, `OCTOP_AKB_IDENTITY_INSTANCE_ID`.
+Set AKB's `EXTERNAL_OCTOP_IDENTITY_JWK_SET_URI` to this URL on the Octop host. The endpoint sits outside `/api/`, where the JWT middleware does not apply — it is unauthenticated by design, carries only public keys, and answers `{"keys": []}` when no signing key is provisioned. Every assertion carries its `kid`: the configured key id when set, otherwise the RFC 7638 thumbprint of the key, so AKB can tell an old key from a new one during rotation and the two sides never disagree.
 
-The assertion is HS256-signed with a dedicated secret (`secrets` row `akb-identity`, created on first use) and carries `iss`, `aud`, `sub` (`user:<id>`), `octop_instance_id`, `iat`, `exp` (5 minutes) and a one-time `jti`. Only AKB sources (`akb-mcp`, `akb-rest`) receive the header.
+Because AKB rejects a replayed `jti`, each upstream HTTP request gets its own assertion; an MCP exchange that initializes and then calls a tool signs twice.
 
 ## Knowledge base discovery
 

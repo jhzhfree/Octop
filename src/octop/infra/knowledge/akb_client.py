@@ -15,6 +15,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request
 
+from octop.infra.knowledge.akb_identity import OctopIdentity, issue_assertion
+
 
 class AkbError(RuntimeError):
     """Sanitized upstream error; never includes credentials or response bodies."""
@@ -145,6 +147,7 @@ class AkbMemoryConfig:
     base_url: str
     api_key: str
     timeout_seconds: float = 10.0
+    octop_identity: OctopIdentity | None = None
 
     def __post_init__(self) -> None:
         url = urlsplit(self.base_url)
@@ -171,14 +174,17 @@ class AkbMemoryClient:
         self.config = config
 
     def _capture(self, payload: dict[str, object]) -> dict[str, object]:
+        headers = {
+            "X-API-Key": self.config.api_key,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        if self.config.octop_identity is not None:
+            headers["X-Octop-Identity"] = issue_assertion(self.config.octop_identity)
         request = Request(
             self.config.base_url.rstrip("/") + "/api/v1/external/memories/capture",
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            headers={
-                "X-API-Key": self.config.api_key,
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-            },
+            headers=headers,
             method="POST",
         )
         try:

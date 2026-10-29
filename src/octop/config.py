@@ -122,20 +122,6 @@ class CapabilitiesConfig:
 
 
 @dataclass(frozen=True)
-class AkbIdentityConfig:
-    """Octop-signed identity assertion sent to AKB as ``X-Octop-Identity``.
-
-    AKB only verifies the header when its own ``EXTERNAL_OCTOP_IDENTITY_ENABLED``
-    is on; Octop stays on the plain API key until both sides opt in.
-    """
-
-    enabled: bool = False
-    issuer: str = "octop"
-    audience: str = "akb"
-    instance_id: str = ""
-
-
-@dataclass(frozen=True)
 class OctopConfig:
     bind_host: str = "127.0.0.1"
     port: int = 8088
@@ -155,7 +141,6 @@ class OctopConfig:
     tls: TlsConfig = field(default_factory=TlsConfig)
     backup: BackupConfig = field(default_factory=BackupConfig)
     capabilities: CapabilitiesConfig = field(default_factory=CapabilitiesConfig)
-    akb_identity: AkbIdentityConfig = field(default_factory=AkbIdentityConfig)
     max_upload_mb: int = DEFAULT_MAX_UPLOAD_MB
     browser_idle_timeout_minutes: int = DEFAULT_BROWSER_IDLE_TIMEOUT_MINUTES
 
@@ -222,20 +207,6 @@ def _parse_capabilities_section(raw: object) -> CapabilitiesConfig:
         raise ValueError("config.capabilities must be an object")
     mobile_raw = raw.get("mobile")
     return CapabilitiesConfig(mobile=_parse_mobile_capabilities(mobile_raw))
-
-
-def _parse_akb_identity_section(raw: object) -> AkbIdentityConfig:
-    if raw is None:
-        return AkbIdentityConfig()
-    if not isinstance(raw, dict):
-        raise ValueError("config.akb_identity must be an object")
-    defaults = AkbIdentityConfig()
-    return AkbIdentityConfig(
-        enabled=bool(raw.get("enabled", defaults.enabled)),
-        issuer=str(raw.get("issuer", defaults.issuer)).strip() or defaults.issuer,
-        audience=str(raw.get("audience", defaults.audience)).strip() or defaults.audience,
-        instance_id=str(raw.get("instance_id", defaults.instance_id)).strip(),
-    )
 
 
 def _parse_backup_section(raw: object) -> BackupConfig:
@@ -568,19 +539,6 @@ def load_config(path: Path) -> OctopConfig:
             )
         )
 
-    akb_identity = _parse_akb_identity_section(raw.get("akb_identity"))
-    if v := os.environ.get("OCTOP_AKB_IDENTITY_ENABLED"):
-        akb_identity = replace(
-            akb_identity,
-            enabled=_coerce_bool("OCTOP_AKB_IDENTITY_ENABLED", v, akb_identity.enabled),
-        )
-    if v := os.environ.get("OCTOP_AKB_IDENTITY_ISSUER"):
-        akb_identity = replace(akb_identity, issuer=v.strip() or akb_identity.issuer)
-    if v := os.environ.get("OCTOP_AKB_IDENTITY_AUDIENCE"):
-        akb_identity = replace(akb_identity, audience=v.strip() or akb_identity.audience)
-    if v := os.environ.get("OCTOP_AKB_IDENTITY_INSTANCE_ID"):
-        akb_identity = replace(akb_identity, instance_id=v.strip())
-
     backup = _parse_backup_section(raw.get("backup"))
     if v := os.environ.get("OCTOP_BACKUP_AUTO_ENABLED"):
         backup = replace(
@@ -662,7 +620,6 @@ def load_config(path: Path) -> OctopConfig:
         tls=_parse_tls_section(raw.get("tls")),
         backup=backup,
         capabilities=capabilities,
-        akb_identity=akb_identity,
         max_upload_mb=int(merged.get("max_upload_mb", DEFAULT_MAX_UPLOAD_MB)),
         browser_idle_timeout_minutes=max(
             0,

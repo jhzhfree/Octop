@@ -38,7 +38,6 @@ def _service(server: Any) -> ExternalKnowledgeService:
         services.external_knowledge_repo,
         services.connector_repo,
         services.secret_repo,
-        services.config,
     )
 
 
@@ -71,6 +70,9 @@ class SourceCreateBody(BaseModel):
 
 
 class SourcePatchBody(BaseModel):
+    # Changing the adapter re-points the source at another upstream protocol,
+    # so it is patchable like every other setting — validated server-side.
+    kind: str | None = Field(default=None, description="Adapter kind, e.g. akb-mcp")
     display_name: str | None = Field(default=None, min_length=1, max_length=120)
     endpoint: str | None = Field(default=None, min_length=1, max_length=2048)
     api_key: str | None = Field(default=None, max_length=2048)

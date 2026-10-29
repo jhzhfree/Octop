@@ -86,3 +86,35 @@ def test_stamp_turn_knowledge_config_writes_catalog() -> None:
     ]
     assert configurable["user_is_admin"] is False
     assert configurable["locale"] == "zh"
+
+
+def test_stamp_turn_knowledge_config_keeps_agent_id_and_external_catalog() -> None:
+    """The knowledge tool resolves agent-mounted sources, so both are stamped."""
+    request: dict = {"agent_id": "agent-1"}
+    stamp_turn_knowledge_config(
+        request,
+        visible_bases=[],
+        explicit_ids=[],
+        owner_user_id=1,
+        is_admin=False,
+        locale="en",
+        external_catalog=[{"id": "src-1", "name": "AKB HR", "description": "external"}],
+    )
+    configurable = request["configurable"]
+    # Stamped even with delegated identity off: without it the tool cannot see
+    # sources mounted on the expert itself.
+    assert configurable["agent_id"] == "agent-1"
+    assert configurable["external_knowledge_catalog"] == [
+        {"id": "src-1", "name": "AKB HR", "description": "external"}
+    ]
+    # An inherited agent id from a caller must never survive.
+    inherited: dict = {"configurable": {"agent_id": "spoofed"}}
+    stamp_turn_knowledge_config(
+        inherited,
+        visible_bases=[],
+        explicit_ids=[],
+        owner_user_id=1,
+        is_admin=False,
+        locale="en",
+    )
+    assert "agent_id" not in inherited["configurable"]

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from octop.infra.db.repos.knowledge import KnowledgeBaseRow
+from octop.infra.knowledge.akb_identity import delegated_identity_enabled
 
 
 def merge_knowledge_base_ids(
@@ -44,6 +45,7 @@ def stamp_turn_knowledge_config(
     extra_ids: Sequence[str] | None = None,
     is_admin: bool = False,
     locale: str,
+    external_catalog: Sequence[Mapping[str, str]] | None = None,
 ) -> list[str]:
     """Write this turn's knowledge-base selection onto the harness request."""
     from octop.infra.knowledge.hint import catalog_for_selected_bases  # noqa: PLC0415
@@ -57,7 +59,32 @@ def stamp_turn_knowledge_config(
     configurable = dict(request.get("configurable") or {})
     configurable["knowledge_base_ids"] = selected_ids
     configurable["knowledge_base_catalog"] = catalog_for_selected_bases(visible_bases, selected_ids)
+    configurable["external_knowledge_catalog"] = [
+        {
+            "id": str(item.get("id") or ""),
+            "name": str(item.get("name") or ""),
+            "description": str(item.get("description") or ""),
+        }
+        for item in external_catalog or ()
+    ]
     configurable["user_is_admin"] = is_admin
     configurable["locale"] = locale
+    # Do not preserve identity controls from caller-supplied configurable data.
+    configurable.pop("octop_akb_identity_mode", None)
+    configurable.pop("octop_trace_id", None)
+    # The agent id is trusted server state, and the knowledge tool needs it to
+    # find sources mounted on the expert itself — so it is stamped on every
+    # turn, not only when AKB delegated identity is enabled.
+    configurable.pop("agent_id", None)
+    if request.get("agent_id"):
+        configurable["agent_id"] = str(request["agent_id"])
+    if delegated_identity_enabled():
+        if request.get("thread_id"):
+            configurable["octop_trace_id"] = str(request["thread_id"])
+        configurable["octop_akb_identity_mode"] = (
+            "AGENT_SERVICE"
+            if str(request.get("source") or "").lower() == "cron"
+            else "AGENT_DELEGATED_USER"
+        )
     request["configurable"] = configurable
     return selected_ids
