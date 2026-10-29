@@ -1,0 +1,19 @@
+{
+  "name": "@akb/opencode-identity",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./dist/index.js", "./client": "./dist/client.js" },
+  "bin": { "akb-identity": "./dist/cli.js" },
+  "files": ["dist", "README.md", "config.example.json", "config.v2.example.json"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "test:live": "npm run build && node test/live.mjs",
+    "prepack": "npm run build"
+  },
+  "engines": { "node": ">=22" },
+  "dependencies": { "@opencode-ai/plugin": "1.14.30", "effect": "4.0.0-beta.57", "@akb/agent-identity-sdk": "file:../agent-identity-sdk" },
+  "bundleDependencies": ["@akb/agent-identity-sdk"],
+  "devDependencies": { "typescript": "5.8.3", "@types/node": "^22.0.0" }
+}

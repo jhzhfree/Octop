@@ -1,0 +1,84 @@
+{
+  "format": "akb-agent-proof-v2-public-vectors/v1",
+  "note": "Public offline fixtures only. Private keys were generated only in memory and are not stored. This fake Service Key is not an AKB credential. Use verificationTime, not wall clock. Query fields exercise raw bytes, not endpoint features.",
+  "verificationTime": 1793232000,
+  "serviceKeyTestValue": "PUBLIC_FIXTURE_NOT_A_REAL_AKB_KEY",
+  "policy": {
+    "id": "17",
+    "applicationPrincipalId": "123",
+    "issuer": "https://identity.example.com/opencode",
+    "audience": "akb-external-api",
+    "resource": "https://akb.example.com",
+    "platformId": "opencode",
+    "installationId": "opencode-office-01",
+    "workspaceId": "engineering-01"
+  },
+  "agents": [
+    {
+      "bindingId": "21",
+      "externalAgentId": "e21cce9c-1b16-4ab8-a76a-bb761df919b8",
+      "runtimeAgentKey": "builder",
+      "publicJwk": {
+        "kty": "RSA",
+        "n": "xj52LpjtCCbqrigPLaoymcnNku4nr3qXNbSmNxQZnSsX3JRbfA9EiIVpiaORN8I0OTrUYp92COMC_ar42qR_tRBaUhGyb1AOFT3CmyEJq-ojFdKQuxMnntENLmn21B9QTU1LWcv9ScF34GrCIDl3uXSpTtu7xVpu9NU7GbmmCpKBVDm7DBeA-qFaWiEPtbyigqgzbqvyj9k3l1bVMj-j-ZmJWFFpQJzQY7htHQ2HIyltp3oWJd_0f3n2LCJBwVS5uN4ZbdrviVmYwmc62z3-b_qNSkQxmwIWuuhinGObtPdy6VrnunlK4fsIOD-t0_DPz1HIp5S4opBdNRVJFrGg-kHQdDMX7IdjAMd-hnPPCo-f37VLnyHmKPdOTbCaiCMSUs1dsiy6O8YWJkKJ-2TFWhW9PaADtjwtqoqrnU0m0Qg-9HqIKsFmS8tgCzrJAFerKefiwCkzP2sRqz4fD15rsp4QDqbmh7viR531FQiIJDw_ot_ynrSmcLlpeCIfhCRj",
+        "e": "AQAB",
+        "kid": "louzXmJvr27z7wVsHJNr_nZSEdTimbPQkqZRRwnqYsc",
+        "alg": "RS256",
+        "use": "sig"
+      }
+    },
+    {
+      "bindingId": "22",
+      "externalAgentId": "01965897-0976-471c-8d64-27eb682a227b",
+      "runtimeAgentKey": "reviewer",
+      "publicJwk": {
+        "kty": "RSA",
+        "n": "tIH0xpm8cIZQ_xApwmxBHUVtXNLdzPIgaPt2b0hEaqlEzs97rzLaZn61i02Lak543j3Sj3l6GJ2c_0VvS56btOLiUON5r8-Q2V8xKbYwrOerCy-kCCzZ-dAFdzjjqj4I0XUezrXe4RSPrgSi-NGyz7UW5uGlVzpPffhEETDtNbjLGnIXXUx5wzXkLVZYFXXMPN0Wy_hTnXBI8sOuyXXxpXHPEY1TgTL81EylDq9E0w3eX9XbxF3StH3zjvJa-d2AGEKYytsj0cFBuOCqrYcwVBgJG4cZ2UFpzAUdQ3VGm8TiRBu5gllq1ztKfS5637U8cGw5q2ba-haGUtzvQ6Q1m3e1S_8YFv-DHkSqy-vM49DSraRz4WYZJ84ZrNT_RAQRncKZa3QAUiXwIJCiVCYWqWNkCXTVHxV6PGIrt3HjNya16efw50hs_HUw0nTVBYSKq399LVgA5KfWQfGo_5pew6IoRVpuuuC3f-vu-s5L_NkHcf4tyOMeYSl4CvSYaqaf",
+        "e": "AQAB",
+        "kid": "x6OFCV8z0zM6qZsJmO5EvnYyi-hqSDMun9j8RHf627Y",
+        "alg": "RS256",
+        "use": "sig"
+      }
+    }
+  ],
+  "requests": [
+    {
+      "name": "builder-utf8-body",
+      "externalAgentId": "e21cce9c-1b16-4ab8-a76a-bb761df919b8",
+      "method": "POST",
+      "target": "/api/mcp",
+      "bodyUtf8": "{\"jsonrpc\":\"2.0\",\"id\":\"fixture-1\",\"method\":\"tools/call\",\"params\":{\"name\":\"knowledge_search\",\"arguments\":{\"query\":\"报销规则：🚀\",\"knowledgeBaseId\":2,\"topK\":3}}}",
+      "bodyBase64": "eyJqc29ucnBjIjoiMi4wIiwiaWQiOiJmaXh0dXJlLTEiLCJtZXRob2QiOiJ0b29scy9jYWxsIiwicGFyYW1zIjp7Im5hbWUiOiJrbm93bGVkZ2Vfc2VhcmNoIiwiYXJndW1lbnRzIjp7InF1ZXJ5Ijoi5oql6ZSA6KeE5YiZ77ya8J+agCIsImtub3dsZWRnZUJhc2VJZCI6MiwidG9wSyI6M319fQ==",
+      "bodySha256": "7fd6489bbf9ad89290737373d462df2d83b1bae73b92514c4c374c906c78a21a",
+      "token": "eyJhbGciOiJSUzI1NiIsInR5cCI6ImFrYi1hZ2VudC1wcm9vZitqd3QiLCJraWQiOiJsb3V6WG1KdnIyN3o3d1ZzSEpOcl9uWlNFZFRpbWJQUWtxWlJSd25xWXNjIn0.eyJ2ZXIiOjIsImlzcyI6Imh0dHBzOi8vaWRlbnRpdHkuZXhhbXBsZS5jb20vb3BlbmNvZGUiLCJhdWQiOiJha2ItZXh0ZXJuYWwtYXBpIiwicmVzb3VyY2UiOiJodHRwczovL2FrYi5leGFtcGxlLmNvbSIsInBvbGljeV9pZCI6IjE3IiwiYXpwIjoiMTIzIiwic3ViIjoiYWdlbnQ6ZTIxY2NlOWMtMWIxNi00YWI4LWE3NmEtYmI3NjFkZjkxOWI4IiwicGxhdGZvcm1faWQiOiJvcGVuY29kZSIsImluc3RhbGxhdGlvbl9pZCI6Im9wZW5jb2RlLW9mZmljZS0wMSIsIndvcmtzcGFjZV9pZCI6ImVuZ2luZWVyaW5nLTAxIiwicnVudGltZV9hZ2VudCI6ImJ1aWxkZXIiLCJzZXNzaW9uX2lkIjoic2Vzc2lvbi1idWlsZGVyIiwibWVzc2FnZV9pZCI6Im1lc3NhZ2UtMSIsImludm9jYXRpb25faWQiOiI5YmI1MjE0NS1hMmE5LTQ2OTMtODNhYS1hNjAyMDk1YjFiOTUiLCJpYXQiOjE3OTMyMzIwMDAsImV4cCI6MTc5MzIzMjA2MCwianRpIjoiYjJmMDIyN2EtOGQ0OC00ZjEyLWE5MzctMDAwMDAwMDAwMDAxIiwiY3JlZGVudGlhbF9zaGEyNTYiOiJmYTY1N2I1MWM4MTYxMTBhNzQ4YTE5MzU0N2RmY2MzYWJhZmYxMjg3YjE1YzllYjQ4MDU5NDU4ZGY1NThkODA3IiwicmVxdWVzdF9iaW5kaW5nIjp7Im1ldGhvZCI6IlBPU1QiLCJ0YXJnZXQiOiIvYXBpL21jcCIsImJvZHlfc2hhMjU2IjoiN2ZkNjQ4OWJiZjlhZDg5MjkwNzM3MzczZDQ2MmRmMmQ4M2IxYmFlNzNiOTI1MTRjNGMzNzRjOTA2Yzc4YTIxYSJ9fQ.YCA1cvepi4pQVp22Ay_R24C4Z4K67tuJPOpvwuEiduhBzUbkmlAZfrf0OSqUmF77iqgJxNrGYW6yOtZ_anawPU33dxJ3E6Qyx_og8mTI8Cp05K8Jvkt2M_x4EVgHJPKAW42wqY-FQDHBeCYeyqEDteq6SWq36D6JtCdMzfjiqjV4uCuJdXmgYwoegSErFhriPIpQ4V5M7-myIidiqj-FG_kjRpncJWeKW9s5jqhhcEWIhUQu7Tk_fyau3ZjAjMeeZbQE6b9Nojld5j8IcZOfOEXoxjCXVvU30Y9XfHmsOpsSn8lyD2AMKQgEeFShD9teOoxngjOiu2hEwyfzTdvpOrZzTDU7TlksRdQe31dUYCfh3ni5MG-O-Wuz-fe2DK6bWFrdfViH2V5FXS9o08xmARMUm63uABBbW4VsSFJwRZt8JujT7FKrjQ2xv8bX5vJCslduMgz82xqRIj9h7EshBuUycXu9PE3kHfaADxOktllCLAyDem2Nu1lUfm4X6vai"
+    },
+    {
+      "name": "reviewer-utf8-body",
+      "externalAgentId": "01965897-0976-471c-8d64-27eb682a227b",
+      "method": "POST",
+      "target": "/api/mcp",
+      "bodyUtf8": "{\"jsonrpc\":\"2.0\",\"id\":\"fixture-1\",\"method\":\"tools/call\",\"params\":{\"name\":\"knowledge_search\",\"arguments\":{\"query\":\"报销规则：🚀\",\"knowledgeBaseId\":2,\"topK\":3}}}",
+      "bodyBase64": "eyJqc29ucnBjIjoiMi4wIiwiaWQiOiJmaXh0dXJlLTEiLCJtZXRob2QiOiJ0b29scy9jYWxsIiwicGFyYW1zIjp7Im5hbWUiOiJrbm93bGVkZ2Vfc2VhcmNoIiwiYXJndW1lbnRzIjp7InF1ZXJ5Ijoi5oql6ZSA6KeE5YiZ77ya8J+agCIsImtub3dsZWRnZUJhc2VJZCI6MiwidG9wSyI6M319fQ==",
+      "bodySha256": "7fd6489bbf9ad89290737373d462df2d83b1bae73b92514c4c374c906c78a21a",
+      "token": "eyJhbGciOiJSUzI1NiIsInR5cCI6ImFrYi1hZ2VudC1wcm9vZitqd3QiLCJraWQiOiJ4Nk9GQ1Y4ejB6TTZxWnNKbU81RXZuWXlpLWhxU0RNdW45ajhSSGY2MjdZIn0.eyJ2ZXIiOjIsImlzcyI6Imh0dHBzOi8vaWRlbnRpdHkuZXhhbXBsZS5jb20vb3BlbmNvZGUiLCJhdWQiOiJha2ItZXh0ZXJuYWwtYXBpIiwicmVzb3VyY2UiOiJodHRwczovL2FrYi5leGFtcGxlLmNvbSIsInBvbGljeV9pZCI6IjE3IiwiYXpwIjoiMTIzIiwic3ViIjoiYWdlbnQ6MDE5NjU4OTctMDk3Ni00NzFjLThkNjQtMjdlYjY4MmEyMjdiIiwicGxhdGZvcm1faWQiOiJvcGVuY29kZSIsImluc3RhbGxhdGlvbl9pZCI6Im9wZW5jb2RlLW9mZmljZS0wMSIsIndvcmtzcGFjZV9pZCI6ImVuZ2luZWVyaW5nLTAxIiwicnVudGltZV9hZ2VudCI6InJldmlld2VyIiwic2Vzc2lvbl9pZCI6InNlc3Npb24tcmV2aWV3ZXIiLCJtZXNzYWdlX2lkIjoibWVzc2FnZS0xIiwiaW52b2NhdGlvbl9pZCI6IjliYjUyMTQ1LWEyYTktNDY5My04M2FhLWE2MDIwOTViMWI5NSIsImlhdCI6MTc5MzIzMjAwMCwiZXhwIjoxNzkzMjMyMDYwLCJqdGkiOiJiMmYwMjI3YS04ZDQ4LTRmMTItYTkzNy0wMDAwMDAwMDAwMDIiLCJjcmVkZW50aWFsX3NoYTI1NiI6ImZhNjU3YjUxYzgxNjExMGE3NDhhMTkzNTQ3ZGZjYzNhYmFmZjEyODdiMTVjOWViNDgwNTk0NThkZjU1OGQ4MDciLCJyZXF1ZXN0X2JpbmRpbmciOnsibWV0aG9kIjoiUE9TVCIsInRhcmdldCI6Ii9hcGkvbWNwIiwiYm9keV9zaGEyNTYiOiI3ZmQ2NDg5YmJmOWFkODkyOTA3MzczNzNkNDYyZGYyZDgzYjFiYWU3M2I5MjUxNGM0YzM3NGM5MDZjNzhhMjFhIn19.h4jylP8ycTYhNoVluS1HsucPovxMwxMWKRN2mlUc9uCQlwUxkJaXwBAQAXLYx_gacB2Hcoa2c0RW5V_8jXZEASAEbogi_Lg2oENB9vesP80vLPb-Ebfkqb7AsmtfBtIEw69_T_ZIevugAP-CM5yg1hUTVoLso5fRvf2yDA-VdtkvDp56YcWoeqLwu2_f4lFxVtHWeC0Erb57PKY6K9IAfrYiOAWBbRycZFBPAjWxG58bhuTvyn5jJ7hLaQ-2ImDwzThGID5TnQ9LaFQ1LodDwuWpubmU4Z9HWnPQRNmgcUYZdFnjiY1VbdNj10f6Ql_EQP56wVNYX2dPnL632hj2uTPQ7bozxvm4D-GQTQSxZQrEst9RCowpu43_k5R0iz6xrZV53kIyZb572Kir010yp3NdJpHLGV5OK_tGX2hXiFkSSC1Hqs0LX_jQVt-R4w-87v1E9u2VNJCdT9pKwRlgO-6yA-un47SqyzKaoKuRGTMkcT4JWRkBlVHv37Cs1jQZ"
+    },
+    {
+      "name": "builder-empty-body-raw-query",
+      "externalAgentId": "e21cce9c-1b16-4ab8-a76a-bb761df919b8",
+      "method": "GET",
+      "target": "/api/v1/external/bases?cursor=a%2Fb&limit=2",
+      "bodyUtf8": "",
+      "bodyBase64": "",
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "token": "eyJhbGciOiJSUzI1NiIsInR5cCI6ImFrYi1hZ2VudC1wcm9vZitqd3QiLCJraWQiOiJsb3V6WG1KdnIyN3o3d1ZzSEpOcl9uWlNFZFRpbWJQUWtxWlJSd25xWXNjIn0.eyJ2ZXIiOjIsImlzcyI6Imh0dHBzOi8vaWRlbnRpdHkuZXhhbXBsZS5jb20vb3BlbmNvZGUiLCJhdWQiOiJha2ItZXh0ZXJuYWwtYXBpIiwicmVzb3VyY2UiOiJodHRwczovL2FrYi5leGFtcGxlLmNvbSIsInBvbGljeV9pZCI6IjE3IiwiYXpwIjoiMTIzIiwic3ViIjoiYWdlbnQ6ZTIxY2NlOWMtMWIxNi00YWI4LWE3NmEtYmI3NjFkZjkxOWI4IiwicGxhdGZvcm1faWQiOiJvcGVuY29kZSIsImluc3RhbGxhdGlvbl9pZCI6Im9wZW5jb2RlLW9mZmljZS0wMSIsIndvcmtzcGFjZV9pZCI6ImVuZ2luZWVyaW5nLTAxIiwicnVudGltZV9hZ2VudCI6ImJ1aWxkZXIiLCJzZXNzaW9uX2lkIjoic2Vzc2lvbi1idWlsZGVyIiwibWVzc2FnZV9pZCI6Im1lc3NhZ2UtMSIsImludm9jYXRpb25faWQiOiI5YmI1MjE0NS1hMmE5LTQ2OTMtODNhYS1hNjAyMDk1YjFiOTUiLCJpYXQiOjE3OTMyMzIwMDAsImV4cCI6MTc5MzIzMjA2MCwianRpIjoiYjJmMDIyN2EtOGQ0OC00ZjEyLWE5MzctMDAwMDAwMDAwMDAzIiwiY3JlZGVudGlhbF9zaGEyNTYiOiJmYTY1N2I1MWM4MTYxMTBhNzQ4YTE5MzU0N2RmY2MzYWJhZmYxMjg3YjE1YzllYjQ4MDU5NDU4ZGY1NThkODA3IiwicmVxdWVzdF9iaW5kaW5nIjp7Im1ldGhvZCI6IkdFVCIsInRhcmdldCI6Ii9hcGkvdjEvZXh0ZXJuYWwvYmFzZXM_Y3Vyc29yPWElMkZiJmxpbWl0PTIiLCJib2R5X3NoYTI1NiI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifX0.JMtW-6Y-RPgySvr6uflmlE_FaYm3Bmjb8tPIbP4LEtFp7pKFbZKdp7Hmqty-m4jbmKdGxN8vKnhLl_JLQPNV0fAR2jt7TOH-QKQwbmV5jT7gUo7-EA_L4U90cKO0PuF4vaM4gfhoPSWHiH4OVgXk-7AqOKTC2gdPRXj1pyuYD7hha8adwn8ClzH8sh2bFy7OujtrgtZzi1PNO_78i75I3kXxpkm0lriJQG25M5UdNsXGJnHs0CKIj9CmW17xrK9OiSkbzT8OuSYmGlh8sdfOP9kBFpR3kUQtwg8LzITuSiPERCkBrK7NgMp99WQVYm07bH8VUNG2ulSe4a4uwsh0Fcwyu2sFto6BmLq-BII0fpJqa0MjHceJ4VIyxxqSYfj5uwpnajVpV2JX7VEjpWXy4N96Kiljtmt7Ka3PiC9CC4vkGFL0SmGn_uZiM-dOiHxOk5sr7DfLQPTvh5OsmJzRlMzi2j0U6KC_fcWVnM779c4go9ZhoBROb30tnWF2bOE6"
+    }
+  ],
+  "negativeVectors": [
+    {
+      "name": "agent-a-valid-signature-claims-agent-b",
+      "actualSigningAgentId": "e21cce9c-1b16-4ab8-a76a-bb761df919b8",
+      "expected": "REJECT_KEY_OWNER_MISMATCH",
+      "token": "eyJhbGciOiJSUzI1NiIsInR5cCI6ImFrYi1hZ2VudC1wcm9vZitqd3QiLCJraWQiOiJsb3V6WG1KdnIyN3o3d1ZzSEpOcl9uWlNFZFRpbWJQUWtxWlJSd25xWXNjIn0.eyJ2ZXIiOjIsImlzcyI6Imh0dHBzOi8vaWRlbnRpdHkuZXhhbXBsZS5jb20vb3BlbmNvZGUiLCJhdWQiOiJha2ItZXh0ZXJuYWwtYXBpIiwicmVzb3VyY2UiOiJodHRwczovL2FrYi5leGFtcGxlLmNvbSIsInBvbGljeV9pZCI6IjE3IiwiYXpwIjoiMTIzIiwic3ViIjoiYWdlbnQ6MDE5NjU4OTctMDk3Ni00NzFjLThkNjQtMjdlYjY4MmEyMjdiIiwicGxhdGZvcm1faWQiOiJvcGVuY29kZSIsImluc3RhbGxhdGlvbl9pZCI6Im9wZW5jb2RlLW9mZmljZS0wMSIsIndvcmtzcGFjZV9pZCI6ImVuZ2luZWVyaW5nLTAxIiwicnVudGltZV9hZ2VudCI6InJldmlld2VyIiwic2Vzc2lvbl9pZCI6InNlc3Npb24tYnVpbGRlciIsIm1lc3NhZ2VfaWQiOiJtZXNzYWdlLTEiLCJpbnZvY2F0aW9uX2lkIjoiOWJiNTIxNDUtYTJhOS00NjkzLTgzYWEtYTYwMjA5NWIxYjk1IiwiaWF0IjoxNzkzMjMyMDAwLCJleHAiOjE3OTMyMzIwNjAsImp0aSI6ImIyZjAyMjdhLThkNDgtNGYxMi1hOTM3LTAwMDAwMDAwMDA5OSIsImNyZWRlbnRpYWxfc2hhMjU2IjoiZmE2NTdiNTFjODE2MTEwYTc0OGExOTM1NDdkZmNjM2FiYWZmMTI4N2IxNWM5ZWI0ODA1OTQ1OGRmNTU4ZDgwNyIsInJlcXVlc3RfYmluZGluZyI6eyJtZXRob2QiOiJQT1NUIiwidGFyZ2V0IjoiL2FwaS9tY3AiLCJib2R5X3NoYTI1NiI6IjdmZDY0ODliYmY5YWQ4OTI5MDczNzM3M2Q0NjJkZjJkODNiMWJhZTczYjkyNTE0YzRjMzc0YzkwNmM3OGEyMWEifX0.HZESqvFkACNHq8Ikjym_WIx3ljSm4rw29dHJCnX4egHAF5LGxuX1nfpYZhJl6ClSP3OL6oSYbiYo_LppQRJd_H9S1xOxnBLZbYMCUhath1jWlSXsOLxIEDTACh--uAQ9EYHfzOnBXG9pYzzrQcYgrZal-NPZ6RntSAWYaYok4oI3KQX77DRButD4llQCm6EflYD-o_pOZv-IA6ckuGXHMZ1QNKzlmaTw8HHOQc-5q6Oneg7bTteIzxS5Q9mBivBhvSxTGiUi_ZEmGFAdRK5dtzxEOk5Biye9vxDtcQTrL9_xxlThwWa_fOMXrwjuuSSIhh_PhBzqLMm4q43k5pObAcZQVoL2u0Udo2ghWebOPJ94U6zu8H51CqB3VCKYg97pHpolJG1M3V7oZv6T-z1Bv6whWgXG8j7vp9qp99tYnYRTjzViMze7i-T5Pit8VY6SdoOmwH3I7EqUiU2yIfkZrF5ZJCfUjFU-7uLDPI16ockKqpC39kL3tyZ1Fm9yrl8w"
+    }
+  ]
+}

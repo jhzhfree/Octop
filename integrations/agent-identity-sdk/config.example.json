@@ -1,0 +1,43 @@
+{
+  "configVersion": 2,
+  "proofProfile": "AGENT_KEY_RS256_V2",
+  "platformId": "opencode",
+  "installationId": "opencode-office-01",
+  "workspaceId": "engineering-01",
+  "workspaceRoot": "/srv/engineering",
+  "origin": "https://akb.example.com",
+  "transport": "mcp",
+  "serviceKeyFile": "/etc/akb-agent-identity/service.key",
+  "keyStore": {
+    "provider": "node-file",
+    "rootDirectory": "/var/lib/akb-agent-identity/keys"
+  },
+  "bindings": [
+    {
+      "policyId": "17",
+      "bindingId": "21",
+      "platformId": "opencode",
+      "installationId": "opencode-office-01",
+      "workspaceId": "engineering-01",
+      "runtimeAgentKey": "builder",
+      "externalAgentId": "e21cce9c-1b16-4ab8-a76a-bb761df919b8",
+      "applicationPrincipalId": "123",
+      "issuer": "https://identity.example.com/opencode",
+      "audience": "akb-external-api",
+      "resource": "https://akb.example.com"
+    },
+    {
+      "policyId": "17",
+      "bindingId": "22",
+      "platformId": "opencode",
+      "installationId": "opencode-office-01",
+      "workspaceId": "engineering-01",
+      "runtimeAgentKey": "reviewer",
+      "externalAgentId": "01965897-0976-471c-8d64-27eb682a227b",
+      "applicationPrincipalId": "123",
+      "issuer": "https://identity.example.com/opencode",
+      "audience": "akb-external-api",
+      "resource": "https://akb.example.com"
+    }
+  ]
+}

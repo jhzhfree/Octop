@@ -1,0 +1,183 @@
+import { constants } from "node:fs";
+import { mkdir, open, realpath, lstat, rename, unlink } from "node:fs/promises";
+import path from "node:path";
+import { createPrivateKey, createPublicKey, generateKeyPair, sign, type KeyObject } from "node:crypto";
+import { promisify } from "node:util";
+import { bytes, IdentityError, ownerIndex, publicKid, sha256 } from "./core.js";
+import type { AgentKeyOwner, AgentKeyStore, PublicAgentKey, RsaPublicJwk, RsaSigner } from "./types.js";
+
+const generate = promisify(generateKeyPair);
+const missing = (e: unknown) => (e as NodeJS.ErrnoException).code === "ENOENT";
+function posix() {
+  if (process.platform === "win32") throw new IdentityError("KEY_UNAVAILABLE", "File KeyStore requires POSIX permissions; use an ACL-aware custom Provider on Windows");
+}
+export function outside(workspace: string, filename: string): boolean {
+  const relative = path.relative(workspace, filename);
+  return relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
+}
+async function protectedParents(directory: string) {
+  posix();
+  for (let current = directory; ; current = path.dirname(current)) {
+    const info = await lstat(current);
+    if (!info.isDirectory() || info.isSymbolicLink() || (info.uid !== 0 && info.uid !== process.getuid?.())
+      || ((info.mode & 0o022) !== 0 && !((info.mode & 0o1000) !== 0 && info.uid === 0))) {
+      throw new IdentityError("KEY_UNAVAILABLE", "Identity parent directories must not be writable by other users");
+    }
+    if (path.dirname(current) === current) break;
+  }
+}
+export async function readProtectedFile(filename: string, workspace?: string): Promise<string> {
+  posix();
+  if (!path.isAbsolute(filename)) throw new IdentityError("KEY_UNAVAILABLE", "Identity paths must be absolute");
+  await protectedParents(path.dirname(filename));
+  if (workspace && !outside(await realpath(workspace), await realpath(filename))) throw new IdentityError("KEY_UNAVAILABLE", "Identity material must be outside the Agent workspace");
+  const file = await open(filename, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const info = await file.stat();
+    if (!info.isFile() || info.uid !== process.getuid?.() || (info.mode & 0o077) !== 0 || info.size > 1048576) {
+      throw new IdentityError("KEY_UNAVAILABLE", "Identity files must be owner-only regular files (0600)");
+    }
+    return await file.readFile("utf8");
+  } finally { await file.close(); }
+}
+async function durableCreate(filename: string, contents: string) {
+  const file = await open(filename, "wx", 0o600);
+  try { await file.writeFile(contents); await file.sync(); } finally { await file.close(); }
+}
+async function atomicWrite(filename: string, contents: string) {
+  const temporary = `${filename}.${crypto.randomUUID()}.tmp`;
+  try {
+    await durableCreate(temporary, contents); await rename(temporary, filename);
+    const directory = await open(path.dirname(filename), "r");
+    try { await directory.sync(); } finally { await directory.close(); }
+  } finally { await unlink(temporary).catch(e => { if (!missing(e)) throw e; }); }
+}
+export async function publicJwk(key: KeyObject): Promise<RsaPublicJwk> {
+  const publicKey = key.type === "public" ? key : createPublicKey(key);
+  const raw = publicKey.export({ format: "jwk" });
+  if (raw.kty !== "RSA" || !raw.n || !raw.e) throw new IdentityError("KEY_UNAVAILABLE", "RSA key required");
+  const core = { kty: "RSA" as const, n: raw.n, e: raw.e };
+  return Object.freeze({ ...core, kid: await publicKid(core), alg: "RS256", use: "sig" });
+}
+type Version = { kid: string; state: PublicAgentKey["localState"]; createdAt: string };
+type Manifest = { format: 1; owner: AgentKeyOwner; activeKid?: string; keys: Version[] };
+
+export class NodeFileKeyStore implements AgentKeyStore {
+  private constructor(readonly root: string) { }
+  static async open(root: string, workspace?: string) {
+    posix();
+    if (!path.isAbsolute(root)) throw new IdentityError("KEY_UNAVAILABLE", "KeyStore root must be absolute");
+    await mkdir(root, { recursive: true, mode: 0o700 });
+    await protectedParents(root);
+    const actual = await realpath(root), info = await lstat(root);
+    if (info.uid !== process.getuid?.() || (info.mode & 0o077) !== 0 || info.isSymbolicLink()) throw new IdentityError("KEY_UNAVAILABLE", "KeyStore directory must be owned by this account with 0700 permissions");
+    if (workspace && !outside(await realpath(workspace), actual)) throw new IdentityError("KEY_UNAVAILABLE", "KeyStore must be outside the Agent workspace");
+    return new NodeFileKeyStore(actual);
+  }
+  private async directory(owner: AgentKeyOwner) { return path.join(this.root, await sha256(bytes(ownerIndex(owner)))); }
+  private async manifest(owner: AgentKeyOwner): Promise<Manifest> {
+    const value = JSON.parse(await readProtectedFile(path.join(await this.directory(owner), "identity.json"))) as Manifest;
+    if (value.format !== 1 || ownerIndex(value.owner) !== ownerIndex(owner) || !Array.isArray(value.keys) || value.keys.length > 16) throw new IdentityError("KEY_UNAVAILABLE", "Invalid identity manifest");
+    for (const key of value.keys) if (!/^[A-Za-z0-9_-]{43}$/.test(key.kid) || !["PENDING_REGISTRATION", "READY", "RETIRED", "REVOKED"].includes(key.state)) throw new IdentityError("KEY_UNAVAILABLE", "Invalid key metadata");
+    if (new Set(value.keys.map(k => k.kid)).size !== value.keys.length) throw new IdentityError("KEY_UNAVAILABLE", "Duplicate key metadata");
+    return value;
+  }
+  private async withLock<T>(directory: string, work: () => Promise<T>): Promise<T> {
+    const filename = path.join(directory, ".lock"), start = Date.now();
+    let lock;
+    while (!lock) {
+      try { lock = await open(filename, "wx", 0o600); }
+      catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+        if (Date.now() - start > 10000) throw new IdentityError("KEY_UNAVAILABLE", "KeyStore lock busy; inspect interrupted operation before removing stale lock");
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+    }
+    try { return await work(); } finally { await lock.close(); await unlink(filename); }
+  }
+  private async mutate<T>(owner: AgentKeyOwner, work: (manifest: Manifest) => Promise<T>): Promise<T> {
+    const directory = await this.directory(owner);
+    return this.withLock(directory, async () => {
+      const manifest = await this.manifest(owner), result = await work(manifest);
+      await atomicWrite(path.join(directory, "identity.json"), JSON.stringify(manifest)); return result;
+    });
+  }
+  async initialize(owner: AgentKeyOwner): Promise<PublicAgentKey> {
+    const directory = await this.directory(owner);
+    await mkdir(directory, { mode: 0o700 }).catch(e => { if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e; });
+    return this.withLock(directory, async () => {
+      try {
+        const manifest = await this.manifest(owner);
+        const selected = manifest.keys.find(k => k.kid === manifest.activeKid) ?? manifest.keys[0];
+        if (!selected) throw new IdentityError("KEY_UNAVAILABLE", "Empty identity manifest");
+        return await this.readPublic(owner, selected.kid);
+      } catch (e) { if (!missing(e)) throw e; }
+      // Absence of a manifest is only accepted for a genuinely new, empty identity directory.
+      const { readdir } = await import("node:fs/promises");
+      if ((await readdir(directory)).some(name => name !== ".lock")) throw new IdentityError("KEY_UNAVAILABLE", "Interrupted identity initialization requires operator recovery");
+      const manifest: Manifest = { format: 1, owner: { ...owner }, keys: [] };
+      const key = await this.generateVersion(owner, manifest);
+      await atomicWrite(path.join(directory, "identity.json"), JSON.stringify(manifest)); return key;
+    });
+  }
+  private async generateVersion(owner: AgentKeyOwner, manifest: Manifest) {
+    if (manifest.keys.length >= 16) throw new IdentityError("KEY_UNAVAILABLE", "Local key history limit reached");
+    const pair = await generate("rsa", { modulusLength: 3072, publicExponent: 65537 });
+    const jwk = await publicJwk(pair.privateKey), directory = await this.directory(owner);
+    const keyDirectory = path.join(directory, jwk.kid); await mkdir(keyDirectory, { mode: 0o700 });
+    await durableCreate(path.join(keyDirectory, "private.pem"), pair.privateKey.export({ format: "pem", type: "pkcs8" }).toString());
+    await durableCreate(path.join(keyDirectory, "public.json"), JSON.stringify(jwk));
+    const version: Version = { kid: jwk.kid, state: "PENDING_REGISTRATION", createdAt: new Date().toISOString() }; manifest.keys.push(version);
+    return Object.freeze({ owner: Object.freeze({ ...owner }), kid: jwk.kid, publicJwk: jwk, localState: version.state, createdAt: version.createdAt });
+  }
+  async stageRotation(owner: AgentKeyOwner) { return this.mutate(owner, manifest => this.generateVersion(owner, manifest)); }
+  async readPublic(owner: AgentKeyOwner, kid: string): Promise<PublicAgentKey> {
+    const manifest = await this.manifest(owner), version = manifest.keys.find(k => k.kid === kid);
+    if (!version) throw new IdentityError("KEY_UNAVAILABLE", "Unknown local key version");
+    const key = await this.loadPrivate(owner, kid), jwk = await publicJwk(key);
+    const stored = JSON.parse(await readProtectedFile(path.join(await this.directory(owner), kid, "public.json")));
+    if (jwk.kid !== kid || JSON.stringify(stored) !== JSON.stringify(jwk)) throw new IdentityError("KEY_UNAVAILABLE", "Key material and metadata mismatch");
+    return Object.freeze({ owner: Object.freeze({ ...owner }), kid, publicJwk: jwk, localState: version.state, createdAt: version.createdAt });
+  }
+  private async loadPrivate(owner: AgentKeyOwner, kid: string) {
+    if (!/^[A-Za-z0-9_-]{43}$/.test(kid)) throw new IdentityError("KEY_UNAVAILABLE", "Invalid key version");
+    const key = createPrivateKey(await readProtectedFile(path.join(await this.directory(owner), kid, "private.pem")));
+    const details = key.asymmetricKeyDetails;
+    if (key.asymmetricKeyType !== "rsa" || !details || (details.modulusLength ?? 0) < 3072 || (details.modulusLength ?? 0) > 4096 || details.publicExponent !== 65537n) throw new IdentityError("KEY_UNAVAILABLE", "Invalid signing key");
+    return key;
+  }
+  async selectRegisteredKey(owner: AgentKeyOwner, kid: string) {
+    await this.readPublic(owner, kid);
+    await this.mutate(owner, async manifest => {
+      const key = manifest.keys.find(k => k.kid === kid);
+      if (!key || !["PENDING_REGISTRATION", "READY"].includes(key.state)) throw new IdentityError("KEY_NOT_REGISTERED", "Key is retired or revoked");
+      key.state = "READY"; manifest.activeKid = kid;
+    });
+  }
+  async openSigner(owner: AgentKeyOwner, kid: string): Promise<RsaSigner> {
+    const metadata = await this.readPublic(owner, kid);
+    if (["RETIRED", "REVOKED"].includes(metadata.localState)) throw new IdentityError("KEY_UNAVAILABLE", "Key is retired or revoked");
+    const key = await this.loadPrivate(owner, kid);
+    return Object.freeze({ kid, algorithm: "RS256" as const, publicJwk: metadata.publicJwk,
+      async sign(message: Uint8Array, signal: AbortSignal) {
+        signal.throwIfAborted();
+        const result = await new Promise<Buffer>((resolve, reject) => sign("RSA-SHA256", message, key, (error, signature) => error ? reject(error) : resolve(signature)));
+        signal.throwIfAborted(); return new Uint8Array(result);
+      },
+    });
+  }
+  async openActiveSigner(owner: AgentKeyOwner) {
+    const manifest = await this.manifest(owner), selected = manifest.keys.find(k => k.kid === manifest.activeKid);
+    if (!selected || selected.state !== "READY") throw new IdentityError("KEY_NOT_REGISTERED", "No registered Agent key selected");
+    return this.openSigner(owner, selected.kid);
+  }
+  private async mark(owner: AgentKeyOwner, kid: string, state: "RETIRED" | "REVOKED") {
+    await this.mutate(owner, async manifest => {
+      const key = manifest.keys.find(k => k.kid === kid);
+      if (!key || (key.state === "REVOKED" && state !== "REVOKED")) throw new IdentityError("KEY_UNAVAILABLE", "Unknown or revoked key");
+      key.state = state; if (manifest.activeKid === kid) delete manifest.activeKid;
+    });
+  }
+  markRetired(owner: AgentKeyOwner, kid: string) { return this.mark(owner, kid, "RETIRED"); }
+  markRevoked(owner: AgentKeyOwner, kid: string) { return this.mark(owner, kid, "REVOKED"); }
+}
