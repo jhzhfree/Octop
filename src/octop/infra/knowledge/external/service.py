@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import replace
 from typing import Any
 
 from octop.infra.connectors.crypto import decrypt_credentials, encrypt_credentials
@@ -20,6 +21,7 @@ from octop.infra.db.repos.external_knowledge import (
 )
 from octop.infra.db.repos.secrets import SecretRepo
 from octop.infra.knowledge.external.fuse import rrf_fuse
+from octop.infra.knowledge.external.identity import identity_token
 from octop.infra.knowledge.external.registry import get_adapter, supported_kinds
 from octop.infra.knowledge.external.types import (
     DEFAULT_TOP_K,
@@ -53,10 +55,13 @@ class ExternalKnowledgeService:
         repo: ExternalKnowledgeRepo,
         connector_repo: ConnectorRepo,
         secret_repo: SecretRepo,
+        config: Any = None,
     ) -> None:
         self._repo = repo
         self._connector_repo = connector_repo
         self._secret_repo = secret_repo
+        # Optional: only AKB's delegated-identity mode needs it.
+        self._config = config
 
     # ---------------------------------------------------------------- config
 
@@ -84,6 +89,20 @@ class ExternalKnowledgeService:
             shared=row.shared,
             created_at=row.created_at,
             updated_at=row.updated_at,
+        )
+
+    def identity_for(self, row: ExternalSourceRow) -> str:
+        """Fresh AKB identity assertion, or ``""`` when delegation is off.
+
+        Only AKB understands the header; every other kind keeps credential-only
+        access so enabling the feature cannot change unrelated traffic.
+        """
+        if self._config is None or not row.kind.startswith("akb"):
+            return ""
+        return identity_token(
+            self._config,
+            self._secret_repo,
+            subject=f"user:{row.owner_user_id}",
         )
 
     def credentials_for(self, row: ExternalSourceRow) -> dict[str, Any]:
@@ -339,7 +358,7 @@ class ExternalKnowledgeService:
             raise ExternalSourceError(
                 "INVALID_ARGUMENT", f"unsupported kind: {row.kind}", origin=row.kind
             )
-        spec = self.to_spec(row)
+        spec = replace(self.to_spec(row), identity_token=self.identity_for(row))
         creds = self.credentials_for(row)
         try:
             result = await adapter.probe(spec, creds)
@@ -355,6 +374,19 @@ class ExternalKnowledgeService:
             "tools": result.tools,
             "refs": result.refs,
         }
+
+    async def list_refs(
+        self, source_id: str, *, user_id: int, is_admin: bool
+    ) -> list[dict[str, str]]:
+        """Knowledge bases the stored credential can read, for ref picklists."""
+        row = self._require_manage(source_id, user_id=user_id, is_admin=is_admin)
+        adapter = get_adapter(row.kind)
+        if adapter is None:
+            raise ExternalSourceError(
+                "INVALID_ARGUMENT", f"unsupported kind: {row.kind}", origin=row.kind
+            )
+        spec = replace(self.to_spec(row), identity_token=self.identity_for(row))
+        return await adapter.list_refs(spec, self.credentials_for(row))
 
     async def search_source(
         self,
@@ -389,7 +421,12 @@ class ExternalKnowledgeService:
                 "INVALID_ARGUMENT", f"unsupported kind: {spec.kind}", origin=spec.kind
             )
         creds = self.credentials_for(row)
-        return await adapter.search(spec, creds, query, top_k=top_k)
+        return await adapter.search(
+            replace(spec, identity_token=self.identity_for(row)),
+            creds,
+            query,
+            top_k=top_k,
+        )
 
     async def retrieve(
         self,

@@ -38,8 +38,53 @@ while IFS= read -r line; do
   [[ -n "$line" ]] && STAGED_FILES+=("$line")
 done < <(git diff --cached --name-only --diff-filter=ACMR || true)
 
-echo "[pre-commit] make precommit  (format-all + lint + typecheck + testmon-scoped test)"
-make precommit
+if command -v make >/dev/null 2>&1; then
+  echo "[pre-commit] make precommit  (format-all + lint + typecheck + testmon-scoped test)"
+  make precommit
+else
+  # Windows / minimal shells often lack GNU make. Run the same gate inline:
+  # format-all (ruff --fix + prettier write) → lint → typecheck → testmon tests.
+  echo "[pre-commit] make not found — running the precommit gate inline"
+  echo "[pre-commit] format-all + lint + typecheck + testmon-scoped test"
+
+  # Prefer uv, then the project venv (POSIX or Windows layout), then PATH.
+  py_tool() {
+    if command -v uv >/dev/null 2>&1; then
+      uv run "$@"
+    elif [[ -x .venv/Scripts/python.exe ]]; then
+      .venv/Scripts/python.exe -m "$@"
+    elif [[ -x .venv/bin/python ]]; then
+      .venv/bin/python -m "$@"
+    else
+      "$@"
+    fi
+  }
+
+  echo "[pre-commit] format (backend)"
+  py_tool ruff check --fix src tests
+  py_tool ruff format src tests
+
+  if [[ -d dashboard/node_modules ]]; then
+    echo "[pre-commit] format (frontend)"
+    (cd dashboard && npm run format)
+  else
+    echo "[pre-commit] WARN dashboard/node_modules missing — skipping frontend format (run: cd dashboard && npm ci)"
+  fi
+
+  echo "[pre-commit] lint (backend)"
+  py_tool ruff check src tests
+  py_tool ruff format --check src tests
+
+  echo "[pre-commit] typecheck (backend)"
+  py_tool mypy src/octop
+
+  if [[ -f .testmondata ]]; then
+    echo "[pre-commit] test (testmon: affected tests only)"
+  else
+    echo "[pre-commit] test (testmon: no cache yet — this run covers the full suite)"
+  fi
+  py_tool pytest --testmon
+fi
 
 # If format rewrote files that were already staged, refresh the index so the
 # commit includes the formatted content (worktree vs index drift).
@@ -56,9 +101,13 @@ if ((${#STAGED_FILES[@]} > 0)); then
 fi
 
 echo "[pre-commit] dashboard npm run build"
-(
-  cd "$ROOT/dashboard"
-  npm run build
-)
+if [[ -d "$ROOT/dashboard/node_modules" ]]; then
+  (
+    cd "$ROOT/dashboard"
+    npm run build
+  )
+else
+  echo "[pre-commit] WARN dashboard/node_modules missing — skipping dashboard build (run: cd dashboard && npm ci)"
+fi
 
 echo "[pre-commit] all checks passed"

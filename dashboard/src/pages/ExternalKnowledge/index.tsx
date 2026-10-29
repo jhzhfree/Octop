@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  Alert,
   App,
   Button,
   Drawer,
@@ -7,14 +8,26 @@ import {
   Form,
   Input,
   InputNumber,
+  Popconfirm,
+  Segmented,
   Select,
   Space,
   Switch,
   Table,
   Tag,
+  Tooltip,
   Typography,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
+import {
+  Activity,
+  Link2,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Search,
+  Trash2,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -23,11 +36,22 @@ import {
   type ExternalKnowledgeSource,
   type ExternalSourceCreateBody,
 } from "@/api/modules/externalKnowledge";
+import { useIsMobile } from "../../hooks/useIsMobile";
+import PageShell from "../../layouts/PageShell";
+import styles from "./index.module.less";
 
 const TARGET_TYPES = [
   { value: "agent", label: "Agent" },
   { value: "knowledge_base", label: "Knowledge base" },
 ];
+
+const KIND_COLORS: Record<string, string> = {
+  "akb-mcp": "geekblue",
+  "akb-rest": "blue",
+  ragflow: "purple",
+  weknora: "cyan",
+  "standard-retrieval": "green",
+};
 
 interface SourceFormValues {
   display_name: string;
@@ -43,9 +67,16 @@ interface SourceFormValues {
   shared: boolean;
 }
 
+function scoreColor(score: number): string {
+  if (score >= 0.7) return "green";
+  if (score >= 0.4) return "gold";
+  return "default";
+}
+
 export default function ExternalKnowledgePage() {
   const { t } = useTranslation();
   const { message } = App.useApp();
+  const isMobile = useIsMobile();
 
   const [sources, setSources] = useState<ExternalKnowledgeSource[]>([]);
   const [kinds, setKinds] = useState<string[]>([]);
@@ -53,6 +84,10 @@ export default function ExternalKnowledgePage() {
   const [editing, setEditing] = useState<ExternalKnowledgeSource | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [form] = Form.useForm<SourceFormValues>();
+
+  const [refs, setRefs] = useState<{ ref: string; name: string }[]>([]);
+  const [refsLoading, setRefsLoading] = useState(false);
+  const insecureHttp = Form.useWatch("allow_insecure_http", form);
 
   const [testing, setTesting] = useState<ExternalKnowledgeSource | null>(null);
   const [testQuery, setTestQuery] = useState("");
@@ -86,6 +121,7 @@ export default function ExternalKnowledgePage() {
 
   const openCreate = useCallback(() => {
     setEditing(null);
+    setRefs([]);
     form.resetFields();
     form.setFieldsValue({
       kind: kinds[0] ?? "akb-mcp",
@@ -101,6 +137,7 @@ export default function ExternalKnowledgePage() {
   const openEdit = useCallback(
     (row: ExternalKnowledgeSource) => {
       setEditing(row);
+      setRefs([]);
       form.resetFields();
       form.setFieldsValue({
         display_name: row.display_name,
@@ -148,6 +185,25 @@ export default function ExternalKnowledgePage() {
       message.error(t("externalKnowledge.saveFailed"));
     }
   }, [editing, form, message, refresh, t]);
+
+  const fetchRefs = useCallback(async () => {
+    if (!editing) {
+      message.info(t("externalKnowledge.fetchRefsAfterSave"));
+      return;
+    }
+    setRefsLoading(true);
+    try {
+      const result = await externalKnowledgeApi.refs(editing.source_id);
+      setRefs(result.refs ?? []);
+      if ((result.refs ?? []).length === 0) {
+        message.info(t("externalKnowledge.noRefs"));
+      }
+    } catch {
+      message.error(t("externalKnowledge.fetchRefsFailed"));
+    } finally {
+      setRefsLoading(false);
+    }
+  }, [editing, message, t]);
 
   const toggleEnabled = useCallback(
     async (row: ExternalKnowledgeSource, enabled: boolean) => {
@@ -241,41 +297,61 @@ export default function ExternalKnowledgePage() {
     [message, refresh, t],
   );
 
+  const summary = useMemo(
+    () => ({
+      total: sources.length,
+      enabled: sources.filter((item) => item.enabled).length,
+      shared: sources.filter((item) => item.shared).length,
+    }),
+    [sources],
+  );
+
   const columns = useMemo<ColumnsType<ExternalKnowledgeSource>>(
     () => [
       {
         title: t("externalKnowledge.name"),
         dataIndex: "display_name",
         render: (name: string, row) => (
-          <Space direction="vertical" size={0}>
-            <Typography.Text strong>{name}</Typography.Text>
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              {row.endpoint}
-            </Typography.Text>
-          </Space>
+          <div className={styles.nameCell}>
+            <div className={styles.nameRow}>
+              <span className={styles.nameText}>{name}</span>
+              <Tag color={KIND_COLORS[row.kind] ?? "default"} bordered={false}>
+                {row.kind}
+              </Tag>
+              {!row.has_credentials && (
+                <Tooltip title={t("externalKnowledge.noCredentialsHint")}>
+                  <Tag color="orange" bordered={false}>
+                    {t("externalKnowledge.noCredentials")}
+                  </Tag>
+                </Tooltip>
+              )}
+            </div>
+            <span className={styles.endpointText}>{row.endpoint}</span>
+          </div>
         ),
-      },
-      {
-        title: t("externalKnowledge.kind"),
-        dataIndex: "kind",
-        width: 160,
-        render: (kind: string) => <Tag>{kind}</Tag>,
       },
       {
         title: t("externalKnowledge.ref"),
         dataIndex: "ref",
-        width: 160,
-        render: (ref: string) => ref || "-",
+        width: 180,
+        render: (ref: string) =>
+          ref ? (
+            <Tag className={styles.refTag} bordered={false}>
+              {ref}
+            </Tag>
+          ) : (
+            <Typography.Text type="secondary">-</Typography.Text>
+          ),
       },
       {
         title: t("externalKnowledge.bindings"),
         dataIndex: "bindings",
-        width: 220,
+        width: 240,
         render: (_value: unknown, row) =>
           (row.bindings ?? []).length === 0 ? (
             <Typography.Text type="secondary">-</Typography.Text>
           ) : (
-            <Space size={4} wrap>
+            <div className={styles.bindingTags}>
               {(row.bindings ?? []).map((binding) => (
                 <Tag
                   key={`${binding.target_type}-${binding.target_id}`}
@@ -287,13 +363,13 @@ export default function ExternalKnowledgePage() {
                   {binding.target_type}: {binding.target_id}
                 </Tag>
               ))}
-            </Space>
+            </div>
           ),
       },
       {
         title: t("externalKnowledge.enabled"),
         dataIndex: "enabled",
-        width: 100,
+        width: 90,
         render: (enabled: boolean, row) => (
           <Switch
             size="small"
@@ -306,32 +382,65 @@ export default function ExternalKnowledgePage() {
       {
         title: t("externalKnowledge.actions"),
         key: "actions",
-        width: 260,
+        width: 168,
         render: (_value: unknown, row) => (
-          <Space size={4} wrap>
-            <Button size="small" onClick={() => probe(row)}>
-              {t("externalKnowledge.probe")}
-            </Button>
-            <Button
-              size="small"
-              onClick={() => {
-                setTesting(row);
-                setTestChunks([]);
-                setTestQuery("");
-              }}
+          <div className={styles.rowActions}>
+            <Tooltip title={t("externalKnowledge.probe")}>
+              <Button
+                type="text"
+                className={styles.iconBtn}
+                aria-label={t("externalKnowledge.probe")}
+                icon={<Activity size={15} />}
+                onClick={() => probe(row)}
+              />
+            </Tooltip>
+            <Tooltip title={t("externalKnowledge.test")}>
+              <Button
+                type="text"
+                className={styles.iconBtn}
+                aria-label={t("externalKnowledge.test")}
+                icon={<Search size={15} />}
+                onClick={() => {
+                  setTesting(row);
+                  setTestChunks([]);
+                  setTestQuery("");
+                }}
+              />
+            </Tooltip>
+            <Tooltip title={t("externalKnowledge.bind")}>
+              <Button
+                type="text"
+                className={styles.iconBtn}
+                aria-label={t("externalKnowledge.bind")}
+                icon={<Link2 size={15} />}
+                onClick={() => setBindingSource(row)}
+              />
+            </Tooltip>
+            <Tooltip title={t("externalKnowledge.edit")}>
+              <Button
+                type="text"
+                className={styles.iconBtn}
+                aria-label={t("externalKnowledge.edit")}
+                icon={<Pencil size={15} />}
+                onClick={() => openEdit(row)}
+              />
+            </Tooltip>
+            <Popconfirm
+              title={t("externalKnowledge.delete")}
+              description={t("externalKnowledge.deleteConfirm")}
+              okButtonProps={{ danger: true }}
+              onConfirm={() => void removeSource(row)}
             >
-              {t("externalKnowledge.test")}
-            </Button>
-            <Button size="small" onClick={() => setBindingSource(row)}>
-              {t("externalKnowledge.bind")}
-            </Button>
-            <Button size="small" onClick={() => openEdit(row)}>
-              {t("externalKnowledge.edit")}
-            </Button>
-            <Button size="small" danger onClick={() => void removeSource(row)}>
-              {t("externalKnowledge.delete")}
-            </Button>
-          </Space>
+              <Tooltip title={t("externalKnowledge.delete")}>
+                <Button
+                  type="text"
+                  className={`${styles.iconBtn} ${styles.iconBtnDanger}`}
+                  aria-label={t("externalKnowledge.delete")}
+                  icon={<Trash2 size={15} />}
+                />
+              </Tooltip>
+            </Popconfirm>
+          </div>
         ),
       },
     ],
@@ -339,52 +448,84 @@ export default function ExternalKnowledgePage() {
   );
 
   return (
-    <div>
-      <Space
-        style={{
-          width: "100%",
-          justifyContent: "space-between",
-          marginBottom: 16,
-        }}
-        align="center"
-      >
-        <Space direction="vertical" size={0}>
-          <Typography.Title level={4} style={{ margin: 0 }}>
-            {t("externalKnowledge.title")}
-          </Typography.Title>
-          <Typography.Text type="secondary">
-            {t("externalKnowledge.description")}
-          </Typography.Text>
-        </Space>
-        <Button type="primary" onClick={openCreate}>
+    <PageShell
+      title={t("externalKnowledge.title")}
+      subtitle={t("externalKnowledge.description")}
+      fill={!isMobile}
+      actions={
+        <Button type="primary" icon={<Plus size={15} />} onClick={openCreate}>
           {t("externalKnowledge.new")}
         </Button>
-      </Space>
+      }
+    >
+      <div className={styles.layout}>
+        <div className={styles.panelHeader}>
+          <div className={styles.panelStats}>
+            <Tag className={styles.statTag} bordered={false}>
+              {t("externalKnowledge.total")}: {summary.total}
+            </Tag>
+            <Tag className={styles.statTag} color="green" bordered={false}>
+              {t("externalKnowledge.enabledCount")}: {summary.enabled}
+            </Tag>
+            <Tag className={styles.statTag} color="blue" bordered={false}>
+              {t("externalKnowledge.sharedCount")}: {summary.shared}
+            </Tag>
+          </div>
+          <div className={styles.panelActions}>
+            <Tooltip title={t("externalKnowledge.refresh")}>
+              <Button
+                className={styles.iconBtn}
+                aria-label={t("externalKnowledge.refresh")}
+                icon={<RefreshCw size={15} />}
+                loading={loading}
+                onClick={() => void refresh()}
+              />
+            </Tooltip>
+          </div>
+        </div>
 
-      <Table<ExternalKnowledgeSource>
-        rowKey="source_id"
-        loading={loading}
-        columns={columns}
-        dataSource={sources}
-        pagination={false}
-        locale={{
-          emptyText: <Empty description={t("externalKnowledge.empty")} />,
-        }}
-      />
+        <div className={styles.tableWrap}>
+          <Table<ExternalKnowledgeSource>
+            rowKey="source_id"
+            loading={loading}
+            columns={columns}
+            dataSource={sources}
+            pagination={false}
+            scroll={{ x: 960 }}
+            locale={{
+              emptyText: (
+                <Empty
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  description={t("externalKnowledge.empty")}
+                >
+                  <Button
+                    type="primary"
+                    icon={<Plus size={15} />}
+                    onClick={openCreate}
+                  >
+                    {t("externalKnowledge.new")}
+                  </Button>
+                </Empty>
+              ),
+            }}
+          />
+        </div>
+      </div>
 
       <Drawer
+        className={styles.drawer}
         open={!!bindingSource}
-        width={420}
+        width={440}
         title={t("externalKnowledge.bindTitle", {
           name: bindingSource?.display_name ?? "",
         })}
         onClose={() => setBindingSource(null)}
       >
         <Space direction="vertical" style={{ width: "100%" }} size="middle">
-          <Select
-            style={{ width: "100%" }}
+          <Segmented
+            block
             value={bindType}
-            onChange={setBindType}
+            onChange={(value) => setBindType(String(value))}
             options={TARGET_TYPES}
           />
           <Input
@@ -395,28 +536,50 @@ export default function ExternalKnowledgePage() {
           <Button type="primary" block onClick={() => void submitBinding()}>
             {t("externalKnowledge.bind")}
           </Button>
-          {(bindingSource?.bindings ?? []).map((binding) => (
-            <Tag
-              key={`${binding.target_type}-${binding.target_id}`}
-              closable
-              onClose={() =>
-                bindingSource &&
-                void unbind(
-                  bindingSource,
-                  binding.target_type,
-                  binding.target_id,
-                )
-              }
-            >
-              {binding.target_type}: {binding.target_id}
-            </Tag>
-          ))}
+          <div className={styles.sectionTitle}>
+            {t("externalKnowledge.currentBindings")}
+          </div>
+          {(bindingSource?.bindings ?? []).length === 0 ? (
+            <Empty
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+              description={t("externalKnowledge.noBindings")}
+            />
+          ) : (
+            <div className={styles.bindingList}>
+              {(bindingSource?.bindings ?? []).map((binding) => (
+                <div
+                  key={`${binding.target_type}-${binding.target_id}`}
+                  className={styles.bindingRow}
+                >
+                  <span className={styles.bindingText}>
+                    {binding.target_type}: {binding.target_id}
+                  </span>
+                  <Button
+                    size="small"
+                    type="link"
+                    danger
+                    onClick={() =>
+                      bindingSource &&
+                      void unbind(
+                        bindingSource,
+                        binding.target_type,
+                        binding.target_id,
+                      )
+                    }
+                  >
+                    {t("externalKnowledge.unbind")}
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
         </Space>
       </Drawer>
 
       <Drawer
+        className={styles.drawer}
         open={!!testing}
-        width={520}
+        width={560}
         title={t("externalKnowledge.testTitle", {
           name: testing?.display_name ?? "",
         })}
@@ -433,49 +596,75 @@ export default function ExternalKnowledgePage() {
             type="primary"
             block
             loading={testingLoading}
+            disabled={!testQuery.trim()}
             onClick={() => void runTest()}
           >
             {t("externalKnowledge.runTest")}
           </Button>
           {testChunks.length === 0 ? (
-            <Empty description={t("externalKnowledge.noChunks")} />
+            <Empty
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+              description={t("externalKnowledge.noChunks")}
+            />
           ) : (
-            testChunks.map((chunk) => (
-              <div key={chunk.id}>
-                <Tag color="blue">
-                  {chunk.origin} {chunk.score.toFixed(2)}
-                </Tag>
-                <Typography.Text type="secondary">
-                  {chunk.source || chunk.ref}
-                </Typography.Text>
-                <Typography.Paragraph style={{ marginTop: 4 }}>
-                  {chunk.content}
-                </Typography.Paragraph>
-              </div>
-            ))
+            <Typography.Text type="secondary">
+              {t("externalKnowledge.passageCount", {
+                count: testChunks.length,
+              })}
+            </Typography.Text>
+          )}
+          {testChunks.length > 0 && (
+            <div className={styles.chunkList}>
+              {testChunks.map((chunk) => (
+                <div key={chunk.id} className={styles.chunkCard}>
+                  <div className={styles.chunkHeader}>
+                    <Tag color={scoreColor(chunk.score)} bordered={false}>
+                      {t("externalKnowledge.score")} {chunk.score.toFixed(2)}
+                    </Tag>
+                    <span className={styles.chunkMeta}>
+                      {chunk.source || chunk.ref || chunk.origin}
+                    </span>
+                  </div>
+                  <Typography.Paragraph
+                    className={styles.chunkText}
+                    ellipsis={{
+                      rows: 4,
+                      expandable: true,
+                      symbol: t("externalKnowledge.expand"),
+                    }}
+                  >
+                    {chunk.content}
+                  </Typography.Paragraph>
+                </div>
+              ))}
+            </div>
           )}
         </Space>
       </Drawer>
 
       <Drawer
+        className={styles.drawer}
         open={formOpen}
-        width={480}
+        width={520}
         title={
           editing ? t("externalKnowledge.edit") : t("externalKnowledge.new")
         }
         onClose={() => setFormOpen(false)}
         footer={
-          <Space style={{ width: "100%", justifyContent: "flex-end" }}>
+          <div className={styles.drawerFooter}>
             <Button onClick={() => setFormOpen(false)}>
               {t("externalKnowledge.cancel")}
             </Button>
             <Button type="primary" onClick={() => void submitForm()}>
               {t("externalKnowledge.save")}
             </Button>
-          </Space>
+          </div>
         }
       >
-        <Form form={form} layout="vertical">
+        <Form form={form} layout="vertical" className={styles.form}>
+          <div className={styles.sectionTitle}>
+            {t("externalKnowledge.basicSection")}
+          </div>
           <Form.Item
             name="display_name"
             label={t("externalKnowledge.name")}
@@ -498,12 +687,49 @@ export default function ExternalKnowledgePage() {
           </Form.Item>
           <Form.Item name="api_key" label={t("externalKnowledge.apiKey")}>
             <Input.Password
+              autoComplete="new-password"
               placeholder={editing ? t("externalKnowledge.apiKeyHint") : ""}
             />
           </Form.Item>
-          <Form.Item name="ref" label={t("externalKnowledge.ref")}>
-            <Input placeholder="HR-POLICY" />
+          <Form.Item
+            label={t("externalKnowledge.ref")}
+            extra={t("externalKnowledge.refHint")}
+          >
+            <Space.Compact style={{ width: "100%" }}>
+              {refs.length > 0 ? (
+                <Form.Item name="ref" noStyle>
+                  <Select
+                    allowClear
+                    showSearch
+                    optionFilterProp="label"
+                    placeholder={t("externalKnowledge.refPickerPlaceholder")}
+                    options={refs.map((item) => ({
+                      value: item.ref,
+                      label: item.name
+                        ? `${item.name}（${item.ref}）`
+                        : item.ref,
+                    }))}
+                  />
+                </Form.Item>
+              ) : (
+                <Form.Item name="ref" noStyle>
+                  <Input placeholder="HR-POLICY" />
+                </Form.Item>
+              )}
+              <Button
+                loading={refsLoading}
+                disabled={!editing}
+                onClick={() => void fetchRefs()}
+                title={editing ? "" : t("externalKnowledge.fetchRefsAfterSave")}
+              >
+                {t("externalKnowledge.fetchRefs")}
+              </Button>
+            </Space.Compact>
           </Form.Item>
+
+          <div className={styles.sectionTitle}>
+            {t("externalKnowledge.retrievalSection")}
+          </div>
           <Form.Item name="top_k" label={t("externalKnowledge.topK")}>
             <InputNumber min={1} max={50} style={{ width: "100%" }} />
           </Form.Item>
@@ -524,28 +750,57 @@ export default function ExternalKnowledgePage() {
             />
           </Form.Item>
           <Form.Item
-            name="allow_insecure_http"
-            label={t("externalKnowledge.allowInsecure")}
-            valuePropName="checked"
-            extra={t("externalKnowledge.allowInsecureHint")}
-          >
-            <Switch size="small" />
-          </Form.Item>
-          <Form.Item
             name="selector_argument"
             label={t("externalKnowledge.selector")}
           >
             <Input placeholder="knowledgeBaseCode" />
           </Form.Item>
-          <Form.Item
-            name="shared"
-            label={t("externalKnowledge.shared")}
-            valuePropName="checked"
-          >
-            <Switch size="small" />
-          </Form.Item>
+
+          <div className={styles.sectionTitle}>
+            {t("externalKnowledge.securitySection")}
+          </div>
+          <div className={styles.formOptions}>
+            <div className={styles.formOptionRow}>
+              <div className={styles.formOptionCopy}>
+                <span className={styles.formOptionLabel}>
+                  {t("externalKnowledge.allowInsecure")}
+                </span>
+                <span className={styles.formOptionHint}>
+                  {t("externalKnowledge.allowInsecureHint")}
+                </span>
+              </div>
+              <Form.Item
+                name="allow_insecure_http"
+                valuePropName="checked"
+                noStyle
+              >
+                <Switch size="small" />
+              </Form.Item>
+            </div>
+            <div className={styles.formOptionRow}>
+              <div className={styles.formOptionCopy}>
+                <span className={styles.formOptionLabel}>
+                  {t("externalKnowledge.shared")}
+                </span>
+                <span className={styles.formOptionHint}>
+                  {t("externalKnowledge.sharedHint")}
+                </span>
+              </div>
+              <Form.Item name="shared" valuePropName="checked" noStyle>
+                <Switch size="small" />
+              </Form.Item>
+            </div>
+          </div>
+          {insecureHttp && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginTop: 12 }}
+              message={t("externalKnowledge.insecureWarning")}
+            />
+          )}
         </Form>
       </Drawer>
-    </div>
+    </PageShell>
   );
 }

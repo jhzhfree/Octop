@@ -26,3 +26,9 @@ class ExternalKnowledgeAdapter(Protocol):
         spec: ExternalSourceSpec,
         creds: dict[str, Any],
     ) -> SourceProbeResult: ...
+
+    async def list_refs(
+        self,
+        spec: ExternalSourceSpec,
+        creds: dict[str, Any],
+    ) -> list[dict[str, str]]: ...

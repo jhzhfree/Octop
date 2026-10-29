@@ -391,6 +391,7 @@
     "FORBIDDEN": "Permission denied.",
     "UPDATE_TARGET_NOT_NEWER": "Target version {target} must be newer than installed version {current}. Reinstalling or downgrading is not supported.",
     "NOT_FOUND": "Not found.",
+    "RATE_LIMITED": "Too many requests. Please retry later.",
     "USER_DISABLED": "This account has been disabled.",
     "LOGIN_LOCKED": "Too many failed sign-in attempts. Try again in {minutes} minutes.",
     "USERNAME_TAKEN": "Username is already taken.",

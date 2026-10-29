@@ -113,6 +113,11 @@ export const externalKnowledgeApi = {
       },
     ),
 
+  refs: (sourceId: string) =>
+    request<{ refs: { ref: string; name: string }[] }>(
+      `/external-knowledge/sources/${sourceId}/refs`,
+    ),
+
   search: (sourceId: string, query: string, topK = 0) =>
     request<{
       source_id: string;

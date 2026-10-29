@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -41,6 +42,82 @@ def validate_endpoint(url: str, *, allow_insecure_http: bool = False) -> str:
     return text.rstrip("/")
 
 
+def _decode(raw: bytes, *, max_bytes: int, origin: str) -> Any:
+    if len(raw) > max_bytes:
+        raise ExternalSourceError(
+            "RESPONSE_TOO_LARGE", "upstream response exceeds size limit", origin=origin
+        )
+    try:
+        return json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeError):
+        return None
+
+
+def _error_code(
+    body: Any,
+    status: int,
+    *,
+    status_map: Mapping[int, str] | None,
+    code_map: Mapping[str, str] | None,
+) -> str:
+    """Pick the caller-facing error code for a rejected upstream response.
+
+    Upstreams that answer with a structured ``{"code": ...}`` body win over the
+    HTTP status, so a 403 for "no scope" and a 404 for "unknown knowledge base"
+    stay distinguishable — the API layer maps those onto distinct HTTP codes.
+    """
+    if isinstance(body, Mapping) and code_map:
+        raw = body.get("code")
+        if isinstance(raw, str) and raw.strip().upper() in code_map:
+            return code_map[raw.strip().upper()]
+    if status_map and status in status_map:
+        return status_map[status]
+    if status >= 500:
+        return "UPSTREAM_ERROR"
+    return "UPSTREAM_REJECTED"
+
+
+async def _request(
+    method: str,
+    url: str,
+    *,
+    headers: dict[str, str],
+    payload: dict[str, Any] | None,
+    timeout_seconds: float,
+    origin: str,
+    max_bytes: int,
+    status_map: Mapping[int, str] | None,
+    code_map: Mapping[str, str] | None,
+) -> Any:
+    if not 0 < timeout_seconds <= 60:
+        raise ExternalSourceError(
+            "INVALID_ARGUMENT", "timeout must be between 0 and 60 seconds", origin=origin
+        )
+    try:
+        async with httpx.AsyncClient(timeout=timeout_seconds, follow_redirects=False) as client:
+            response = await client.request(
+                method, url, headers=headers, json=payload if method == "POST" else None
+            )
+    except httpx.TimeoutException as exc:
+        raise ExternalSourceError("TIMEOUT", "upstream request timed out", origin=origin) from exc
+    except httpx.HTTPError as exc:
+        raise ExternalSourceError(
+            "TRANSPORT_ERROR", "upstream request failed", origin=origin
+        ) from exc
+    raw = response.content[: max_bytes + 1]
+    body = _decode(raw, max_bytes=max_bytes, origin=origin)
+    if response.status_code >= 400:
+        # The status is safe to surface; upstream messages are not.
+        raise ExternalSourceError(
+            _error_code(body, response.status_code, status_map=status_map, code_map=code_map),
+            f"upstream returned HTTP {response.status_code}",
+            origin=origin,
+        )
+    if body is None:
+        raise ExternalSourceError("INVALID_JSON", "upstream returned invalid JSON", origin=origin)
+    return body
+
+
 async def post_json(
     url: str,
     *,
@@ -49,37 +126,42 @@ async def post_json(
     timeout_seconds: float,
     origin: str,
     max_bytes: int = MAX_RESPONSE_BYTES,
+    status_map: Mapping[int, str] | None = None,
+    code_map: Mapping[str, str] | None = None,
 ) -> Any:
     """POST JSON and decode the response, mapping every failure to a sanitized error."""
-    if not 0 < timeout_seconds <= 60:
-        raise ExternalSourceError(
-            "INVALID_ARGUMENT", "timeout must be between 0 and 60 seconds", origin=origin
-        )
-    try:
-        async with httpx.AsyncClient(timeout=timeout_seconds, follow_redirects=False) as client:
-            response = await client.post(url, headers=headers, json=payload)
-    except httpx.TimeoutException as exc:
-        raise ExternalSourceError("TIMEOUT", "upstream request timed out", origin=origin) from exc
-    except httpx.HTTPError as exc:
-        raise ExternalSourceError(
-            "TRANSPORT_ERROR", "upstream request failed", origin=origin
-        ) from exc
-    if response.status_code >= 500:
-        raise ExternalSourceError(
-            "UPSTREAM_ERROR", f"upstream returned HTTP {response.status_code}", origin=origin
-        )
-    if response.status_code >= 400:
-        raise ExternalSourceError(
-            "UPSTREAM_REJECTED", f"upstream returned HTTP {response.status_code}", origin=origin
-        )
-    raw = response.content[: max_bytes + 1]
-    if len(raw) > max_bytes:
-        raise ExternalSourceError(
-            "RESPONSE_TOO_LARGE", "upstream response exceeds size limit", origin=origin
-        )
-    try:
-        return json.loads(raw.decode("utf-8"))
-    except (ValueError, UnicodeError) as exc:
-        raise ExternalSourceError(
-            "INVALID_JSON", "upstream returned invalid JSON", origin=origin
-        ) from exc
+    return await _request(
+        "POST",
+        url,
+        headers=headers,
+        payload=payload,
+        timeout_seconds=timeout_seconds,
+        origin=origin,
+        max_bytes=max_bytes,
+        status_map=status_map,
+        code_map=code_map,
+    )
+
+
+async def get_json(
+    url: str,
+    *,
+    headers: dict[str, str],
+    timeout_seconds: float,
+    origin: str,
+    max_bytes: int = MAX_RESPONSE_BYTES,
+    status_map: Mapping[int, str] | None = None,
+    code_map: Mapping[str, str] | None = None,
+) -> Any:
+    """GET JSON and decode the response, mapping every failure to a sanitized error."""
+    return await _request(
+        "GET",
+        url,
+        headers=headers,
+        payload=None,
+        timeout_seconds=timeout_seconds,
+        origin=origin,
+        max_bytes=max_bytes,
+        status_map=status_map,
+        code_map=code_map,
+    )

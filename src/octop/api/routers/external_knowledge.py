@@ -38,6 +38,7 @@ def _service(server: Any) -> ExternalKnowledgeService:
         services.external_knowledge_repo,
         services.connector_repo,
         services.secret_repo,
+        services.config,
     )
 
 
@@ -194,6 +195,20 @@ async def probe_source(
 ) -> dict[str, Any]:
     """Check reachability and list the tools the credential can use."""
     return await _service(server).probe(source_id, user_id=user.id, is_admin=user.role == "admin")
+
+
+@router.get("/external-knowledge/sources/{source_id}/refs", summary="List knowledge bases")
+async def list_source_refs(
+    source_id: str,
+    user: Any = Depends(current_user),
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    """List the knowledge bases the stored credential is allowed to read."""
+    return {
+        "refs": await _service(server).list_refs(
+            source_id, user_id=user.id, is_admin=user.role == "admin"
+        )
+    }
 
 
 @router.post("/external-knowledge/sources/{source_id}/search", summary="Search one source")

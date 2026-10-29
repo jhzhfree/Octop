@@ -117,6 +117,7 @@ def _external_service(services: Any) -> ExternalKnowledgeService:
         services.external_knowledge_repo,
         services.connector_repo,
         services.secret_repo,
+        services.config,
     )
 
 

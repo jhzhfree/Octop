@@ -1,0 +1,340 @@
+/*
+ * Panel chrome mirrors KnowledgeBases/index.module.less: one bordered
+ * container, sections split by hairlines — never stacked cards with gaps.
+ */
+
+.layout {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--fn-border-secondary);
+  border-radius: var(--fn-radius-lg);
+  background: var(--fn-bg-container);
+}
+
+.panelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--fn-border-secondary);
+}
+
+.panelStats {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.statTag {
+  margin-inline-end: 0 !important;
+  border-color: var(--fn-border-secondary);
+  background: var(--fn-bg-secondary);
+  color: var(--fn-text-tertiary);
+}
+
+.panelActions {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.tableWrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 16px 12px;
+}
+
+/* App uses ConfigProvider prefixCls="octop"; keep ant-* as fallback. */
+.tableWrap :global(.octop-table),
+.tableWrap :global(.ant-table) {
+  background: transparent;
+}
+
+.tableWrap :global(.octop-table-thead) > tr > th,
+.tableWrap :global(.ant-table-thead) > tr > th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--fn-bg-container);
+  color: var(--fn-text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.tableWrap :global(.octop-table-tbody) > tr > td,
+.tableWrap :global(.ant-table-tbody) > tr > td {
+  border-bottom: 1px solid var(--fn-border-secondary);
+  vertical-align: middle;
+}
+
+.tableWrap :global(.octop-table-tbody) > tr:hover > td,
+.tableWrap :global(.ant-table-tbody) > tr:hover > td {
+  background: var(--fn-bg-hover, var(--fn-bg-secondary));
+}
+
+.nameCell {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.nameRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.nameText {
+  overflow: hidden;
+  color: var(--fn-text-primary);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.endpointText {
+  overflow: hidden;
+  color: var(--fn-text-tertiary);
+  font-size: 12px;
+  line-height: 1.4;
+  word-break: break-all;
+}
+
+.refTag {
+  margin-inline-end: 0 !important;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bindingTags {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.rowActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.iconBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--fn-text-tertiary);
+
+  &:hover {
+    background: var(--fn-bg-hover) !important;
+    color: var(--fn-text-primary) !important;
+  }
+}
+
+.iconBtnDanger:hover {
+  background: var(--fn-bg-hover) !important;
+  color: var(--fn-color-error, #ff4d4f) !important;
+}
+
+/* Drawers — same padding rhythm as the knowledge-base drawers. */
+.drawer :global(.octop-drawer-body),
+.drawer :global(.ant-drawer-body) {
+  padding-top: 12px;
+}
+
+.drawerFooter {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+}
+
+.form :global(.octop-form-item),
+.form :global(.ant-form-item) {
+  margin-bottom: 16px;
+}
+
+.form :global(.octop-form-item:last-child),
+.form :global(.ant-form-item:last-child) {
+  margin-bottom: 0;
+}
+
+.form :global(.octop-form-item-label),
+.form :global(.ant-form-item-label) {
+  padding-bottom: 6px !important;
+}
+
+.form :global(.octop-form-item-label) > label,
+.form :global(.ant-form-item-label) > label {
+  height: auto;
+  color: var(--fn-text-secondary);
+  font-size: 13px;
+}
+
+/* Switch rows grouped in a single bordered block (KnowledgeBases style). */
+.formOptions {
+  display: flex;
+  flex-direction: column;
+  margin-top: 4px;
+  border: 1px solid var(--fn-border-secondary);
+  border-radius: var(--fn-radius-md);
+  overflow: hidden;
+}
+
+.formOptionRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--fn-bg-primary);
+
+  & + & {
+    border-top: 1px solid var(--fn-border-secondary);
+  }
+
+  :global(.octop-switch),
+  :global(.ant-switch) {
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+}
+
+.formOptionCopy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.formOptionLabel {
+  color: var(--fn-text-primary);
+  font-size: 13px;
+}
+
+.formOptionHint {
+  color: var(--fn-text-tertiary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.chunkList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.chunkCard {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--fn-border-secondary);
+  border-radius: var(--fn-radius-md);
+  background: var(--fn-bg-primary);
+}
+
+.chunkHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.chunkMeta {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fn-text-tertiary);
+  font-size: 12px;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chunkText {
+  margin: 0;
+  color: var(--fn-text-primary);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.sectionTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 8px;
+  color: var(--fn-text-tertiary);
+  font-size: 12px;
+}
+
+.bindingList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bindingRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--fn-border-secondary);
+  border-radius: var(--fn-radius-md);
+  background: var(--fn-bg-primary);
+}
+
+.bindingText {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 767px) {
+  .layout {
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .panelHeader {
+    padding: 0 0 12px;
+    border-bottom: 0;
+  }
+
+  .tableWrap {
+    overflow-x: auto;
+    overflow-y: visible;
+    padding: 0;
+  }
+}

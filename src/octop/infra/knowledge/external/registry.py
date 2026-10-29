@@ -14,9 +14,17 @@ from octop.infra.knowledge.external.adapters.base import ExternalKnowledgeAdapte
 from octop.infra.knowledge.external.types import SOURCE_KINDS
 
 _ADAPTERS: dict[str, FunctionAdapter] = {
-    "akb-mcp": FunctionAdapter(origin=akb_mcp.ORIGIN, _search=akb_mcp.search, _probe=akb_mcp.probe),
+    "akb-mcp": FunctionAdapter(
+        origin=akb_mcp.ORIGIN,
+        _search=akb_mcp.search,
+        _probe=akb_mcp.probe,
+        _refs=akb_mcp.list_refs,
+    ),
     "akb-rest": FunctionAdapter(
-        origin=akb_rest.ORIGIN, _search=akb_rest.search, _probe=akb_rest.probe
+        origin=akb_rest.ORIGIN,
+        _search=akb_rest.search,
+        _probe=akb_rest.probe,
+        _refs=akb_rest.list_refs,
     ),
     "standard-retrieval": FunctionAdapter(
         origin=standard_retrieval.ORIGIN,

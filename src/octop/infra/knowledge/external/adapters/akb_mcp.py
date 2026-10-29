@@ -12,6 +12,7 @@ import json
 from typing import Any
 
 from octop.infra.knowledge.external.http import post_json, validate_endpoint
+from octop.infra.knowledge.external.identity import IDENTITY_HEADER
 from octop.infra.knowledge.external.normalize import (
     extract_items,
     filter_chunks,
@@ -30,6 +31,16 @@ _DEFAULT_TOOL = "knowledge_search"
 _FALLBACK_TOOLS = ("knowledge_search", "knowledge_query")
 # AKB negotiates 2025-06-18; the server's answer wins, this is only our offer.
 _OFFERED_PROTOCOL = "2025-06-18"
+# The MCP endpoint reuses the REST credential check, so a rejected transport
+# call means the key or its scopes are the problem, not the payload.
+_STATUS_MAP: dict[int, str] = {
+    401: "INVALID_CREDENTIALS",
+    403: "FORBIDDEN",
+    429: "RATE_LIMITED",
+}
+# JSON-RPC error code → sanitized Octop code. ``-32001`` is AKB's
+# "permission or scope insufficient".
+_RPC_CODES: dict[int, str] = {-32001: "FORBIDDEN"}
 
 
 def _url(spec: ExternalSourceSpec) -> str:
@@ -37,15 +48,18 @@ def _url(spec: ExternalSourceSpec) -> str:
     return base + "/api/mcp"
 
 
-def _headers(creds: dict[str, Any]) -> dict[str, str]:
+def _headers(spec: ExternalSourceSpec, creds: dict[str, Any]) -> dict[str, str]:
     api_key = str(creds.get("api_key") or "").strip()
     if not api_key:
         raise ExternalSourceError("INVALID_ARGUMENT", "AKB API key is missing", origin=ORIGIN)
-    return {
+    headers = {
         "X-API-Key": api_key,
         "Content-Type": "application/json",
         "Accept": "application/json, text/event-stream",
     }
+    if spec.identity_token:
+        headers[IDENTITY_HEADER] = spec.identity_token
+    return headers
 
 
 async def _rpc(
@@ -63,6 +77,7 @@ async def _rpc(
         payload={"jsonrpc": "2.0", "id": request_id, "method": method, "params": params},
         timeout_seconds=timeout,
         origin=ORIGIN,
+        status_map=_STATUS_MAP,
     )
     if not isinstance(body, dict):
         raise ExternalSourceError(
@@ -72,8 +87,9 @@ async def _rpc(
     if isinstance(error, dict):
         code = error.get("code")
         # Upstream messages may echo internal state; only the code is surfaced.
+        known = _RPC_CODES.get(code) if isinstance(code, int) else None
         raise ExternalSourceError(
-            "RPC_ERROR" if code is None else f"RPC_{code}",
+            known or ("RPC_ERROR" if code is None else f"RPC_{code}"),
             "upstream rejected the request",
             origin=ORIGIN,
         )
@@ -131,7 +147,7 @@ async def search(
     top_k: int,
 ) -> ExternalSearchResult:
     url = _url(spec)
-    headers = _headers(creds)
+    headers = _headers(spec, creds)
     capped = max(1, min(top_k, MAX_TOP_K))
     await _rpc(
         url,
@@ -160,11 +176,9 @@ async def search(
     )
 
 
-async def probe(spec: ExternalSourceSpec, creds: dict[str, Any]) -> SourceProbeResult:
-    url = _url(spec)
-    headers = _headers(creds)
+async def _initialize(spec: ExternalSourceSpec, headers: dict[str, str]) -> str:
     result = await _rpc(
-        url,
+        _url(spec),
         headers,
         "initialize",
         {
@@ -175,6 +189,36 @@ async def probe(spec: ExternalSourceSpec, creds: dict[str, Any]) -> SourceProbeR
         timeout=spec.timeout_seconds,
     )
     negotiated = result.get("protocolVersion")
+    return negotiated if isinstance(negotiated, str) else ""
+
+
+async def list_refs(spec: ExternalSourceSpec, creds: dict[str, Any]) -> list[dict[str, str]]:
+    """List the knowledge bases this credential may read (``list_knowledge_bases``)."""
+    headers = _headers(spec, creds)
+    await _initialize(spec, headers)
+    bases = await _rpc(
+        _url(spec),
+        headers,
+        "tools/call",
+        {"name": "list_knowledge_bases", "arguments": {}},
+        timeout=spec.timeout_seconds,
+        request_id=2,
+    )
+    refs: list[dict[str, str]] = []
+    for item in _collect_items(bases):
+        if not isinstance(item, dict):
+            continue
+        code = item.get("baseCode") or item.get("knowledgeBaseCode") or item.get("id")
+        name = item.get("name") or item.get("displayName") or ""
+        if isinstance(code, (str, int)) and str(code).strip():
+            refs.append({"ref": str(code).strip(), "name": str(name)})
+    return refs
+
+
+async def probe(spec: ExternalSourceSpec, creds: dict[str, Any]) -> SourceProbeResult:
+    url = _url(spec)
+    headers = _headers(spec, creds)
+    negotiated = await _initialize(spec, headers)
     listed = await _rpc(url, headers, "tools/list", {}, timeout=spec.timeout_seconds, request_id=2)
     tools_raw = listed.get("tools")
     tools = [
@@ -192,22 +236,8 @@ async def probe(spec: ExternalSourceSpec, creds: dict[str, Any]) -> SourceProbeR
     refs: list[dict[str, str]] = []
     if "list_knowledge_bases" in tools:
         try:
-            bases = await _rpc(
-                url,
-                headers,
-                "tools/call",
-                {"name": "list_knowledge_bases", "arguments": {}},
-                timeout=spec.timeout_seconds,
-                request_id=3,
-            )
-            for item in _collect_items(bases):
-                if not isinstance(item, dict):
-                    continue
-                code = item.get("code") or item.get("knowledgeBaseCode") or item.get("id")
-                name = item.get("name") or item.get("displayName") or ""
-                if isinstance(code, str) and code:
-                    refs.append({"ref": code, "name": str(name)})
+            refs = await list_refs(spec, creds)
         except ExternalSourceError:
             refs = []
-    suffix = f" (protocol {negotiated})" if isinstance(negotiated, str) else ""
+    suffix = f" (protocol {negotiated})" if negotiated else ""
     return SourceProbeResult(ok=True, message=f"AKB reachable{suffix}", tools=tools, refs=refs)
