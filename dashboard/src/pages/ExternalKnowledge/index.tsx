@@ -395,18 +395,19 @@ export default function ExternalKnowledgePage() {
       {
         title: t("externalKnowledge.actions"),
         key: "actions",
-        width: 210,
+        width: 340,
         render: (_value: unknown, row) => (
           <div className={styles.rowActions}>
             {row.can_manage && ["akb-mcp", "akb-rest"].includes(row.kind) && (
               <Tooltip title={t("externalKnowledge.identity.manage")}>
                 <Button
-                  type="text"
-                  className={styles.iconBtn}
+                  size="small"
                   aria-label={t("externalKnowledge.identity.manage")}
                   icon={<ShieldCheck size={15} />}
                   onClick={() => setIdentitySource(row)}
-                />
+                >
+                  {t("externalKnowledge.identity.manage")}
+                </Button>
               </Tooltip>
             )}
             <Tooltip title={t("externalKnowledge.probe")}>
@@ -437,12 +438,13 @@ export default function ExternalKnowledgePage() {
             </Tooltip>
             <Tooltip title={t("externalKnowledge.bind")}>
               <Button
-                type="text"
-                className={styles.iconBtn}
+                size="small"
                 aria-label={t("externalKnowledge.bind")}
                 icon={<Link2 size={15} />}
                 onClick={() => setBindingSource(row)}
-              />
+              >
+                {t("externalKnowledge.bind")}
+              </Button>
             </Tooltip>
             <Tooltip title={t("externalKnowledge.edit")}>
               <Button
@@ -487,6 +489,12 @@ export default function ExternalKnowledgePage() {
       }
     >
       <div className={styles.layout}>
+        <Alert
+          showIcon
+          type="info"
+          message={t("externalKnowledge.identity.platformScopeTitle")}
+          description={t("externalKnowledge.identity.platformScopeHelp")}
+        />
         <div className={styles.panelHeader}>
           <div className={styles.panelStats}>
             <Tag className={styles.statTag} bordered={false}>
@@ -556,6 +564,11 @@ export default function ExternalKnowledgePage() {
         onClose={() => setBindingSource(null)}
       >
         <Space direction="vertical" style={{ width: "100%" }} size="middle">
+          <Alert
+            type="info"
+            showIcon
+            message={t("externalKnowledge.identity.bindingHelp")}
+          />
           <Segmented
             block
             value={bindType}

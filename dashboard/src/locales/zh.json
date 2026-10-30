@@ -6991,7 +6991,10 @@
       "setupMismatch": "这个连接配置属于其他平台、安装实例、工作区或 AKB 地址。请在 AKB 选择对应连接后重新下载，不要手动绕过匹配。",
       "setupInvalid": "文件不是有效的 AKB 连接配置。请在 AKB 点击「下载平台连接配置」重新导出；不要上传公钥包、完整配置或凭证。",
       "advancedParameters": "接入参数（导入后自动填写；需要时手动配置）",
-      "modeHelp": "完成公钥登记并验证、选中每个 Agent 的密钥后，再启用 V2。启用后，尚未准备好的 Agent 无法访问。"
+      "modeHelp": "完成公钥登记并验证、选中每个 Agent 的密钥后，再启用 V2。启用后，尚未准备好的 Agent 无法访问。",
+      "platformScopeTitle": "为 Octop 内的 Agent 接入 AKB",
+      "platformScopeHelp": "先新建 AKB REST / MCP 来源，点击右侧“配置 Agent 身份”完成登记和验证，再点击“绑定”分配给 Agent。对话中的知识检索工具调用该来源时，AKB 才会出现身份审计。OpenCode 插件安装在 OpenCode 中；AKB 的平台选择只用于登记身份，不会安装插件。",
+      "bindingHelp": "绑定到 Agent 时，填写 Octop 内部的 Agent ID，可从“配置 Agent 身份”中选择 Agent 后复制“平台 Agent ID”。不要填写 AKB 主体 ID 或外部 UUID。完成绑定后，还需在该 Agent 的对话中使用知识检索工具。"
     }
   }
 }

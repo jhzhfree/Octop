@@ -6991,7 +6991,10 @@
       "setupMismatch": "This file belongs to a different platform, installation, workspace or AKB origin. Select the correct AKB connection and download again.",
       "setupInvalid": "Invalid AKB connection file. Export it with Download platform connection in AKB. Do not upload public key bundles, full configurations or credentials.",
       "advancedParameters": "Connection settings (filled by import; manual setup if needed)",
-      "modeHelp": "Register, verify and select every Agent key before enabling V2. Unprepared Agents cannot access knowledge in V2 mode."
+      "modeHelp": "Register, verify and select every Agent key before enabling V2. Unprepared Agents cannot access knowledge in V2 mode.",
+      "platformScopeTitle": "Connect Octop Agents to AKB",
+      "platformScopeHelp": "Create an AKB REST / MCP source, configure Agent identity and verify enrollment, then Bind the source to an Agent. AKB identity audits appear when the chat knowledge tool calls this source. The OpenCode plugin is installed in OpenCode; selecting a platform in AKB registers identity and does not install plugins.",
+      "bindingHelp": "For an Agent binding, enter the internal Octop Agent ID shown as Platform Agent ID in Configure Agent identity. Do not enter an AKB principal ID or external UUID. Then use the knowledge search tool in that Agent chat."
     }
   }
 }

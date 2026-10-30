@@ -2,6 +2,20 @@
 
 本功能随 `codex/opencode-workload-identity` 分支提供。更新源代码后需要重新构建并重启后端和前端部署；单独更新 Python / Java 后端不会更新已部署的静态页面。
 
+## 先确认在哪个平台使用
+
+| 你在哪里运行 Agent | 使用哪个组件 | 在哪里操作 |
+|---|---|---|
+| Octop | Octop 内置适配层 + 通用身份 SDK | Octop“外部知识库”中配置 AKB 来源的 Agent 身份 |
+| OpenCode | OpenCode 身份插件 + 通用 SDK | 在 OpenCode 全局 plugin 配置中加载插件 |
+| 其他 Agent 平台 | 该平台的身份适配器 + 通用 SDK | 在对应平台安装和配置适配器 |
+
+Octop 不加载 OpenCode 插件。Octop 的普通“插件”管理页也不是此身份 SDK 的安装入口。AKB 选择平台是登记身份信任范围，不会安装相应平台的插件。
+
+Octop 页面配置完成后还要把知识源分配给 Agent：点击来源行的“绑定”，选择 Agent 类型，填写 Octop 内部 Agent ID（身份配置抽屉内可复制），不要填写 AKB 主体 ID / 外部 UUID。正常对话执行 `search_knowledge` 检索此来源后，才会产生实际 AKB 请求和身份审计。仅保存配置或完成登记不会自动产生对话检索结果。
+
+“配置 Agent 身份”按钮仅对 `akb-rest` / `akb-mcp` 来源的拥有者和管理员显示。看不到入口时，先检查来源类型、管理权限，以及是否已构建部署该分支的前端静态资源。
+
 ## 安装宿主组件
 
 Octop 页面复用 `@akb/agent-identity-sdk` 0.3.2，通过受信宿主的 stdin/stdout IPC 使用同一套密钥存储、登记证明和请求签名。没有额外网络监听端口，没有浏览器私钥，也没有第二套 Python 签名实现。
