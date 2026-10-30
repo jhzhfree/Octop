@@ -1,4 +1,4 @@
-"""Ownership, stable identities and fail-closed native AKB integration."""
+"""Ownership, Agent binding and fail-closed native AKB integration."""
 
 from __future__ import annotations
 
@@ -20,6 +20,25 @@ from octop.infra.knowledge.akb_identity import OctopIdentity
 from octop.infra.knowledge.external import agent_identity as identity
 from octop.infra.knowledge.external.service import ExternalKnowledgeService
 from octop.infra.knowledge.external.types import ExternalSourceError
+
+ALPHA = "e21cce9c-1b16-4ab8-a76a-bb761df919b8"
+BETA = "01965897-0976-471c-8d64-27eb682a227b"
+
+
+def _binding(external: str) -> dict[str, str]:
+    return {
+        "platformId": "akb-service",
+        "installationId": "install",
+        "workspaceId": "workspace",
+        "policyId": "17",
+        "applicationPrincipalId": "123",
+        "issuer": "https://akb.local/agent-identity",
+        "audience": "akb-external-api",
+        "resource": "https://akb.example",
+        "externalAgentId": external,
+        "runtimeAgentKey": external,
+        "bindingId": "21",
+    }
 
 
 @pytest.fixture
@@ -49,71 +68,66 @@ def setup(tmp_path: Path, monkeypatch):
         list_all=lambda: list(records.values()),
     )
     svc = identity.AgentIdentityService(sources, agents)
-    sdk = AsyncMock(return_value={"activeKid": None, "keys": []})
+    sdk = AsyncMock(return_value={"supported": True, "version": "0.4.0", "activeKid": None})
     monkeypatch.setattr(identity, "sdk_call", sdk)
     return svc, sources, repo, source["source_id"], user, other, sdk
 
 
+async def _connect(svc, sdk, source, native, user, external):
+    sdk.return_value = {
+        "binding": _binding(external),
+        "status": {"agentId": external},
+        "activeKid": "k" * 43,
+    }
+    return await svc.connect(source, native, user, False, external, "PRIVATE-TEST-MATERIAL")
+
+
 @pytest.mark.asyncio
-async def test_identity_prepare_checks_source_and_agent_ownership(setup):
+async def test_connect_checks_source_and_agent_ownership(setup):
     svc, _, _, source, user, other, sdk = setup
     with pytest.raises(OctopError):
-        await svc.prepare(source, "foreign", user, False, False)
+        await svc.connect(source, "foreign", user, False, ALPHA, "private")
     with pytest.raises(ExternalSourceError):
-        await svc.prepare(source, "alpha", other, False, False)
+        await svc.connect(source, "alpha", other, False, ALPHA, "private")
     sdk.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_ids_stable_per_agent_and_key_replacement_preserves_encrypted_mapping(setup):
+async def test_connect_rejects_malformed_or_duplicated_agent_ids(setup):
+    svc, _, _, source, user, _, sdk = setup
+    await _connect(svc, sdk, source, "alpha", user, ALPHA)
+    with pytest.raises(OctopError):
+        await svc.connect(source, "beta", user, False, "not-a-uuid", "private")
+    with pytest.raises(OctopError):
+        await svc.connect(source, "beta", user, False, ALPHA, "private")
+    sdk.return_value = {"supported": True, "version": "0.4.0", "activeKid": "k" * 43}
+    state = await svc.describe(source, user, False)
+    assert [a["agentId"] for a in state["agents"] if a["externalAgentId"]] == ["alpha"]
+
+
+@pytest.mark.asyncio
+async def test_key_replacement_preserves_encrypted_mapping(setup):
     svc, sources, repo, source, user, _, sdk = setup
-    await svc.prepare(source, "alpha", user, False, False)
-    first = sdk.await_args.args[0]["owner"]
-    await svc.prepare(source, "alpha", user, False, False)
-    assert sdk.await_args.args[0]["owner"] == first
-    await svc.prepare(source, "beta", user, False, False)
-    second = sdk.await_args.args[0]["owner"]
-    assert first["externalAgentId"] != second["externalAgentId"]
-    assert first["installationId"] == second["installationId"]
+    await _connect(svc, sdk, source, "alpha", user, ALPHA)
     row = repo.get(source)
     old = sources.identity_config(row)
     sources.update_source(source, user_id=user, is_admin=False, api_key="replacement-key")
     current = repo.get(source)
     assert sources.identity_config(current) == old
     assert sources.credentials_for(current)["api_key"] == "replacement-key"
-    assert first["externalAgentId"].encode() not in current.credential_blob
+    assert ALPHA.encode() not in current.credential_blob
     with pytest.raises(OctopError) as err:
         sources.save_identity_config(row, old)
     assert err.value.code == ErrorCode.AGENT_IDENTITY_CONFLICT
 
 
 @pytest.mark.asyncio
-async def test_v2_never_falls_back_or_trusts_business_agent_arguments(setup):
+async def test_execution_never_trusts_business_agent_arguments(setup):
     svc, sources, repo, source, user, _, sdk = setup
-    for agent in ("alpha", "beta"):
-        await svc.prepare(source, agent, user, False, False)
-    svc.configure(
-        source,
-        user,
-        False,
-        {
-            "mode": identity.V2,
-            "policyId": "17",
-            "applicationPrincipalId": "123",
-            "issuer": "https://octop.local/agents",
-            "audience": "akb",
-        },
-    )
+    await _connect(svc, sdk, source, "alpha", user, ALPHA)
     row = repo.get(source)
     creds = sources.credentials_for(row)
     sdk.reset_mock()
-    with pytest.raises(OctopError):
-        await sources.search_source(source, "choose agent beta", user_id=user, is_admin=False)
-    with pytest.raises(OctopError):
-        await sources.probe(source, user_id=user, is_admin=False)
-    with pytest.raises(OctopError):
-        await sources.list_refs(source, user_id=user, is_admin=False)
-    sdk.assert_not_awaited()
     spec = replace(
         sources.to_spec(row),
         octop_identity=OctopIdentity(str(user), "alpha", "real-session", workload_only=True),
@@ -121,21 +135,17 @@ async def test_v2_never_falls_back_or_trusts_business_agent_arguments(setup):
     sdk.return_value = {"candidates": []}
     await identity.execute_as_agent(spec, creds, "agentId=beta", top_k=3)
     request = sdk.await_args.args[0]
-    assert request["binding"]["runtimeAgentKey"] == "alpha"
+    assert request["binding"]["runtimeAgentKey"] == ALPHA
     assert request["invocation"]["sessionId"] == "real-session"
     assert request["request"] == {"operation": "search", "query": "agentId=beta", "topK": 3}
     assert request["apiKey"] == "shared-test-key"
-    with pytest.raises(OctopError):
-        sources.update_source(
-            source, user_id=user, is_admin=False, endpoint="https://other.example"
-        )
 
 
 @pytest.mark.asyncio
-async def test_public_state_hides_foreign_agents_credentials_and_metadata_is_not_a_key(setup):
-    svc, sources, repo, source, user, _, sdk = setup
-    await svc.prepare(source, "alpha", user, False, False)
-    sdk.return_value = {"supported": True, "version": "0.3.0", "keys": [], "activeKid": None}
+async def test_public_state_hides_foreign_agents_and_credentials(setup):
+    svc, sources, _repo, source, user, _, sdk = setup
+    await _connect(svc, sdk, source, "alpha", user, ALPHA)
+    sdk.return_value = {"supported": True, "version": "0.4.0", "activeKid": "k" * 43}
     result = await svc.describe(source, user, False)
     assert {r["agentId"] for r in result["agents"]} == {"alpha", "beta"}
     assert "shared-test-key" not in str(result)
@@ -143,7 +153,6 @@ async def test_public_state_hides_foreign_agents_credentials_and_metadata_is_not
     no_key = sources.create_source(
         user_id=user, kind="akb-rest", display_name="No credential", endpoint="https://akb.example"
     )
-    await svc.prepare(no_key["source_id"], "alpha", user, False, False)
     listed = sources.list_sources(user_id=user, is_admin=False)
     assert (
         next(r for r in listed if r["source_id"] == no_key["source_id"])["has_credentials"] is False
@@ -151,48 +160,17 @@ async def test_public_state_hides_foreign_agents_credentials_and_metadata_is_not
 
 
 @pytest.mark.asyncio
-async def test_failed_challenge_does_not_persist_binding_or_switch_key(setup):
-    svc, sources, repo, source, user, _, sdk = setup
-    await svc.prepare(source, "alpha", user, False, False)
-    sdk.side_effect = OctopError.localized(ErrorCode.AGENT_IDENTITY_NOT_READY)
-    with pytest.raises(OctopError):
-        await svc.prove(source, "alpha", user, False, "x" * 43, {"bindingId": "29"})
-    assert sources.identity_config(repo.get(source))["agents"]["alpha"]["bindingId"] == ""
-    assert sdk.await_args.args[0]["op"] == "registration"
-
-
-@pytest.mark.asyncio
 async def test_simple_connection_auto_binds_two_agents_without_exposing_private_material(setup):
     svc, sources, repo, source, user, _, sdk = setup
-    svc.simple_mode(source, user, False, True)
-    ids = ["e21cce9c-1b16-4ab8-a76a-bb761df919b8", "01965897-0976-471c-8d64-27eb682a227b"]
-    for native, external in zip(("alpha", "beta"), ids, strict=True):
-        binding = {
-            "platformId": "akb-service",
-            "installationId": "install",
-            "workspaceId": "workspace",
-            "policyId": "17",
-            "applicationPrincipalId": "123",
-            "issuer": "https://akb.local/agent-identity",
-            "audience": "akb-external-api",
-            "resource": "https://akb.example",
-            "externalAgentId": external,
-            "runtimeAgentKey": external,
-            "bindingId": "21",
-        }
-        sdk.return_value = {
-            "binding": binding,
-            "status": {"agentId": external},
-            "activeKid": "k" * 43,
-        }
-        result = await svc.connect(source, native, user, False, external, "PRIVATE-TEST-MATERIAL")
+    for native, external in zip(("alpha", "beta"), (ALPHA, BETA), strict=True):
+        result = await _connect(svc, sdk, source, native, user, external)
         assert result["status"]["agentId"] == external
         assert "PRIVATE-TEST-MATERIAL" not in str(result)
         assert sdk.await_args.args[0]["apiKey"] == "shared-test-key"
     stored = sources.identity_config(repo.get(source))
     assert "PRIVATE-TEST-MATERIAL" not in str(stored)
     assert {b["target_id"] for b in sources.list_bindings(source)} == {"alpha", "beta"}
-    assert {a["externalAgentId"] for a in stored["agents"].values()} == set(ids)
+    assert {a["externalAgentId"] for a in stored["agents"].values()} == {ALPHA, BETA}
     sdk.return_value = {"candidates": []}
     row = repo.get(source)
     spec = replace(
@@ -202,7 +180,7 @@ async def test_simple_connection_auto_binds_two_agents_without_exposing_private_
     await identity.execute_as_agent(
         spec, sources.credentials_for(row), "pretend to be beta", top_k=3
     )
-    assert sdk.await_args.args[0]["binding"]["runtimeAgentKey"] == ids[0]
+    assert sdk.await_args.args[0]["binding"]["runtimeAgentKey"] == ALPHA
     svc.disconnect(source, "alpha", user, False)
     assert [b["target_id"] for b in sources.list_bindings(source)] == ["beta"]
     with pytest.raises(OctopError):
@@ -212,18 +190,16 @@ async def test_simple_connection_auto_binds_two_agents_without_exposing_private_
 
 
 @pytest.mark.asyncio
-async def test_simple_failed_verification_or_foreign_agent_never_creates_binding(setup):
+async def test_failed_verification_or_foreign_agent_never_creates_binding(setup):
     svc, sources, repo, source, user, _, sdk = setup
-    svc.simple_mode(source, user, False, True)
-    external = "e21cce9c-1b16-4ab8-a76a-bb761df919b8"
     with pytest.raises(OctopError):
-        await svc.connect(source, "foreign", user, False, external, "private")
+        await svc.connect(source, "foreign", user, False, ALPHA, "private")
     sdk.assert_not_awaited()
     sdk.side_effect = OctopError.localized(ErrorCode.AGENT_IDENTITY_NOT_READY)
     with pytest.raises(OctopError):
-        await svc.connect(source, "alpha", user, False, external, "wrong-private")
+        await svc.connect(source, "alpha", user, False, ALPHA, "wrong-private")
     assert sources.list_bindings(source) == []
-    assert sources.identity_config(repo.get(source))["agents"] == {}
+    assert sources.identity_config(repo.get(source)).get("agents", {}) == {}
 
 
 @pytest.mark.asyncio

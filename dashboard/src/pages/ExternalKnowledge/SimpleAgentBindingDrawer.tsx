@@ -9,6 +9,7 @@ import {
   Popconfirm,
   Select,
   Space,
+  Steps,
   Table,
   Tag,
   Typography,
@@ -33,7 +34,6 @@ interface Values {
   externalAgentId: string;
   privateKey?: string;
 }
-const V2 = "AGENT_KEY_RS256_V2";
 export default function SimpleAgentBindingDrawer({
   source,
   onClose,
@@ -46,8 +46,7 @@ export default function SimpleAgentBindingDrawer({
   const [state, setState] = useState<SourceIdentityState | null>(null);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
-  const [apiKey, setApiKey] = useState(""),
-    [mode, setMode] = useState<"LEGACY" | typeof V2>("LEGACY");
+  const [apiKey, setApiKey] = useState("");
   const [query, setQuery] = useState(""),
     [result, setResult] = useState<string | null>(null);
   const selected = Form.useWatch("agentId", form);
@@ -59,7 +58,6 @@ export default function SimpleAgentBindingDrawer({
     const next = await agentIdentityApi.state(source.source_id);
     if (id !== generation.current) return;
     setState(next);
-    setMode(next.mode);
   }, [source]);
   useEffect(() => {
     generation.current++;
@@ -86,17 +84,13 @@ export default function SimpleAgentBindingDrawer({
       setBusy(false);
     }
   }
-  async function saveConnection() {
+  async function saveServiceKey() {
     await act(async () => {
-      if (!source) return;
-      if (apiKey.trim()) {
-        await externalKnowledgeApi.update(source.source_id, {
-          api_key: apiKey.trim(),
-        });
-        setApiKey("");
-      }
-      await agentIdentityApi.simpleMode(source.source_id, mode === V2);
-      await load();
+      if (!source || !apiKey.trim()) return;
+      await externalKnowledgeApi.update(source.source_id, {
+        api_key: apiKey.trim(),
+      });
+      setApiKey("");
       onSaved();
       message.success(t(k + "saved"));
     });
@@ -124,6 +118,7 @@ export default function SimpleAgentBindingDrawer({
     });
   }
   const active = state?.agents.filter((a) => a.externalAgentId) ?? [];
+  const step = active.length ? 2 : 1;
   return (
     <Drawer
       open={!!source}
@@ -135,24 +130,26 @@ export default function SimpleAgentBindingDrawer({
       destroyOnClose
     >
       <Space direction="vertical" size="large" style={{ width: "100%" }}>
-        <Alert
-          type="info"
-          showIcon
-          message={t(k + "steps")}
-          description={t(k + "help")}
+        <Steps
+          size="small"
+          current={step}
+          items={[
+            {
+              title: t(k + "stepGenerate"),
+              description: t(k + "stepGenerateHelp"),
+            },
+            {
+              title: t(k + "stepImport"),
+              description: t(k + "stepImportHelp"),
+            },
+            { title: t(k + "stepBind"), description: t(k + "stepBindHelp") },
+          ]}
         />
         {error && <Alert type="error" showIcon message={error} />}
+        {!state?.runtimeReady && (
+          <Alert type="warning" showIcon message={t(k + "runtimeMissing")} />
+        )}
         <Form layout="vertical" disabled={busy || !state}>
-          <Form.Item label={t(k + "authMode")}>
-            <Select
-              value={mode}
-              onChange={setMode}
-              options={[
-                { value: "LEGACY", label: t(k + "legacy") },
-                { value: V2, label: t(k + "agentKey") },
-              ]}
-            />
-          </Form.Item>
           <Form.Item
             label={t(k + "serviceKey")}
             extra={t(k + "serviceKeyHint")}
@@ -165,218 +162,207 @@ export default function SimpleAgentBindingDrawer({
           </Form.Item>
           <Button
             loading={busy}
-            disabled={!state}
-            onClick={() => void saveConnection()}
+            disabled={!state || !apiKey.trim()}
+            onClick={() => void saveServiceKey()}
           >
             {t(k + "saveConnection")}
           </Button>
         </Form>
-        {state?.mode === V2 && (
-          <>
-            {!state.runtimeReady && (
-              <Alert type="warning" message={t(k + "runtimeMissing")} />
-            )}
-            <Typography.Title level={5}>{t(k + "bindings")}</Typography.Title>
-            <Table
-              size="small"
-              pagination={false}
-              rowKey="agentId"
-              dataSource={active}
-              columns={[
-                { title: t(k + "systemAgent"), dataIndex: "name" },
+        <Typography.Title level={5}>{t(k + "bindings")}</Typography.Title>
+        <Table
+          size="small"
+          pagination={false}
+          rowKey="agentId"
+          dataSource={active}
+          columns={[
+            { title: t(k + "systemAgent"), dataIndex: "name" },
+            {
+              title: t(k + "agentId"),
+              dataIndex: "externalAgentId",
+              render: (v: string) => (
+                <Typography.Text copyable={{ tooltips: false }}>
+                  {v}
+                </Typography.Text>
+              ),
+            },
+            {
+              title: t(k + "state"),
+              render: (_, row) => (
+                <Tag color={row.activeKid ? "green" : "default"}>
+                  {t(k + (row.activeKid ? "verified" : "pending"))}
+                </Tag>
+              ),
+            },
+            {
+              title: t(k + "actions"),
+              render: (_, row) => (
+                <Space>
+                  <Button
+                    size="small"
+                    disabled={busy}
+                    onClick={() => {
+                      form.setFieldsValue({
+                        agentId: row.agentId,
+                        externalAgentId: row.externalAgentId,
+                        privateKey: "",
+                      });
+                      setResult(null);
+                    }}
+                  >
+                    {t(k + "select")}
+                  </Button>
+                  <Popconfirm
+                    title={t(k + "unbindHint")}
+                    onConfirm={() =>
+                      act(async () => {
+                        if (!source) return;
+                        await agentIdentityApi.disconnect(
+                          source.source_id,
+                          row.agentId,
+                        );
+                        await load();
+                        onSaved();
+                      })
+                    }
+                  >
+                    <Button size="small" danger disabled={busy}>
+                      {t(k + "unbind")}
+                    </Button>
+                  </Popconfirm>
+                </Space>
+              ),
+            },
+          ]}
+        />
+        <Form
+          form={form}
+          layout="vertical"
+          disabled={busy || !state?.runtimeReady}
+        >
+          <Form.Item
+            name="agentId"
+            label={t(k + "systemAgent")}
+            rules={[{ required: true }]}
+          >
+            <Select
+              showSearch
+              optionFilterProp="label"
+              options={state?.agents.map((a) => ({
+                value: a.agentId,
+                label: `${a.name} · ${a.agentId}`,
+              }))}
+              onChange={(id) => {
+                const a = state?.agents.find((a) => a.agentId === id);
+                form.setFieldsValue({
+                  externalAgentId: a?.externalAgentId ?? "",
+                  privateKey: "",
+                });
+                setResult(null);
+              }}
+            />
+          </Form.Item>
+          <Form.Item
+            name="externalAgentId"
+            label={t(k + "agentId")}
+            extra={t(k + "idHint")}
+            rules={[
+              { required: true },
+              {
+                pattern:
+                  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+                message: t(k + "uuidError"),
+              },
+            ]}
+          >
+            <Input disabled={!!active.find((a) => a.agentId === selected)} />
+          </Form.Item>
+          <Form.Item label={t(k + "privateKey")} extra={t(k + "privateHint")}>
+            <input
+              ref={file}
+              type="file"
+              style={{ display: "none" }}
+              accept=".pem,.key"
+              hidden
+              onChange={(e) => {
+                const input = e.target,
+                  f = input.files?.[0];
+                input.value = "";
+                if (!f) return;
+                if (f.size > 16384) {
+                  setError(t(k + "keyTooLarge"));
+                  return;
+                }
+                void f
+                  .text()
+                  .then((text) => form.setFieldValue("privateKey", text));
+              }}
+            />
+            <Button disabled={busy} onClick={() => file.current?.click()}>
+              {t(k + "importPrivate")}
+            </Button>
+            <Form.Item
+              name="privateKey"
+              noStyle
+              rules={[
                 {
-                  title: t(k + "agentId"),
-                  dataIndex: "externalAgentId",
-                  render: (v: string) => (
-                    <Typography.Text copyable>{v}</Typography.Text>
+                  required: !active.some(
+                    (a) => a.agentId === selected && a.activeKid,
                   ),
-                },
-                {
-                  title: t(k + "state"),
-                  render: (_, row) => (
-                    <Tag color={row.activeKid ? "green" : "default"}>
-                      {t(k + (row.activeKid ? "verified" : "pending"))}
-                    </Tag>
-                  ),
-                },
-                {
-                  title: t(k + "actions"),
-                  render: (_, row) => (
-                    <Space>
-                      <Button
-                        size="small"
-                        disabled={busy}
-                        onClick={() => {
-                          form.setFieldsValue({
-                            agentId: row.agentId,
-                            externalAgentId: row.externalAgentId,
-                            privateKey: "",
-                          });
-                          setResult(null);
-                        }}
-                      >
-                        {t(k + "select")}
-                      </Button>
-                      <Popconfirm
-                        title={t(k + "unbindHint")}
-                        onConfirm={() =>
-                          act(async () => {
-                            if (!source) return;
-                            await agentIdentityApi.disconnect(
-                              source.source_id,
-                              row.agentId,
-                            );
-                            await load();
-                            onSaved();
-                          })
-                        }
-                      >
-                        <Button size="small" danger disabled={busy}>
-                          {t(k + "unbind")}
-                        </Button>
-                      </Popconfirm>
-                    </Space>
-                  ),
+                  message: t(k + "privateRequired"),
                 },
               ]}
-            />
-            <Form
-              form={form}
-              layout="vertical"
-              disabled={busy || !state.runtimeReady}
             >
-              <Form.Item
-                name="agentId"
-                label={t(k + "systemAgent")}
-                rules={[{ required: true }]}
-              >
-                <Select
-                  showSearch
-                  optionFilterProp="label"
-                  options={state.agents.map((a) => ({
-                    value: a.agentId,
-                    label: `${a.name} · ${a.agentId}`,
-                  }))}
-                  onChange={(id) => {
-                    const a = state.agents.find((a) => a.agentId === id);
-                    form.setFieldsValue({
-                      externalAgentId: a?.externalAgentId ?? "",
-                      privateKey: "",
-                    });
-                    setResult(null);
-                  }}
-                />
-              </Form.Item>
-              <Form.Item
-                name="externalAgentId"
-                label={t(k + "agentId")}
-                extra={t(k + "idHint")}
-                rules={[
-                  { required: true },
-                  {
-                    pattern:
-                      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
-                    message: t(k + "uuidError"),
-                  },
-                ]}
-              >
-                <Input
-                  disabled={!!active.find((a) => a.agentId === selected)}
-                />
-              </Form.Item>
-              <Form.Item
-                label={t(k + "privateKey")}
-                extra={t(k + "privateHint")}
-              >
-                <input
-                  ref={file}
-                  type="file"
-                  style={{ display: "none" }}
-                  accept=".pem,.key"
-                  hidden
-                  onChange={(e) => {
-                    const input = e.target,
-                      f = input.files?.[0];
-                    input.value = "";
-                    if (!f) return;
-                    if (f.size > 16384) {
-                      setError(t(k + "keyTooLarge"));
-                      return;
-                    }
-                    void f
-                      .text()
-                      .then((text) => form.setFieldValue("privateKey", text));
-                  }}
-                />
-                <Button disabled={busy} onClick={() => file.current?.click()}>
-                  {t(k + "importPrivate")}
-                </Button>
-                <Form.Item
-                  name="privateKey"
-                  noStyle
-                  rules={[
-                    {
-                      required: !active.some(
-                        (a) => a.agentId === selected && a.activeKid,
-                      ),
-                      message: t(k + "privateRequired"),
-                    },
-                  ]}
-                >
-                  <Input.TextArea
-                    rows={4}
-                    autoComplete="off"
-                    placeholder={t(k + "privatePlaceholder")}
-                    style={{ marginTop: 8 }}
-                  />
-                </Form.Item>
-              </Form.Item>
-              <Button
-                type="primary"
-                loading={busy}
-                disabled={!state.runtimeReady}
-                onClick={() => void connect()}
-              >
-                {t(k + "saveAndTest")}
-              </Button>
-            </Form>
-            <Space.Compact style={{ width: "100%" }}>
-              <Input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder={t(k + "query")}
+              <Input.TextArea
+                rows={4}
+                autoComplete="off"
+                placeholder={t(k + "privatePlaceholder")}
+                style={{ marginTop: 8 }}
               />
-              <Button
-                disabled={
-                  busy ||
-                  !query.trim() ||
-                  !active.some((a) => a.agentId === selected && a.activeKid)
-                }
-                onClick={() =>
-                  void act(async () => {
-                    if (!source || !selected) return;
-                    setResult(null);
-                    const r = await agentIdentityApi.search(
-                      source.source_id,
-                      selected,
-                      query,
-                    );
-                    setResult(
-                      r.chunks.map((c) => c.content).join("\n\n") ||
-                        t(k + "empty"),
-                    );
-                  })
-                }
-              >
-                {t(k + "testSearch")}
-              </Button>
-            </Space.Compact>
-            {result !== null && (
-              <Typography.Paragraph style={{ whiteSpace: "pre-wrap" }}>
-                {result}
-              </Typography.Paragraph>
-            )}
-          </>
+            </Form.Item>
+          </Form.Item>
+          <Button
+            type="primary"
+            loading={busy}
+            disabled={!state?.runtimeReady}
+            onClick={() => void connect()}
+          >
+            {t(k + "saveAndTest")}
+          </Button>
+        </Form>
+        <Space.Compact style={{ width: "100%" }}>
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={t(k + "query")}
+          />
+          <Button
+            disabled={
+              busy ||
+              !query.trim() ||
+              !active.some((a) => a.agentId === selected && a.activeKid)
+            }
+            onClick={() =>
+              void act(async () => {
+                if (!source || !selected) return;
+                setResult(null);
+                const r = await agentIdentityApi.search(
+                  source.source_id,
+                  selected,
+                  query,
+                );
+                setResult(
+                  r.chunks.map((c) => c.content).join("\n\n") || t(k + "empty"),
+                );
+              })
+            }
+          >
+            {t(k + "testSearch")}
+          </Button>
+        </Space.Compact>
+        {result !== null && (
+          <Typography.Paragraph style={{ whiteSpace: "pre-wrap" }}>
+            {result}
+          </Typography.Paragraph>
         )}
       </Space>
     </Drawer>

@@ -9,13 +9,11 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import re
 import shutil
 import uuid
 from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
 
 from octop.infra.db.repos.agents import AgentRepo
 from octop.infra.db.repos.external_knowledge import ExternalSourceRow
@@ -24,8 +22,6 @@ from octop.infra.knowledge.akb_identity import OctopIdentity
 from octop.infra.knowledge.external.service import ExternalKnowledgeService
 from octop.infra.knowledge.external.types import ExternalSearchResult, ExternalSourceSpec
 from octop.infra.utils.paths import PathLayout
-
-V2 = "AGENT_KEY_RS256_V2"
 
 
 def _invalid() -> OctopError:
@@ -100,7 +96,6 @@ async def sdk_call(payload: dict[str, Any], timeout: float = 30) -> dict[str, An
 
 def _default(row: ExternalSourceRow, config: dict[str, Any]) -> dict[str, Any]:
     return {
-        "mode": "LEGACY",
         "platformId": "octop",
         "installationId": "octop-" + row.source_id,
         "workspaceId": row.source_id,
@@ -173,104 +168,30 @@ class AgentIdentityService:
             capabilities = await sdk_call({"op": "capabilities"})
         except (TimeoutError, OctopError, OSError):
             capabilities = {"supported": False}
+        ready = bool(capabilities.get("supported"))
         available = self.agents.list_all() if is_admin else self.agents.list_by_user(user_id)
-        result = {key: value for key, value in config.items() if key != "agents"}
-        result.update(
-            {
-                "runtimeReady": bool(capabilities.get("supported")),
-                "sdkVersion": capabilities.get("version", ""),
-                "agents": [],
-            }
-        )
+        bound = config["agents"] if config.get("simple") else {}
+        result: dict[str, Any] = {"runtimeReady": ready, "agents": []}
         for record in available:
-            current = config["agents"].get(record.agent_id)
-            state: dict[str, Any] = {"activeKid": None, "keys": []}
-            if current and capabilities.get("supported"):
+            current = bound.get(record.agent_id)
+            active_kid = None
+            if current and ready:
                 try:
                     state = await sdk_call(
                         {"op": "state", "owner": _binding(config, record.agent_id)[0]}
                     )
+                    active_kid = state.get("activeKid")
                 except (TimeoutError, OctopError):
-                    state["unavailable"] = True
+                    active_kid = None
             result["agents"].append(
                 {
                     "agentId": record.agent_id,
                     "name": record.name,
                     "externalAgentId": current.get("externalAgentId", "") if current else "",
-                    "bindingId": current.get("bindingId", "") if current else "",
-                    **state,
+                    "activeKid": active_kid,
                 }
             )
         return result
-
-    def configure(
-        self, source_id: str, user_id: int, is_admin: bool, values: dict[str, str]
-    ) -> None:
-        row, config = self.source(source_id, user_id, is_admin)
-        for name in ("policyId", "applicationPrincipalId"):
-            value = values.get(name, "").strip()
-            if value and not re.fullmatch(r"[1-9][0-9]{0,18}", value):
-                raise _invalid()
-        parsed = urlsplit(values.get("issuer", ""))
-        endpoint = urlsplit(row.endpoint)
-        if (
-            parsed.scheme != "https"
-            or not parsed.hostname
-            or parsed.username
-            or parsed.password
-            or parsed.query
-            or parsed.fragment
-        ):
-            raise _invalid()
-        if (
-            not endpoint.hostname
-            or endpoint.path not in {"", "/"}
-            or endpoint.query
-            or endpoint.fragment
-            or endpoint.username
-            or endpoint.password
-        ):
-            raise _invalid()
-        if endpoint.scheme != "https" and not (
-            row.allow_insecure_http
-            and endpoint.scheme == "http"
-            and endpoint.hostname in {"127.0.0.1", "localhost", "::1"}
-        ):
-            raise _invalid()
-        if values.get("mode") not in {V2, "LEGACY"} or not values.get("audience", "").strip():
-            raise _invalid()
-        if values["mode"] == V2 and not all(
-            values.get(key) for key in ("policyId", "applicationPrincipalId")
-        ):
-            raise _invalid()
-        config.update(
-            {
-                key: value.strip()
-                for key, value in values.items()
-                if key in {"mode", "policyId", "applicationPrincipalId", "issuer", "audience"}
-            }
-        )
-        config["resource"] = row.endpoint.rstrip("/")
-        try:
-            if endpoint.port == (443 if endpoint.scheme == "https" else 80):
-                raise _invalid()
-        except ValueError as exc:
-            raise _invalid() from exc
-        self.sources.save_identity_config(row, config)
-
-    def simple_mode(self, source_id: str, user_id: int, is_admin: bool, enabled: bool) -> None:
-        row, config = self.source(source_id, user_id, is_admin)
-        # Existing advanced identity coordinates cannot silently become a different identity.
-        if (
-            enabled
-            and not config.get("simple")
-            and (config["mode"] == V2 or config.get("policyId") or config["agents"])
-        ):
-            raise _invalid()
-        config["mode"] = V2 if enabled else "LEGACY"
-        if enabled:
-            config["simple"] = True
-        self.sources.save_identity_config(row, config)
 
     async def connect(
         self,
@@ -283,8 +204,6 @@ class AgentIdentityService:
     ) -> dict[str, Any]:
         row, config = self.source(source_id, user_id, is_admin)
         self.agent(agent_id, user_id, is_admin)
-        if not config.get("simple") or config["mode"] != V2:
-            raise _invalid()
         try:
             if str(uuid.UUID(external_id)) != external_id:
                 raise ValueError()
@@ -331,6 +250,7 @@ class AgentIdentityService:
         if config["agents"] and any(config[k] != binding[k] for k in coordinates):
             raise _invalid()
         config.update({k: binding[k] for k in coordinates})
+        config["simple"] = True
         config["agents"][agent_id] = {
             "externalAgentId": external_id,
             "bindingId": binding["bindingId"],
@@ -345,70 +265,13 @@ class AgentIdentityService:
     def disconnect(self, source_id: str, agent_id: str, user_id: int, is_admin: bool) -> None:
         row, config = self.source(source_id, user_id, is_admin)
         self.agent(agent_id, user_id, is_admin)
-        if not config.get("simple"):
+        if agent_id not in config.get("agents", {}):
             raise _invalid()
         config["agents"].pop(agent_id, None)
         self.sources.save_identity_config(row, config)
         self.sources.delete_binding(
             source_id, user_id=user_id, is_admin=is_admin, target_type="agent", target_id=agent_id
         )
-
-    async def prepare(
-        self, source_id: str, agent_id: str, user_id: int, is_admin: bool, rotate: bool
-    ) -> dict[str, Any]:
-        row, config = self.source(source_id, user_id, is_admin)
-        self.agent(agent_id, user_id, is_admin)
-        if agent_id not in config["agents"]:
-            config["agents"][agent_id] = {"externalAgentId": str(uuid.uuid4()), "bindingId": ""}
-            self.sources.save_identity_config(row, config)
-        owner = {
-            **{key: str(config[key]) for key in ("platformId", "installationId", "workspaceId")},
-            "externalAgentId": config["agents"][agent_id]["externalAgentId"],
-        }
-        return await sdk_call({"op": "rotate" if rotate else "initialize", "owner": owner})
-
-    async def prove(
-        self,
-        source_id: str,
-        agent_id: str,
-        user_id: int,
-        is_admin: bool,
-        kid: str,
-        challenge: dict[str, Any],
-    ) -> dict[str, Any]:
-        row, config = self.source(source_id, user_id, is_admin)
-        self.agent(agent_id, user_id, is_admin)
-        owner, binding = _binding(config, agent_id)
-        binding_id = challenge.get("bindingId")
-        if not isinstance(binding_id, str) or not re.fullmatch(r"[1-9][0-9]{0,18}", binding_id):
-            raise _invalid()
-        binding["bindingId"] = binding_id
-        result = await sdk_call(
-            {
-                "op": "registration",
-                "owner": owner,
-                "binding": binding,
-                "kid": kid,
-                "challenge": challenge,
-            }
-        )
-        config["agents"][agent_id]["bindingId"] = binding_id
-        self.sources.save_identity_config(row, config)
-        return result
-
-    async def verify(
-        self, source_id: str, agent_id: str, user_id: int, is_admin: bool, kid: str | None
-    ) -> dict[str, Any]:
-        row, config = self.source(source_id, user_id, is_admin)
-        self.agent(agent_id, user_id, is_admin)
-        creds = self.sources.credentials_for(row)
-        payload = {
-            **_request(row, config, agent_id, str(creds.get("api_key") or "")),
-            "op": "activate" if kid else "probe",
-            "kid": kid,
-        }
-        payload["invocation"]["sessionId"] = f"management:{user_id}"
-        return await sdk_call(payload, max(30, row.timeout_ms / 1000 * 3 + 10))
 
     async def search(
         self, source_id: str, agent_id: str, user_id: int, is_admin: bool, query: str, top_k: int

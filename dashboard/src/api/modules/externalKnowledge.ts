@@ -1,9 +1,7 @@
 import { request } from "../request";
 
 export interface ExternalKnowledgeSource {
-  identity_mode?: string;
-  simple_identity?: boolean;
-  advanced_identity?: boolean;
+  identity_ready?: boolean;
   source_id: string;
   display_name: string;
   kind: string;

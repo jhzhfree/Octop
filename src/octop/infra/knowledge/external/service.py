@@ -133,27 +133,18 @@ class ExternalKnowledgeService:
 
     def _public_source(self, row: ExternalSourceRow, spec: ExternalSourceSpec) -> dict[str, Any]:
         """Public projection: no credentials, no key material."""
-        mode = "LEGACY"
-        simple_identity = False
-        advanced_identity = False
+        identity_ready = False
         has_credentials = row.has_credentials or bool(row.instance_id)
         if row.credential_blob and row.kind in {"akb-mcp", "akb-rest"}:
             try:
                 config = self.identity_config(row)
-                mode = config.get("mode", "LEGACY")
-                simple_identity = bool(config.get("simple"))
-                advanced_identity = not simple_identity and bool(
-                    config.get("policyId") or config.get("agents")
-                )
+                identity_ready = bool(config.get("simple")) and bool(config.get("agents"))
                 if config:
                     has_credentials = bool(self.credentials_for(row).get("api_key"))
             except ExternalSourceError:
-                mode = "UNAVAILABLE"
                 has_credentials = False
         return {
-            "identity_mode": mode,
-            "simple_identity": simple_identity,
-            "advanced_identity": advanced_identity,
+            "identity_ready": identity_ready,
             "source_id": row.source_id,
             "display_name": row.display_name,
             "kind": row.kind,
@@ -271,7 +262,7 @@ class ExternalKnowledgeService:
         **fields: Any,
     ) -> dict[str, Any]:
         row = self._require_manage(source_id, user_id=user_id, is_admin=is_admin)
-        if self.identity_config(row).get("mode") == "AGENT_KEY_RS256_V2" and (
+        if self.identity_config(row).get("simple") and (
             (fields.get("kind") is not None and fields["kind"] != row.kind)
             or (
                 fields.get("endpoint") is not None
@@ -453,10 +444,7 @@ class ExternalKnowledgeService:
         return await adapter.list_refs(spec, self.credentials_for(row))
 
     def _require_legacy_management(self, row: ExternalSourceRow) -> None:
-        if (
-            row.kind in {"akb-rest", "akb-mcp"}
-            and self.identity_config(row).get("mode") == "AGENT_KEY_RS256_V2"
-        ):
+        if row.kind in {"akb-rest", "akb-mcp"} and self.identity_config(row).get("simple"):
             from octop.infra.errors import ErrorCode, OctopError
 
             raise OctopError.localized(ErrorCode.AGENT_IDENTITY_NOT_READY)
@@ -494,10 +482,7 @@ class ExternalKnowledgeService:
                 "INVALID_ARGUMENT", f"unsupported kind: {spec.kind}", origin=spec.kind
             )
         creds = self.credentials_for(row)
-        if (
-            isinstance(creds.get("agent_identity"), dict)
-            and creds["agent_identity"].get("mode") == "AGENT_KEY_RS256_V2"
-        ):
+        if isinstance(creds.get("agent_identity"), dict) and creds["agent_identity"].get("simple"):
             from octop.infra.knowledge.external.agent_identity import search_as_agent
 
             return await search_as_agent(spec, creds, query, top_k=top_k)

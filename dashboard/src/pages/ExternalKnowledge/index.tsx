@@ -41,9 +41,7 @@ import { useIsMobile } from "../../hooks/useIsMobile";
 import PageShell from "../../layouts/PageShell";
 import { useAgent, type OctopAgent } from "../../context/AgentContext";
 import styles from "./index.module.less";
-import AgentIdentityDrawer from "./AgentIdentityDrawer";
 import SimpleAgentBindingDrawer from "./SimpleAgentBindingDrawer";
-import { agentIdentityApi } from "@/api/modules/agentIdentity";
 
 const TARGET_TYPES = [
   { value: "agent", label: "Agent" },
@@ -59,7 +57,6 @@ const KIND_COLORS: Record<string, string> = {
 };
 
 interface SourceFormValues {
-  identity_mode: "LEGACY" | "AGENT_KEY_RS256_V2";
   display_name: string;
   kind: string;
   endpoint: string;
@@ -81,13 +78,6 @@ function targetLabel(
   if (binding.target_type !== "agent") return binding.target_id;
   const match = agents.find((agent) => agent.agent_id === binding.target_id);
   return match ? `${match.name} · ${binding.target_id}` : binding.target_id;
-}
-
-function advancedIdentity(row: ExternalKnowledgeSource): boolean {
-  return (
-    !!row.advanced_identity ||
-    (row.identity_mode === "AGENT_KEY_RS256_V2" && !row.simple_identity)
-  );
 }
 
 function scoreColor(score: number): string {
@@ -153,7 +143,6 @@ export default function ExternalKnowledgePage() {
     form.resetFields();
     form.setFieldsValue({
       kind: kinds[0] ?? "akb-mcp",
-      identity_mode: "LEGACY",
       top_k: 8,
       min_score: 0,
       timeout_ms: 10000,
@@ -169,10 +158,6 @@ export default function ExternalKnowledgePage() {
       setRefs([]);
       form.resetFields();
       form.setFieldsValue({
-        identity_mode:
-          row.identity_mode === "AGENT_KEY_RS256_V2"
-            ? "AGENT_KEY_RS256_V2"
-            : "LEGACY",
         display_name: row.display_name,
         kind: row.kind,
         endpoint: row.endpoint,
@@ -212,20 +197,12 @@ export default function ExternalKnowledgePage() {
         saved = await externalKnowledgeApi.create(body);
         setEditing(saved);
       }
-      const agentMode = values.identity_mode === "AGENT_KEY_RS256_V2";
+      message.success(t("externalKnowledge.updated"));
       if (
         ["akb-mcp", "akb-rest"].includes(values.kind) &&
-        !(editing && advancedIdentity(editing))
-      ) {
-        await agentIdentityApi.simpleMode(saved.source_id, agentMode);
-      }
-      message.success(t("externalKnowledge.updated"));
-      if (agentMode && (!editing || !advancedIdentity(editing)))
-        setIdentitySource({
-          ...saved,
-          identity_mode: "AGENT_KEY_RS256_V2",
-          simple_identity: true,
-        });
+        !saved.identity_ready
+      )
+        setIdentitySource(saved);
       setFormOpen(false);
       await refresh();
     } catch {
@@ -279,7 +256,7 @@ export default function ExternalKnowledgePage() {
 
   const probe = useCallback(
     async (row: ExternalKnowledgeSource) => {
-      if (row.identity_mode === "AGENT_KEY_RS256_V2") {
+      if (row.identity_ready) {
         setIdentitySource(row);
         return;
       }
@@ -369,9 +346,9 @@ export default function ExternalKnowledgePage() {
               <Tag color={KIND_COLORS[row.kind] ?? "default"} bordered={false}>
                 {row.kind}
               </Tag>
-              {row.identity_mode === "AGENT_KEY_RS256_V2" && (
+              {row.identity_ready && (
                 <Tag color="green">
-                  {t("externalKnowledge.identity.v2Badge")}
+                  {t("externalKnowledge.identity.boundBadge")}
                 </Tag>
               )}
               {!row.has_credentials && (
@@ -469,7 +446,7 @@ export default function ExternalKnowledgePage() {
                 aria-label={t("externalKnowledge.test")}
                 icon={<Search size={15} />}
                 onClick={() => {
-                  if (row.identity_mode === "AGENT_KEY_RS256_V2") {
+                  if (row.identity_ready) {
                     setIdentitySource(row);
                     return;
                   }
@@ -485,9 +462,9 @@ export default function ExternalKnowledgePage() {
                 aria-label={t("externalKnowledge.bind")}
                 icon={<Link2 size={15} />}
                 onClick={() =>
-                  row.simple_identity
-                    ? setIdentitySource(row)
-                    : setBindingSource(row)
+                  row.identity_ready
+                    ? setBindingSource(row)
+                    : setIdentitySource(row)
                 }
               >
                 {t("externalKnowledge.bind")}
@@ -595,22 +572,8 @@ export default function ExternalKnowledgePage() {
         </div>
       </div>
 
-      <AgentIdentityDrawer
-        source={
-          identitySource && advancedIdentity(identitySource)
-            ? identitySource
-            : null
-        }
-        onClose={() => setIdentitySource(null)}
-        onSaved={() => void refresh()}
-      />
-
       <SimpleAgentBindingDrawer
-        source={
-          identitySource && !advancedIdentity(identitySource)
-            ? identitySource
-            : null
-        }
+        source={identitySource}
         onClose={() => setIdentitySource(null)}
         onSaved={() => void refresh()}
       />
@@ -804,7 +767,7 @@ export default function ExternalKnowledgePage() {
           </Form.Item>
           <Form.Item name="kind" label={t("externalKnowledge.kind")}>
             <Select
-              disabled={editing?.identity_mode === "AGENT_KEY_RS256_V2"}
+              disabled={editing?.identity_ready}
               options={kinds.map((kind) => ({ value: kind, label: kind }))}
             />
           </Form.Item>
@@ -819,7 +782,7 @@ export default function ExternalKnowledgePage() {
             }
           >
             <Input
-              disabled={editing?.identity_mode === "AGENT_KEY_RS256_V2"}
+              disabled={editing?.identity_ready}
               placeholder={
                 formKind === "standard-retrieval"
                   ? "https://akb.example.com/api/v1/external/kb/retrievals"
@@ -827,27 +790,6 @@ export default function ExternalKnowledgePage() {
               }
             />
           </Form.Item>
-          {["akb-mcp", "akb-rest"].includes(formKind) && (
-            <Form.Item
-              name="identity_mode"
-              label={t("externalKnowledge.simple.authMode")}
-              extra={t("externalKnowledge.simple.authHint")}
-            >
-              <Select
-                disabled={!!editing && advancedIdentity(editing)}
-                options={[
-                  {
-                    value: "LEGACY",
-                    label: t("externalKnowledge.simple.legacy"),
-                  },
-                  {
-                    value: "AGENT_KEY_RS256_V2",
-                    label: t("externalKnowledge.simple.agentKey"),
-                  },
-                ]}
-              />
-            </Form.Item>
-          )}
           <Form.Item name="api_key" label={t("externalKnowledge.apiKey")}>
             <Input.Password
               autoComplete="new-password"
@@ -856,11 +798,7 @@ export default function ExternalKnowledgePage() {
           </Form.Item>
           <Form.Item
             label={t("externalKnowledge.ref")}
-            extra={t(
-              editing?.identity_mode === "AGENT_KEY_RS256_V2"
-                ? "externalKnowledge.identity.v2RefsHint"
-                : "externalKnowledge.refHint",
-            )}
+            extra={t("externalKnowledge.refHint")}
           >
             <Space.Compact style={{ width: "100%" }}>
               {refs.length > 0 ? (
@@ -885,9 +823,7 @@ export default function ExternalKnowledgePage() {
               )}
               <Button
                 loading={refsLoading}
-                disabled={
-                  !editing || editing.identity_mode === "AGENT_KEY_RS256_V2"
-                }
+                disabled={!editing || editing.identity_ready}
                 onClick={() => void fetchRefs()}
                 title={editing ? "" : t("externalKnowledge.fetchRefsAfterSave")}
               >
