@@ -140,6 +140,7 @@ start_process() {
             else
                 kill -KILL "$octop_pid" 2>/dev/null || true
             fi
+            wait "$octop_pid" 2>/dev/null || true
         fi
         if type free_octop_ports >/dev/null 2>&1; then
             free_octop_ports "$PORT"

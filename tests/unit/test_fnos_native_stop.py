@@ -326,6 +326,7 @@ def test_native_main_start_term_cleans_unready_child(tmp_path: Path) -> None:
         "  trap - INT TERM HUP\n"
         '  kill -TERM "$octop_pid" 2>/dev/null || true\n'
         '  kill -KILL "$octop_pid" 2>/dev/null || true\n'
+        '  wait "$octop_pid" 2>/dev/null || true\n'
         f'  rm -f "{pid_file}"\n'
         "}\n"
         "_abort_start_and_exit() {\n"
