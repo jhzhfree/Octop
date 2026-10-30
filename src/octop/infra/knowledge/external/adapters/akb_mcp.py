@@ -12,7 +12,11 @@ import json
 from typing import Any
 
 from octop.infra.knowledge.akb_identity import OctopIdentity, issue_assertion
-from octop.infra.knowledge.external.http import post_json, validate_endpoint
+from octop.infra.knowledge.external.http import (
+    drop_api_prefix,
+    post_json,
+    validate_endpoint,
+)
 from octop.infra.knowledge.external.normalize import (
     extract_items,
     filter_chunks,
@@ -45,7 +49,8 @@ _RPC_CODES: dict[int, str] = {-32001: "FORBIDDEN"}
 
 def _url(spec: ExternalSourceSpec) -> str:
     base = validate_endpoint(spec.endpoint, allow_insecure_http=spec.allow_insecure_http)
-    return base + "/api/mcp"
+    # Same trap as REST: a pasted /api/mcp endpoint would double it up.
+    return drop_api_prefix(base, "/api/mcp") + "/api/mcp"
 
 
 def _headers(spec: ExternalSourceSpec, creds: dict[str, Any]) -> dict[str, str]:

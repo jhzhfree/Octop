@@ -4,52 +4,43 @@ import path from "node:path";
 import { createPrivateKey, createPublicKey, generateKeyPair, sign, type KeyObject } from "node:crypto";
 import { promisify } from "node:util";
 import { bytes, IdentityError, ownerIndex, publicKid, sha256 } from "./core.js";
+import { protectionPolicy } from "./permissions.js";
 import type { AgentKeyOwner, AgentKeyStore, PublicAgentKey, RsaPublicJwk, RsaSigner } from "./types.js";
 
 const generate = promisify(generateKeyPair);
 const missing = (e: unknown) => (e as NodeJS.ErrnoException).code === "ENOENT";
-function posix() {
-  if (process.platform === "win32") throw new IdentityError("KEY_UNAVAILABLE", "File KeyStore requires POSIX permissions; use an ACL-aware custom Provider on Windows");
-}
+const protection = protectionPolicy();
 export function outside(workspace: string, filename: string): boolean {
   const relative = path.relative(workspace, filename);
   return relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
 }
-async function protectedParents(directory: string) {
-  posix();
-  for (let current = directory; ; current = path.dirname(current)) {
-    const info = await lstat(current);
-    if (!info.isDirectory() || info.isSymbolicLink() || (info.uid !== 0 && info.uid !== process.getuid?.())
-      || ((info.mode & 0o022) !== 0 && !((info.mode & 0o1000) !== 0 && info.uid === 0))) {
-      throw new IdentityError("KEY_UNAVAILABLE", "Identity parent directories must not be writable by other users");
-    }
-    if (path.dirname(current) === current) break;
-  }
-}
 export async function readProtectedFile(filename: string, workspace?: string): Promise<string> {
-  posix();
   if (!path.isAbsolute(filename)) throw new IdentityError("KEY_UNAVAILABLE", "Identity paths must be absolute");
-  await protectedParents(path.dirname(filename));
+  await protection.verifyParents(path.dirname(filename));
   if (workspace && !outside(await realpath(workspace), await realpath(filename))) throw new IdentityError("KEY_UNAVAILABLE", "Identity material must be outside the Agent workspace");
+  await protection.verifyFile(filename);
   const file = await open(filename, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const info = await file.stat();
-    if (!info.isFile() || info.uid !== process.getuid?.() || (info.mode & 0o077) !== 0 || info.size > 1048576) {
-      throw new IdentityError("KEY_UNAVAILABLE", "Identity files must be owner-only regular files (0600)");
-    }
+    if (info.size > 1048576) throw new IdentityError("KEY_UNAVAILABLE", "Identity files must be owner-only regular files (0600)");
+    protection.verifyHandle(info);
     return await file.readFile("utf8");
   } finally { await file.close(); }
 }
 async function durableCreate(filename: string, contents: string) {
   const file = await open(filename, "wx", 0o600);
-  try { await file.writeFile(contents); await file.sync(); } finally { await file.close(); }
+  try {
+    // Protect before any byte is written: POSIX modes apply on create, Windows
+    // needs an explicit ACL while the file is still empty.
+    await protection.harden(filename, "file");
+    await file.writeFile(contents); await file.sync();
+  } finally { await file.close(); }
 }
 async function atomicWrite(filename: string, contents: string) {
   const temporary = `${filename}.${crypto.randomUUID()}.tmp`;
   try {
     await durableCreate(temporary, contents); await rename(temporary, filename);
-    const directory = await open(path.dirname(filename), "r");
-    try { await directory.sync(); } finally { await directory.close(); }
+    await protection.syncDirectory(path.dirname(filename));
   } finally { await unlink(temporary).catch(e => { if (!missing(e)) throw e; }); }
 }
 export async function publicJwk(key: KeyObject): Promise<RsaPublicJwk> {
@@ -65,12 +56,13 @@ type Manifest = { format: 1; owner: AgentKeyOwner; activeKid?: string; keys: Ver
 export class NodeFileKeyStore implements AgentKeyStore {
   private constructor(readonly root: string) { }
   static async open(root: string, workspace?: string) {
-    posix();
     if (!path.isAbsolute(root)) throw new IdentityError("KEY_UNAVAILABLE", "KeyStore root must be absolute");
     await mkdir(root, { recursive: true, mode: 0o700 });
-    await protectedParents(root);
+    await protection.harden(root, "directory");
+    await protection.verifyParents(root);
     const actual = await realpath(root), info = await lstat(root);
-    if (info.uid !== process.getuid?.() || (info.mode & 0o077) !== 0 || info.isSymbolicLink()) throw new IdentityError("KEY_UNAVAILABLE", "KeyStore directory must be owned by this account with 0700 permissions");
+    if (info.isSymbolicLink()) throw new IdentityError("KEY_UNAVAILABLE", "KeyStore directory must be owned by this account with 0700 permissions");
+    await protection.verifyDirectory(actual);
     if (workspace && !outside(await realpath(workspace), actual)) throw new IdentityError("KEY_UNAVAILABLE", "KeyStore must be outside the Agent workspace");
     return new NodeFileKeyStore(actual);
   }
@@ -105,6 +97,7 @@ export class NodeFileKeyStore implements AgentKeyStore {
   async initialize(owner: AgentKeyOwner): Promise<PublicAgentKey> {
     const directory = await this.directory(owner);
     await mkdir(directory, { mode: 0o700 }).catch(e => { if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e; });
+    await protection.harden(directory, "directory");
     return this.withLock(directory, async () => {
       try {
         const manifest = await this.manifest(owner);
@@ -125,6 +118,7 @@ export class NodeFileKeyStore implements AgentKeyStore {
     const pair = await generate("rsa", { modulusLength: 3072, publicExponent: 65537 });
     const jwk = await publicJwk(pair.privateKey), directory = await this.directory(owner);
     const keyDirectory = path.join(directory, jwk.kid); await mkdir(keyDirectory, { mode: 0o700 });
+    await protection.harden(keyDirectory, "directory");
     await durableCreate(path.join(keyDirectory, "private.pem"), pair.privateKey.export({ format: "pem", type: "pkcs8" }).toString());
     await durableCreate(path.join(keyDirectory, "public.json"), JSON.stringify(jwk));
     const version: Version = { kid: jwk.kid, state: "PENDING_REGISTRATION", createdAt: new Date().toISOString() }; manifest.keys.push(version);

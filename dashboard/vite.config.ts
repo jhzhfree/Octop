@@ -63,7 +63,10 @@ export default defineConfig(({ mode }) => {
   const analyze = env.ANALYZE === "true";
   // Dev server defaults to Vite's :5173. Override with VITE_DEV_PORT (e.g. 80
   // for LAN / same-origin setups). Must stay in sync with server.hmr.clientPort.
-  const devServerPort = Number(process.env.VITE_DEV_PORT || 5173);
+  // Read from .env* too, so a machine can pin its own port without a script.
+  const devServerPort = Number(
+    process.env.VITE_DEV_PORT || env.VITE_DEV_PORT || 5173,
+  );
 
   // Conditionally load the visualizer plugin (sync require to avoid async issues)
   const extraPlugins: Plugin[] = [];

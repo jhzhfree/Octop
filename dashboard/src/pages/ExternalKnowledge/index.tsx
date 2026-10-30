@@ -39,6 +39,7 @@ import {
 } from "@/api/modules/externalKnowledge";
 import { useIsMobile } from "../../hooks/useIsMobile";
 import PageShell from "../../layouts/PageShell";
+import { useAgent, type OctopAgent } from "../../context/AgentContext";
 import styles from "./index.module.less";
 import AgentIdentityDrawer from "./AgentIdentityDrawer";
 
@@ -69,6 +70,16 @@ interface SourceFormValues {
   shared: boolean;
 }
 
+/** Bindings store raw ids; resolve an agent id back to a readable label. */
+function targetLabel(
+  binding: { target_type: string; target_id: string },
+  agents: OctopAgent[],
+): string {
+  if (binding.target_type !== "agent") return binding.target_id;
+  const match = agents.find((agent) => agent.agent_id === binding.target_id);
+  return match ? `${match.name} · ${binding.target_id}` : binding.target_id;
+}
+
 function scoreColor(score: number): string {
   if (score >= 0.7) return "green";
   if (score >= 0.4) return "gold";
@@ -92,6 +103,7 @@ export default function ExternalKnowledgePage() {
   const [refs, setRefs] = useState<{ ref: string; name: string }[]>([]);
   const [refsLoading, setRefsLoading] = useState(false);
   const insecureHttp = Form.useWatch("allow_insecure_http", form);
+  const formKind = Form.useWatch("kind", form);
 
   const [testing, setTesting] = useState<ExternalKnowledgeSource | null>(null);
   const [testQuery, setTestQuery] = useState("");
@@ -102,6 +114,8 @@ export default function ExternalKnowledgePage() {
     useState<ExternalKnowledgeSource | null>(null);
   const [bindType, setBindType] = useState<string>("agent");
   const [bindTarget, setBindTarget] = useState("");
+  // Agents the current user can see; the binding target must be one of them.
+  const { agents } = useAgent();
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -572,14 +586,36 @@ export default function ExternalKnowledgePage() {
           <Segmented
             block
             value={bindType}
-            onChange={(value) => setBindType(String(value))}
+            onChange={(value) => {
+              // The two target types hold different id shapes, so a value
+              // picked for one cannot carry over to the other.
+              setBindType(String(value));
+              setBindTarget("");
+            }}
             options={TARGET_TYPES}
           />
-          <Input
-            value={bindTarget}
-            onChange={(event) => setBindTarget(event.target.value)}
-            placeholder={t("externalKnowledge.targetPlaceholder")}
-          />
+          {bindType === "agent" ? (
+            <Select
+              style={{ width: "100%" }}
+              showSearch
+              allowClear
+              value={bindTarget || undefined}
+              onChange={(value) => setBindTarget(value ?? "")}
+              optionFilterProp="label"
+              options={agents.map((agent) => ({
+                value: agent.agent_id,
+                label: `${agent.name} · ${agent.agent_id}`,
+              }))}
+              placeholder={t("externalKnowledge.selectAgent")}
+              notFoundContent={t("externalKnowledge.noAgents")}
+            />
+          ) : (
+            <Input
+              value={bindTarget}
+              onChange={(event) => setBindTarget(event.target.value)}
+              placeholder={t("externalKnowledge.targetPlaceholder")}
+            />
+          )}
           <Button type="primary" block onClick={() => void submitBinding()}>
             {t("externalKnowledge.bind")}
           </Button>
@@ -599,7 +635,7 @@ export default function ExternalKnowledgePage() {
                   className={styles.bindingRow}
                 >
                   <span className={styles.bindingText}>
-                    {binding.target_type}: {binding.target_id}
+                    {binding.target_type}: {targetLabel(binding, agents)}
                   </span>
                   <Button
                     size="small"
@@ -729,11 +765,19 @@ export default function ExternalKnowledgePage() {
             name="endpoint"
             label={t("externalKnowledge.endpoint")}
             rules={[{ required: true }]}
-            extra={t("externalKnowledge.endpointHint")}
+            extra={
+              formKind === "standard-retrieval"
+                ? t("externalKnowledge.endpointHintFull")
+                : t("externalKnowledge.endpointHintRoot")
+            }
           >
             <Input
               disabled={editing?.identity_mode === "AGENT_KEY_RS256_V2"}
-              placeholder="https://akb.example.com"
+              placeholder={
+                formKind === "standard-retrieval"
+                  ? "https://akb.example.com/api/v1/external/kb/retrievals"
+                  : "https://akb.example.com"
+              }
             />
           </Form.Item>
           <Form.Item name="api_key" label={t("externalKnowledge.apiKey")}>

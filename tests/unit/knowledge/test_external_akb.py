@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from typing import Any
 
 import jwt
@@ -12,6 +13,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from jwt.algorithms import RSAAlgorithm
 
 from octop.infra.knowledge.akb_identity import OctopIdentity, issue_assertion, jwks_document
+from octop.infra.knowledge.external import http
 from octop.infra.knowledge.external.adapters import akb_mcp, akb_rest
 from octop.infra.knowledge.external.types import ExternalSourceError, ExternalSourceSpec
 
@@ -218,3 +220,117 @@ async def test_akb_mcp_signs_a_fresh_assertion_per_request(
         for token in seen
     ]
     assert all(jtis) and jtis[0] != jtis[1]
+
+
+def test_akb_rest_accepts_a_pasted_retrieval_url() -> None:
+    """Pasting the whole retrieval URL must not produce a doubled path."""
+    pasted = _spec(
+        endpoint="http://192.168.24.201:8088/api/v1/external/kb/retrievals",
+        allow_insecure_http=True,
+    )
+    assert akb_rest._url(pasted) == "http://192.168.24.201:8088/api/v1/external/kb/retrievals"
+    # The listing call is rebuilt off the same origin, not off the pasted path.
+    assert akb_rest._base_url(pasted) == "http://192.168.24.201:8088"
+
+
+def test_akb_rest_keeps_a_gateway_prefix() -> None:
+    gateway = _spec(endpoint="https://gw.example.com/knowledgeos")
+    assert (
+        akb_rest._url(gateway) == "https://gw.example.com/knowledgeos/api/v1/external/kb/retrievals"
+    )
+
+
+def test_akb_mcp_accepts_a_pasted_endpoint() -> None:
+    pasted = _spec(
+        kind="akb-mcp", endpoint="http://akb.internal:8088/api/mcp", allow_insecure_http=True
+    )
+    assert akb_mcp._url(pasted) == "http://akb.internal:8088/api/mcp"
+    gateway = _spec(kind="akb-mcp", endpoint="https://gw.example.com/gw")
+    assert akb_mcp._url(gateway) == "https://gw.example.com/gw/api/mcp"
+
+
+@pytest.mark.asyncio
+async def test_akb_rest_search_does_not_double_the_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    urls: list[str] = []
+
+    async def fake_post_json(url: str, **kwargs: Any) -> Any:
+        urls.append(url)
+        return {"chunks": []}
+
+    monkeypatch.setattr(akb_rest, "post_json", fake_post_json)
+    pasted = _spec(
+        endpoint="http://192.168.24.201:8088/api/v1/external/kb/retrievals",
+        allow_insecure_http=True,
+    )
+    await akb_rest.search(pasted, {"api_key": "k"}, "q", top_k=1)
+    assert urls == ["http://192.168.24.201:8088/api/v1/external/kb/retrievals"]
+
+
+@pytest.mark.asyncio
+async def test_akb_rest_probe_blames_the_endpoint_when_both_paths_miss(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A doubled prefix (endpoint already carrying /api/v1/external) makes every
+    # AKB path miss; reporting a bare 404 reads like a missing knowledge base.
+    async def fake_get_json(url: str, **kwargs: Any) -> Any:
+        raise ExternalSourceError("NOT_FOUND", "upstream returned HTTP 404", origin="akb-rest")
+
+    async def fake_post_json(url: str, **kwargs: Any) -> Any:
+        raise ExternalSourceError("NOT_FOUND", "upstream returned HTTP 404", origin="akb-rest")
+
+    monkeypatch.setattr(akb_rest, "get_json", fake_get_json)
+    monkeypatch.setattr(akb_rest, "post_json", fake_post_json)
+    with pytest.raises(ExternalSourceError) as excinfo:
+        await akb_rest.probe(_spec(), {"api_key": "k"})
+    assert excinfo.value.code == "NOT_FOUND"
+    assert "no path" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_akb_rest_probe_keeps_a_search_only_404(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Listing works, so the endpoint is right: here the 404 really is about the
+    # requested base and must not be relabelled as an endpoint mistake.
+    async def fake_get_json(url: str, **kwargs: Any) -> Any:
+        return {"data": [{"id": 7, "baseCode": "HR-POLICY", "name": "人事制度"}]}
+
+    async def fake_post_json(url: str, **kwargs: Any) -> Any:
+        raise ExternalSourceError("NOT_FOUND", "upstream returned HTTP 404", origin="akb-rest")
+
+    monkeypatch.setattr(akb_rest, "get_json", fake_get_json)
+    monkeypatch.setattr(akb_rest, "post_json", fake_post_json)
+    with pytest.raises(ExternalSourceError) as excinfo:
+        await akb_rest.probe(_spec(), {"api_key": "k"})
+    assert excinfo.value.code == "NOT_FOUND"
+    assert "upstream returned HTTP 404" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_http_rejection_names_the_requested_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FakeResponse:
+        status_code = 404
+        content = b"{}"
+
+    class _FakeClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None: ...
+
+        async def __aenter__(self) -> _FakeClient:
+            return self
+
+        async def __aexit__(self, *args: Any) -> bool:
+            return False
+
+        async def request(self, method: str, url: str, **kwargs: Any) -> _FakeResponse:
+            return _FakeResponse()
+
+    monkeypatch.setattr(http, "httpx", SimpleNamespace(AsyncClient=_FakeClient))
+    with pytest.raises(ExternalSourceError) as excinfo:
+        await http.post_json(
+            "https://akb.example.com/api/v1/external/api/v1/external/kb/retrievals",
+            headers={},
+            payload={"question": "q"},
+            timeout_seconds=1,
+            origin="akb-rest",
+        )
+    assert "/api/v1/external/api/v1/external/kb/retrievals" in str(excinfo.value)

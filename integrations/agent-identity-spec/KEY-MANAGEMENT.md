@@ -1,6 +1,6 @@
 # 稳定模块：Agent 密钥管理规范
 
-状态：V2 已实现，见相邻 agent-identity-sdk。默认文件 Provider 为 POSIX；Windows 必须另行实现 ACL-aware Provider。模块独立于 OpenCode、AKB HTTP、MCP 和模型供应商。
+状态：V2 已实现，见相邻 agent-identity-sdk。默认文件 Provider 在 POSIX 使用属主与权限位校验，在 Windows 使用 ACL 收紧为仅当前账户；其他平台需注入自定义 Provider。模块独立于 OpenCode、AKB HTTP、MCP 和模型供应商。
 
 ## 1. 模块边界
 
@@ -57,7 +57,7 @@ kid = RFC7638 公钥 SHA-256 指纹，与密钥版本有关
     keys/<kid>/metadata.json
 ```
 
-索引由 Provider 安全编码，不将未经校验的 Agent 名或路径直接拼入磁盘路径。敏感目录 POSIX 0700、文件 0600，父目录不可被工作区用户写入；Windows 必须使用当前运行账户 ACL，不能只调用 chmod。
+索引由 Provider 安全编码，不将未经校验的 Agent 名或路径直接拼入磁盘路径。敏感目录 POSIX 0700、文件 0600，父目录不可被工作区用户写入；Windows 必须使用当前运行账户 ACL（icacls 收紧为仅当前账户），不能只调用 chmod。
 
 初始化必须持有 Owner 范围跨进程互斥锁，并采用独占创建。写入临时文件后 flush/fsync，再原子更新 manifest；不覆盖既有私钥。读取使用安全打开及文件句柄属性校验，限制符号链接和父目录替换，不能只用一次 stat 后再按路径读取。
 

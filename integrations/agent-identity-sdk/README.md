@@ -53,7 +53,7 @@ const result = await runtime.invoke(host, { operation: "search", query: args.que
 
 ## 初始化和登记
 
-复制 config.example.json，所有占位 ID 需由管理员登记实际值。当前文件 Provider 仅支持 POSIX：目录 0700、文件 0600、当前运行账户所有、不可被其他账户写入的父目录，配置和密钥位于 Agent 工作区之外。Windows 必须实现并注入 ACL/Keychain Provider，默认 Provider 会明确拒绝运行。
+复制 config.example.json，所有占位 ID 需由管理员登记实际值。文件 Provider 在 POSIX 使用目录 0700、文件 0600、当前运行账户所有、不可被其他账户写入的父目录；在 Windows 使用 icacls 把目录和文件收紧为仅当前账户（含其登录会话与 SYSTEM）的 ACL。配置和密钥均位于 Agent 工作区之外；不支持 ACL 的文件系统会明确拒绝运行。
 
 ```sh
 # 以下目录与描述文件应由部署管理员创建并保护。

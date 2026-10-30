@@ -11,7 +11,12 @@ from __future__ import annotations
 from typing import Any
 
 from octop.infra.knowledge.akb_identity import OctopIdentity, issue_assertion
-from octop.infra.knowledge.external.http import get_json, post_json, validate_endpoint
+from octop.infra.knowledge.external.http import (
+    drop_api_prefix,
+    get_json,
+    post_json,
+    validate_endpoint,
+)
 from octop.infra.knowledge.external.normalize import (
     extract_items,
     filter_chunks,
@@ -26,6 +31,9 @@ from octop.infra.knowledge.external.types import (
 )
 
 ORIGIN = "akb-rest"
+# Everything under this root is owned by the adapter; an endpoint ending in it
+# already holds the full retrieval URL.
+_API_PREFIX = "/api/v1/external"
 
 # AKB answers rejections with both an HTTP status and a structured body code;
 # the body wins so "no scope" and "unknown base" stay distinguishable.
@@ -46,7 +54,10 @@ _STATUS_MAP: dict[int, str] = {
 
 
 def _base_url(spec: ExternalSourceSpec) -> str:
-    return validate_endpoint(spec.endpoint, allow_insecure_http=spec.allow_insecure_http)
+    return drop_api_prefix(
+        validate_endpoint(spec.endpoint, allow_insecure_http=spec.allow_insecure_http),
+        _API_PREFIX,
+    )
 
 
 def _url(spec: ExternalSourceSpec) -> str:
@@ -128,10 +139,12 @@ async def list_refs(spec: ExternalSourceSpec, creds: dict[str, Any]) -> list[dic
 async def probe(spec: ExternalSourceSpec, creds: dict[str, Any]) -> SourceProbeResult:
     # Listing needs the LIST scope; a key that may only search still works, so a
     # failed listing must never fail the probe.
+    listing_error: ExternalSourceError | None = None
     try:
         refs = await list_refs(spec, creds)
-    except ExternalSourceError:
+    except ExternalSourceError as exc:
         refs = []
+        listing_error = exc
     if not spec.ref:
         if not refs:
             raise ExternalSourceError(
@@ -144,5 +157,20 @@ async def probe(spec: ExternalSourceSpec, creds: dict[str, Any]) -> SourceProbeR
             message="AKB reachable; pick one of the listed knowledge bases",
             refs=refs,
         )
-    await search(spec, creds, "connectivity probe", top_k=1)
+    try:
+        await search(spec, creds, "connectivity probe", top_k=1)
+    except ExternalSourceError as exc:
+        # Both AKB paths missing is almost never a knowledge base that does not
+        # exist — the request never reached AKB. Say so instead of echoing an
+        # opaque 404 that reads like a missing base.
+        both_missing = exc.code == "NOT_FOUND" and (
+            listing_error is not None and listing_error.code == "NOT_FOUND"
+        )
+        if both_missing:
+            raise ExternalSourceError(
+                exc.code,
+                "no AKB endpoints answered under /api/v1/external: the endpoint must be scheme://host:port with no path",
+                origin=ORIGIN,
+            ) from exc
+        raise
     return SourceProbeResult(ok=True, message="AKB retrieval endpoint reachable", refs=refs)

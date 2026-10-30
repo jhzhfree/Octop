@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, rm, chmod, readdir } from "node:fs/promises";
+import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createServer } from "node:http";
@@ -13,6 +14,7 @@ import { ownerOf, ownerIndex, bytes, sha256, publicKid } from "../dist/core.js";
 import { proveRegistration } from "../dist/registration.js";
 
 const posixTest = process.platform === "win32" ? test.skip : test;
+const windowsTest = process.platform === "win32" ? test : test.skip;
 const ids = ["e21cce9c-1b16-4ab8-a76a-bb761df919b8", "01965897-0976-471c-8d64-27eb682a227b"];
 const owner = id => ({ platformId: "test-platform", installationId: "install", workspaceId: "workspace", externalAgentId: id });
 const signal = () => new AbortController().signal;
@@ -62,7 +64,7 @@ async function fixture(transport = "mcp") {
     async close() { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await rm(root, { recursive: true, force: true }); assert.deepEqual(errors, []); } };
 }
 
-posixTest("independent platform adapter: concurrent Agents share one credential and keep separate keys and identity", async () => {
+test("independent platform adapter: concurrent Agents share one credential and keep separate keys and identity", async () => {
   const f = await fixture();
   try {
     const runtime = createRuntime(f.dependencies);
@@ -79,7 +81,7 @@ posixTest("independent platform adapter: concurrent Agents share one credential 
     }
   } finally { await f.close(); }
 });
-posixTest("denial, cancellation, unknown identity and workspace mismatch send no requests", async () => {
+test("denial, cancellation, unknown identity and workspace mismatch send no requests", async () => {
   const f = await fixture();
   try {
     const runtime = createRuntime(f.dependencies);
@@ -92,7 +94,7 @@ posixTest("denial, cancellation, unknown identity and workspace mismatch send no
     assert.equal(approvals, 1); assert.equal(f.calls.length, 0);
   } finally { await f.close(); }
 });
-posixTest("REST signs discovery and data; mismatched base references are rejected", async () => {
+test("REST signs discovery and data; mismatched base references are rejected", async () => {
   const f = await fixture("rest");
   try {
     const runtime = createRuntime(f.dependencies);
@@ -102,7 +104,7 @@ posixTest("REST signs discovery and data; mismatched base references are rejecte
     await assert.rejects(runtime.invoke(f.context("build"), { operation: "search", query: "x", knowledgeBaseCode: "PRIVATE-0", knowledgeBaseId: 99 }), /mismatched/);
   } finally { await f.close(); }
 });
-posixTest("a valid A signature cannot be used for B with the same service credential", async () => {
+test("a valid A signature cannot be used for B with the same service credential", async () => {
   const f = await fixture();
   try {
     const client = new AkbKnowledgeClient(f.dependencies.credentials, f.dependencies.origin, "mcp", 15000, true);
@@ -111,7 +113,7 @@ posixTest("a valid A signature cannot be used for B with the same service creden
     assert.equal(f.calls.length, 0);
   } finally { await f.close(); }
 });
-posixTest("initialization is exclusive, restart-stable, and rotation preserves the old key until selection", async () => {
+test("initialization is exclusive, restart-stable, and rotation preserves the old key until selection", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "akb-key-lifecycle-"));
   try {
     const store = await NodeFileKeyStore.open(path.join(root, "keys"));
@@ -133,17 +135,31 @@ posixTest("initialization is exclusive, restart-stable, and rotation preserves t
     assert.equal((await readdir(directory)).filter(n => /^[A-Za-z0-9_-]{43}$/.test(n)).length, 2, "missing key is not regenerated");
   } finally { await rm(root, { recursive: true, force: true }); }
 });
-posixTest("unsafe permissions and workspace key stores fail closed", async () => {
+test("a key store inside the Agent workspace fails closed", async () => {
   const f = await fixture();
   try {
     await assert.rejects(NodeFileKeyStore.open(path.join(f.workspace, "keys"), f.workspace), /outside/);
+  } finally { await f.close(); }
+});
+posixTest("a private key left readable by other accounts is refused", async () => {
+  const f = await fixture();
+  try {
     const directory = path.join(f.root, "keys", await sha256(bytes(ownerIndex(owner(ids[0])))));
-    const filename = path.join(directory, f.keys[0].kid, "private.pem");
-    await chmod(filename, 0o644);
+    await chmod(path.join(directory, f.keys[0].kid, "private.pem"), 0o644);
     await assert.rejects(f.store.openActiveSigner(owner(ids[0])), /owner-only/);
   } finally { await f.close(); }
 });
-posixTest("registration proof binds purpose, challenge, Agent and key; mismatches are not signed", async () => {
+windowsTest("a private key whose ACL grants another account is refused", async () => {
+  const f = await fixture();
+  try {
+    const directory = path.join(f.root, "keys", await sha256(bytes(ownerIndex(owner(ids[0])))));
+    const filename = path.join(directory, f.keys[0].kid, "private.pem");
+    await new Promise((resolve, reject) =>
+      execFile("icacls", [filename, "/grant", "Everyone:(R)", "/Q"], error => error ? reject(error) : resolve()));
+    await assert.rejects(f.store.openActiveSigner(owner(ids[0])), /owner-only/);
+  } finally { await f.close(); }
+});
+test("registration proof binds purpose, challenge, Agent and key; mismatches are not signed", async () => {
   const f = await fixture();
   try {
     const signer = await f.store.openActiveSigner(owner(ids[0]));

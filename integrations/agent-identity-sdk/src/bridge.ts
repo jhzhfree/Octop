@@ -2,6 +2,7 @@
 /** Trusted host IPC, not a model tool or network listener. Secrets travel through stdin only. */
 import { NodeFileKeyStore } from "./keystore-node.js";
 import { IdentityError, ownerIndex, type Invocation } from "./core.js";
+import { protectionSupported } from "./permissions.js";
 import { proveRegistration, type RegistrationChallenge } from "./registration.js";
 import { AkbKnowledgeClient } from "./client.js";
 import type { AgentBinding, AgentKeyOwner, KnowledgeRequest } from "./types.js";
@@ -22,7 +23,7 @@ interface HostRequest {
   request: KnowledgeRequest;
 }
 async function run(input: HostRequest): Promise<unknown> {
-  if (input.op === "capabilities") return { version: "0.3.2", supported: process.platform !== "win32" && Number(process.versions.node.split(".")[0]) >= 22 };
+  if (input.op === "capabilities") return { version: "0.3.2", supported: Number(process.versions.node.split(".")[0]) >= 22 && protectionSupported() };
   if (Number(process.versions.node.split(".")[0]) < 22) throw new IdentityError("PROTOCOL_UNSUPPORTED", "Node 22 or later is required");
   ownerIndex(input.owner);
   const store = await NodeFileKeyStore.open(input.root);

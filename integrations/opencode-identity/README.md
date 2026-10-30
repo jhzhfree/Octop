@@ -1,6 +1,6 @@
 # OpenCode Agent 身份插件 0.2.1
 
-适用于 **OpenCode 1.14.30、Node.js 22+、POSIX 宿主**，配套通用 SDK **0.3.2** 和支持 AKB V75 的服务端。其他 OpenCode 版本尚未核验；默认 V2 文件密钥 Provider 不支持 Windows。
+适用于 **OpenCode 1.14.30、Node.js 22+**，配套通用 SDK **0.3.2** 和支持 AKB V75 的服务端。其他 OpenCode 版本尚未核验。文件密钥 Provider 在 POSIX 使用权限位、在 Windows 使用 ACL 收紧为仅当前账户，因此宿主需使用 NTFS 等支持 ACL 的卷。
 
 两个 Agent 共用一个 AKB Service Key，分别使用自己的私钥和稳定 UUID。模型只填写检索问题等业务参数，插件从 OpenCode 的真实工具执行上下文获取运行 Agent，并通过通用 SDK 调用 AKB 的 MCP / REST。
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
@@ -77,6 +77,35 @@ def _error_code(
     return "UPSTREAM_REJECTED"
 
 
+def drop_api_prefix(url: str, prefix: str) -> str:
+    """Remove an adapter-owned API prefix that was pasted into the endpoint.
+
+    Adapters append their own path to the configured endpoint, so an endpoint
+    holding the full retrieval URL yields a doubled path
+    (``/api/v1/external/kb/retrievals/api/v1/external/kb/retrievals``) and a
+    404 no amount of debugging on the upstream explains. Only that exact
+    prefix is dropped: a gateway prefix stays, so proxied deployments keep
+    working.
+    """
+    parts = urlsplit(url)
+    path = parts.path.rstrip("/")
+    if path == prefix or path.startswith(prefix + "/"):
+        return urlunsplit((parts.scheme, parts.netloc, "", "", ""))
+    return url.rstrip("/")
+
+
+def _public_target(url: str) -> str:
+    """Scheme, host and path of an outbound request — never query, body or headers.
+
+    A bare "upstream returned HTTP 404" cannot be acted on: surfacing the
+    target lets an operator spot both mistakes at once — an endpoint that
+    already carries a prefix (``/api/v1/external/api/v1/external/...``) and an
+    endpoint pointing at the wrong service entirely.
+    """
+    parts = urlsplit(url)
+    return f"{parts.scheme}://{parts.netloc}{parts.path or '/'}"
+
+
 async def _request(
     method: str,
     url: str,
@@ -110,7 +139,7 @@ async def _request(
         # The status is safe to surface; upstream messages are not.
         raise ExternalSourceError(
             _error_code(body, response.status_code, status_map=status_map, code_map=code_map),
-            f"upstream returned HTTP {response.status_code}",
+            f"upstream returned HTTP {response.status_code} at {_public_target(url)}",
             origin=origin,
         )
     if body is None:

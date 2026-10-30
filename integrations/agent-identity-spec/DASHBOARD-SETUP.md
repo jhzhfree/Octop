@@ -20,7 +20,7 @@ Octop 页面配置完成后还要把知识源分配给 Agent：点击来源行�
 
 Octop 页面复用 `@akb/agent-identity-sdk` 0.3.2，通过受信宿主的 stdin/stdout IPC 使用同一套密钥存储、登记证明和请求签名。没有额外网络监听端口，没有浏览器私钥，也没有第二套 Python 签名实现。
 
-宿主需要 Node.js 22+。默认 Node 文件密钥 Provider 只支持 POSIX；Windows 需要实现带 ACL 的 Provider，页面会显示组件不可用。
+宿主需要 Node.js 22+。文件密钥 Provider 在 POSIX 使用属主校验与目录 0700 / 文件 0600，在 Windows 使用 icacls 把密钥收紧为仅当前账户的 ACL，两者等价。密钥目录必须位于支持 ACL 的 NTFS 卷上；网络共享或不支持 ACL 的可移动盘无法收紧，页面会显示组件不可用。
 
 从源码运行：
 
