@@ -4,7 +4,7 @@
 
 ## 安装宿主组件
 
-Octop 页面复用 `@akb/agent-identity-sdk` 0.3.1，通过受信宿主的 stdin/stdout IPC 使用同一套密钥存储、登记证明和请求签名。没有额外网络监听端口，没有浏览器私钥，也没有第二套 Python 签名实现。
+Octop 页面复用 `@akb/agent-identity-sdk` 0.3.2，通过受信宿主的 stdin/stdout IPC 使用同一套密钥存储、登记证明和请求签名。没有额外网络监听端口，没有浏览器私钥，也没有第二套 Python 签名实现。
 
 宿主需要 Node.js 22+。默认 Node 文件密钥 Provider 只支持 POSIX；Windows 需要实现带 ACL 的 Provider，页面会显示组件不可用。
 
@@ -19,10 +19,10 @@ npm run build
 Octop 自动寻找源码目录下的 `integrations/agent-identity-sdk/dist/bridge.js`。安装 Python wheel 的宿主应先在独立目录从本仓库打包 / 安装 SDK，然后配置服务环境：
 
 ```sh
-# 在 SDK 源码目录生成 akb-agent-identity-sdk-0.3.1.tgz
+# 在 SDK 源码目录生成 akb-agent-identity-sdk-0.3.2.tgz
 npm pack
 # 在宿主独立目录安装该本地包（尚未发布到 npm registry）
-npm install /path/to/akb-agent-identity-sdk-0.3.1.tgz
+npm install /path/to/akb-agent-identity-sdk-0.3.2.tgz
 export OCTOP_AGENT_IDENTITY_SDK_BRIDGE=/absolute/host/node_modules/@akb/agent-identity-sdk/dist/bridge.js
 ```
 
@@ -62,7 +62,7 @@ AKB 提供平台无关管理页：OpenCode 和其他平台的公钥包也可以�
 
 无需手工抄写应用 ID、策略 ID、安装实例或工作区：
 
-1. Octop 知识源的“Agent 身份接入”中点击 **下载 AKB 接入信息**。OpenCode / 其他使用 SDK 的平台可运行 `akb-agent-identity setup export /absolute/path/identity.json > akb-setup.json`（SDK 0.3.1+）。此命令只导出 V2 配置中的公开平台参数，不要求已绑定 Agent，也不会输出服务 Key、私钥或文件路径。配置文件本身仍需满足宿主文件保护要求。
+1. Octop 知识源的“Agent 身份接入”中点击 **下载 AKB 接入信息**。OpenCode / 其他使用 SDK 的平台可运行 `akb-agent-identity setup export /absolute/path/identity.json > akb-setup.json`（SDK 0.3.2+）。此命令只导出 V2 配置中的公开平台参数，不要求已绑定 Agent，也不会输出服务 Key、私钥或文件路径。配置文件本身仍需满足宿主文件保护要求。
 2. AKB 点击 **连接新平台**，选择平台并导入接入信息包。向导会校验地址格式及平台标识，提示缺失字段的来源；为连接填写一个易懂的名字即可新建应用，也可显式选择已有应用。
 3. 核对摘要并创建连接。按页面四步指引选择应用可读知识库、添加 Agent 并登记公钥。未授权时页面会明确提示尚不能读取知识。
 4. AKB 点击 **下载平台连接配置**，在 Octop 导入，应用 / 策略 ID、签发者和受众自动填入高级参数。不同平台、安装实例、工作区或 AKB 地址的文件会被拒绝；导入不会自动保存、自动更换认证模式或授予权限。另行填写共享服务 Key 后保存。

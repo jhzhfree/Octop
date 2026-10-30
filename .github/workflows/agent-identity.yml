@@ -20,3 +20,12 @@ jobs:
         working-directory: integrations/opencode-identity
       - run: node verify-design.mjs
         working-directory: integrations/agent-identity-spec
+      - run: node test-packages.mjs "$(realpath ../agent-identity-sdk/akb-agent-identity-sdk-*.tgz)" "$(realpath ../opencode-identity/akb-opencode-identity-*.tgz)"
+        working-directory: integrations/agent-identity-spec
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent-identity-packages
+          if-no-files-found: error
+          path: |
+            integrations/agent-identity-sdk/akb-agent-identity-sdk-*.tgz
+            integrations/opencode-identity/akb-opencode-identity-*.tgz

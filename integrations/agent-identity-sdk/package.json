@@ -1,6 +1,7 @@
 {
   "name": "@akb/agent-identity-sdk",
-  "version": "0.3.1",
+  "version": "0.3.2",
+  "license": "MIT",
   "description": "Platform independent Agent identity, protected per-Agent keys and AKB request proofs",
   "type": "module",
   "exports": {
@@ -13,7 +14,7 @@
     "./node": { "types": "./dist/node.d.ts", "default": "./dist/node.js" }
   },
   "bin": { "akb-agent-identity": "dist/cli.js", "akb-agent-identity-bridge": "dist/bridge.js" },
-  "files": ["dist", "README.md", "config.example.json"],
+  "files": ["dist", "README.md", "config.example.json", "config.bootstrap.example.json", "LICENSE"],
   "scripts": { "build": "tsc -p tsconfig.json", "test": "npm run build && node --test test/*.test.mjs", "test:live": "npm run build && node test/live.mjs", "prepack": "npm run build" },
   "engines": { "node": ">=22" },
   "devDependencies": { "typescript": "5.8.3", "@types/node": "^22.0.0" }

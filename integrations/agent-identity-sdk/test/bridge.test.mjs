@@ -66,3 +66,15 @@ posixTest('setup export emits only public policy inputs, before bindings or keys
   assert.equal(result.code,0,result.err);const value=JSON.parse(result.out);assert.equal(value.format,'akb-platform-setup/v1');assert.equal(value.workspaceId,'source');assert.ok(!result.out.includes('NEVER_EXPORT_THIS'));assert.ok(!result.out.includes('/private'));assert.equal(value.bindings,undefined);assert.equal(value.externalAgentId,undefined);
  }finally{await rm(root,{recursive:true,force:true});}
 });
+
+posixTest('shipped full and bootstrap configurations export correctly; inconsistent bindings are rejected',async()=>{
+ const {writeFile,readFile}=await import('node:fs/promises');const root=await mkdtemp(path.join(tmpdir(),'akb-setup-examples-'));
+ const run=async config=>{const filename=path.join(root,'config.json');await writeFile(filename,JSON.stringify(config),{mode:0o600});return new Promise((resolve,reject)=>{const child=spawn(process.execPath,[new URL('../dist/cli.js',import.meta.url).pathname,'setup','export',filename]);let out='';child.stdout.on('data',c=>out+=c);child.stderr.resume();child.on('error',reject);child.on('close',code=>resolve({code,out}));});};
+ try{
+  for(const name of ['config.example.json','config.bootstrap.example.json']){const config=JSON.parse(await readFile(new URL('../'+name,import.meta.url),'utf8'));const result=await run(config);assert.equal(result.code,0);assert.equal(JSON.parse(result.out).issuer,config.issuer);}
+  const config=JSON.parse(await readFile(new URL('../config.example.json',import.meta.url),'utf8'));
+  delete config.issuer;delete config.audience;assert.equal((await run(config)).code,0,'existing binding-only configurations remain supported');
+  const bad=structuredClone(config);bad.bindings[1].issuer='https://different.example/issuer';assert.equal((await run(bad)).code,1);
+  const conflicting=structuredClone(config);conflicting.audience='other';assert.equal((await run(conflicting)).code,1);
+ }finally{await rm(root,{recursive:true,force:true});}
+});

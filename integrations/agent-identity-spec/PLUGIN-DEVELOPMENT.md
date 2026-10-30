@@ -1,6 +1,6 @@
 # 第三方 Agent 平台插件开发文档
 
-适用：Agent Identity SDK 0.2.0、AKB V75 Agent Proof V2。实现位于相邻 agent-identity-sdk；当前以单包稳定子入口交付，未发布公共 npm，可本地构建 TGZ 安装。OpenCode 插件支持 V1/V2 显式配置。
+适用：Agent Identity SDK 0.3.2、AKB V75 Agent Proof V2。实现位于相邻 agent-identity-sdk；当前以单包稳定子入口交付，未发布公共 npm，可本地构建 TGZ 安装。OpenCode 插件支持 V1/V2 显式配置。
 
 ## 1. 最小交付范围
 

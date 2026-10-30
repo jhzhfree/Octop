@@ -15,11 +15,20 @@ async function main() {
   const [group, command, ...args] = process.argv.slice(2);
   if (group === "setup" && command === "export" && args.length === 1) {
     const config = await json(args[0]);
+    const bindings = config.bindings === undefined ? [] : config.bindings;
+    if (!Array.isArray(bindings)) throw new IdentityError("PROTOCOL_UNSUPPORTED", "Bindings must be an array");
+    const issuerValue = config.issuer ?? bindings[0]?.issuer;
+    const audienceValue = config.audience ?? bindings[0]?.audience;
     if (config.configVersion !== 2 || config.proofProfile !== "AGENT_KEY_RS256_V2" || !identifier(config.platformId) || !identifier(config.installationId) || !identifier(config.workspaceId)
-      || !traceId(config.audience) || typeof config.issuer !== "string" || config.issuer.length > 255) throw new IdentityError("PROTOCOL_UNSUPPORTED", "A V2 configuration with platform, installation, workspace, issuer and audience is required");
-    const issuer = new URL(config.issuer);
+      || !traceId(audienceValue) || audienceValue.trim() !== audienceValue || typeof issuerValue !== "string" || issuerValue.length > 255 || issuerValue.trim() !== issuerValue) throw new IdentityError("PROTOCOL_UNSUPPORTED", "A V2 configuration with platform, installation, workspace, issuer and audience is required");
+    const issuer = new URL(issuerValue), resource = canonicalOrigin(config.origin, config.allowInsecureLoopback === true);
     if (issuer.protocol !== "https:" || issuer.username || issuer.password || issuer.search || issuer.hash) throw new IdentityError("PROTOCOL_UNSUPPORTED", "Issuer must be an HTTPS identity URL");
-    print({format:"akb-platform-setup/v1",proofProfile:"AGENT_KEY_RS256_V2",platformId:config.platformId,installationId:config.installationId,workspaceId:config.workspaceId,issuer:config.issuer,audience:config.audience,resource:canonicalOrigin(config.origin,config.allowInsecureLoopback===true)});
+    if (bindings.some((binding: unknown) => {
+      const b = binding as Partial<AgentBinding> | null;
+      return !b || b.issuer !== issuerValue || b.audience !== audienceValue || b.platformId !== config.platformId
+        || b.installationId !== config.installationId || b.workspaceId !== config.workspaceId || b.resource !== resource;
+    })) throw new IdentityError("PROTOCOL_UNSUPPORTED", "All Agent bindings must match the exported policy settings");
+    print({format:"akb-platform-setup/v1",proofProfile:"AGENT_KEY_RS256_V2",platformId:config.platformId,installationId:config.installationId,workspaceId:config.workspaceId,issuer:issuerValue,audience:audienceValue,resource});
     return;
   }
   if (group === "identity" && command === "create" && args.length === 4) {

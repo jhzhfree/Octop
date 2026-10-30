@@ -39,5 +39,7 @@
       "audience": "akb-external-api",
       "resource": "https://akb.example.com"
     }
-  ]
+  ],
+  "issuer": "https://identity.example.com/opencode",
+  "audience": "akb-external-api"
 }

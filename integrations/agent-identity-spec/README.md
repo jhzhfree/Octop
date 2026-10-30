@@ -1,6 +1,6 @@
 # 跨 Agent 平台身份插件设计
 
-状态：已落实于 SDK/插件 0.2.0 和 AKB V75。本文保留模块设计说明；实际可构建代码见 [SDK](../agent-identity-sdk/README.md)。SDK 尚未发布公共 npm，现有 OpenCode 插件支持显式 V2，并保留 V1 兼容。
+状态：已落实于 SDK 0.3.2 / OpenCode 插件 0.2.1 和 AKB V75。本文保留模块设计说明；实际可构建代码见 [SDK](../agent-identity-sdk/README.md)。SDK 尚未发布公共 npm，现有 OpenCode 插件支持显式 V2，并保留 V1 兼容。
 
 ## 目标和关键决定
 
@@ -98,3 +98,5 @@ node verify-design.mjs
 ```
 
 本目录提供规范与公共向量；实现位于相邻 agent-identity-sdk/opencode-identity，AKB 配套为 V75。未发布 npm 包。
+
+独立项目与交付边界见 [PROJECT-DELIVERY.md](PROJECT-DELIVERY.md)。TGZ 可通过 `test-packages.mjs <SDK绝对路径.tgz> <插件绝对路径.tgz>` 在无相邻源码的临时宿主中验收安装、加载及四份随包配置。

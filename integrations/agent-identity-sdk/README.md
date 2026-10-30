@@ -1,4 +1,4 @@
-# Agent Identity SDK 0.2.0
+# Agent Identity SDK 0.3.2
 
 平台无关的身份 SDK。每安装共享一个 AKB Service Key，每个 Agent 使用独立 RSA 密钥，AKB 按 Agent 绑定公钥。支持 AKB Agent Proof V2、MCP 和 REST，不需要插件托管 JWKS，也不要求每 Agent 配置独立 MCP 服务。
 
@@ -114,3 +114,6 @@ See [dashboard setup and deployment](../agent-identity-spec/DASHBOARD-SETUP.md) 
 ## Public onboarding export (0.3.1)
 
 `akb-agent-identity setup export /absolute/path/identity.json > akb-setup.json` exports only the public platform, installation, workspace, issuer, audience and canonical AKB origin for the AKB connection wizard. It works before Agent bindings and keys are enrolled. The protected V2 configuration stays on the host; credentials, key paths, private keys and Agent bindings are excluded. The command does not initialize keys, change registration or enable authentication.
+
+
+0.3.2 的 `setup export` 可从现有 bindings 读取一致的 issuer/audience，也支持顶层填写这两项的空绑定引导配置（`config.bootstrap.example.json`）。已有绑定与顶层或彼此不一致时明确拒绝导出。两种示例都随包发布，运行配置在完成登记前仍不可用于调用。
