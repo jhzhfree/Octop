@@ -3,6 +3,9 @@ build/
 !desktop/src/build/
 !desktop/src/build/**
 dist/
+# Ship the prebuilt Agent identity bridge; Windows hosts cannot build it themselves.
+!integrations/agent-identity-sdk/dist/
+!integrations/agent-identity-sdk/dist/**
 
 # OS
 .DS_Store
