@@ -40,7 +40,7 @@
 
 本目录已有独立 `package.json`、TypeScript 构建、测试和 TGZ 打包入口，运行时不依赖 Octop 的 Python 后端或前端。**当前源码开发仍依赖相邻 SDK 目录**（`file:../agent-identity-sdk`），所以不能只复制本目录就声称是完整独立源码工程。
 
-推荐将 SDK、平台适配器和协议文档整体迁到一个独立的插件项目仓库，AKB / Octop 消费带版本的产物；无需重写认证代码，也无需新增常驻插件服务。具体目录、发布和迁移验收见仓库中的 [项目交付决策](https://github.com/jhzhfree/Octop/blob/codex/opencode-workload-identity/integrations/agent-identity-spec/PROJECT-DELIVERY.md)。本次仍保留现有仓库位置，尚未创建新远端仓库，也未发布公共 npm。
+简化第一版只将密钥生成工具作为独立可打包工程交付（`tools/agent-keygen`）。SDK 和平台适配器继续在现有工程中维护，不要求另建插件项目或部署常驻服务。后续是否迁移源码仓库可按发布需要决定，历史选项见 [项目交付决策](../agent-identity-spec/PROJECT-DELIVERY.md)。尚未创建新远端仓库，也未发布公共 npm。
 
 ## 1. 从源码构建交付包
 

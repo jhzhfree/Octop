@@ -47,3 +47,9 @@ AKB 根地址须使用 HTTPS；当前 SDK 的 HTTP 开关仅用于显式允许�
 Octop 使用内置适配，不加载 OpenCode 插件。OpenCode 使用独立适配器，见 `integrations/opencode-identity/README.md` 的 configVersion 3。其他平台只需实现：可信运行上下文 → 本地 Agent/UUID 绑定 → 私钥签名 → MCP/REST。密钥生成工具与平台无关。
 
 接口：Octop 管理 `/api/external-knowledge/sources/{id}/identity/simple`、`/agents/{nativeId}/connect`；AKB 管理 `/api/external/admin/agent-connections`。AKB 的公开配置发现不认证 Agent，只返回签名坐标；知识请求仍必须通过严格签名、短期有效期、防重放和服务可读范围检查。
+
+## 本地验收记录
+
+本版已通过 AKB 223 项 Java 测试、Octop `make all`（4764 通过 / 16 跳过）、SDK 与 OpenCode 插件测试和独立 TGZ 安装验证。浏览器完成服务接入创建、双 Agent 公钥登记、私钥导入与自动绑定。真实本地 AKB / Octop 联调中，REST 和 MCP 分别以两名 Agent 检索到非空内容；越权、重放、跨 Agent 冒充、停用和撤销按预期拒绝。
+
+上述结果来自隔离的本地测试环境，并不表示用户线上部署已更新；Windows 账户 ACL 仍需在目标主机验收。

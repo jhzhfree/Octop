@@ -142,7 +142,7 @@ export default function SimpleAgentBindingDrawer({
           description={t(k + "help")}
         />
         {error && <Alert type="error" showIcon message={error} />}
-        <Form layout="vertical" disabled={busy}>
+        <Form layout="vertical" disabled={busy || !state}>
           <Form.Item label={t(k + "authMode")}>
             <Select
               value={mode}
@@ -163,7 +163,11 @@ export default function SimpleAgentBindingDrawer({
               onChange={(e) => setApiKey(e.target.value)}
             />
           </Form.Item>
-          <Button loading={busy} onClick={() => void saveConnection()}>
+          <Button
+            loading={busy}
+            disabled={!state}
+            onClick={() => void saveConnection()}
+          >
             {t(k + "saveConnection")}
           </Button>
         </Form>
@@ -307,7 +311,18 @@ export default function SimpleAgentBindingDrawer({
                 <Button disabled={busy} onClick={() => file.current?.click()}>
                   {t(k + "importPrivate")}
                 </Button>
-                <Form.Item name="privateKey" noStyle>
+                <Form.Item
+                  name="privateKey"
+                  noStyle
+                  rules={[
+                    {
+                      required: !active.some(
+                        (a) => a.agentId === selected && a.activeKid,
+                      ),
+                      message: t(k + "privateRequired"),
+                    },
+                  ]}
+                >
                   <Input.TextArea
                     rows={4}
                     autoComplete="off"

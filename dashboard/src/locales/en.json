@@ -7036,7 +7036,8 @@
       "saveAndTest": "Save, test and bind",
       "query": "Enter a test question",
       "testSearch": "Test retrieval",
-      "empty": "Authenticated request completed with no matching content. Check knowledge scope, publication and indexing."
+      "empty": "Authenticated request completed with no matching content. Check knowledge scope, publication and indexing.",
+      "privateRequired": "Import private.pem or paste the matching private key for the first binding"
     }
   }
 }
