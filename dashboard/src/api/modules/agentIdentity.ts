@@ -37,6 +37,7 @@ export interface IdentityConfiguration {
   audience: string;
 }
 export interface SourceIdentityState extends IdentityConfiguration {
+  simple?: boolean;
   platformId: string;
   installationId: string;
   workspaceId: string;
@@ -64,6 +65,27 @@ function post<T>(url: string, body: unknown = {}) {
   });
 }
 export const agentIdentityApi = {
+  simpleMode: (id: string, enabled: boolean) =>
+    request<{ ok: boolean }>(`${root(id)}/simple`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    }),
+  connect: (
+    id: string,
+    agent: string,
+    externalAgentId: string,
+    privateKey: string,
+  ) =>
+    post<{ status: VerifiedAgentStatus }>(
+      `${root(id)}/agents/${encodeURIComponent(agent)}/connect`,
+      { externalAgentId, privateKey },
+    ),
+  disconnect: (id: string, agent: string) =>
+    request<{ ok: boolean }>(
+      `${root(id)}/agents/${encodeURIComponent(agent)}/connect`,
+      { method: "DELETE" },
+    ),
   state: (id: string) => request<SourceIdentityState>(root(id)),
   configure: (id: string, body: IdentityConfiguration) =>
     request<{ ok: boolean }>(root(id), {

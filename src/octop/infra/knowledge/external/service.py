@@ -134,11 +134,17 @@ class ExternalKnowledgeService:
     def _public_source(self, row: ExternalSourceRow, spec: ExternalSourceSpec) -> dict[str, Any]:
         """Public projection: no credentials, no key material."""
         mode = "LEGACY"
+        simple_identity = False
+        advanced_identity = False
         has_credentials = row.has_credentials or bool(row.instance_id)
         if row.credential_blob and row.kind in {"akb-mcp", "akb-rest"}:
             try:
                 config = self.identity_config(row)
                 mode = config.get("mode", "LEGACY")
+                simple_identity = bool(config.get("simple"))
+                advanced_identity = not simple_identity and bool(
+                    config.get("policyId") or config.get("agents")
+                )
                 if config:
                     has_credentials = bool(self.credentials_for(row).get("api_key"))
             except ExternalSourceError:
@@ -146,6 +152,8 @@ class ExternalKnowledgeService:
                 has_credentials = False
         return {
             "identity_mode": mode,
+            "simple_identity": simple_identity,
+            "advanced_identity": advanced_identity,
             "source_id": row.source_id,
             "display_name": row.display_name,
             "kind": row.kind,

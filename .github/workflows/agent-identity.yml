@@ -1,9 +1,9 @@
 name: Agent identity SDK and OpenCode plugin
 on:
   push:
-    paths: ["integrations/**", ".github/workflows/agent-identity.yml"]
+    paths: ["tools/agent-keygen/**", "integrations/**", ".github/workflows/agent-identity.yml"]
   pull_request:
-    paths: ["integrations/**", ".github/workflows/agent-identity.yml"]
+    paths: ["tools/agent-keygen/**", "integrations/**", ".github/workflows/agent-identity.yml"]
 permissions:
   contents: read
 jobs:
@@ -14,6 +14,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - run: npm test && npm pack
+        working-directory: tools/agent-keygen
       - run: npm ci && npm test && npm pack
         working-directory: integrations/agent-identity-sdk
       - run: npm ci && npm test && npm pack
@@ -27,5 +29,6 @@ jobs:
           name: agent-identity-packages
           if-no-files-found: error
           path: |
+            tools/agent-keygen/akb-agent-keygen-*.tgz
             integrations/agent-identity-sdk/akb-agent-identity-sdk-*.tgz
             integrations/opencode-identity/akb-opencode-identity-*.tgz

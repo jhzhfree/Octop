@@ -1,4 +1,4 @@
-import { bytes, canonicalOrigin, createProofIssuer, IdentityError, sha256, type Invocation } from "./core.js";
+import { bytes, canonicalOrigin, createProofIssuer, IdentityError, sha256, type Invocation, uuid, identifier } from "./core.js";
 import type { AgentBinding, BoundRequestProofIssuer, CredentialSource, JsonValue, KnowledgeRequest, RsaSigner } from "./types.js";
 
 export function validateRequest(request: KnowledgeRequest): KnowledgeRequest {
@@ -56,6 +56,31 @@ export class AkbKnowledgeClient {
     for (const chunk of chunks) { raw.set(chunk, offset); offset += chunk.length; }
     try { return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(raw)); }
     catch { throw new IdentityError("UPSTREAM_UNAVAILABLE", "Invalid AKB JSON response"); }
+  }
+  async configuration(agentId: string, signal: AbortSignal): Promise<AgentBinding> {
+    if (!uuid(agentId)) throw new IdentityError("AGENT_UNREGISTERED", "Agent ID must be a UUID");
+    const key = await this.credentials.readServiceKey(signal);
+    if (!/^[A-Za-z0-9_-]+$/.test(key)) throw new IdentityError("AUTHENTICATION_FAILED", "Invalid service credential");
+    let result: any;
+    try {
+      const response = await fetch(this.origin + "/api/v1/external/identity/configuration?agentId=" + encodeURIComponent(agentId), {
+        headers: {"X-API-Key":key,Accept:"application/json"}, redirect:"error", signal:AbortSignal.any([signal,AbortSignal.timeout(this.timeoutMs)])
+      });
+      if (!response.ok) throw new IdentityError(response.status === 401 ? "AUTHENTICATION_FAILED" : "KEY_NOT_REGISTERED", "AKB connection or Agent registration is not ready");
+      const reader = response.body?.getReader(); const chunks: Uint8Array[] = []; let size=0;
+      try { if (reader) while (true) { const c=await reader.read();if(c.done)break;size+=c.value.length;if(size>16384)throw new IdentityError("PROTOCOL_UNSUPPORTED","Invalid connection metadata");chunks.push(c.value); } }
+      finally { await reader?.cancel(); }
+      const bytes=new Uint8Array(size);let offset=0;for(const c of chunks){bytes.set(c,offset);offset+=c.length;}
+      result=JSON.parse(new TextDecoder().decode(bytes));
+    } catch(e) { if(e instanceof IdentityError)throw e;throw new IdentityError("UPSTREAM_UNAVAILABLE","AKB connection discovery failed",true); }
+    const b=result?.data;
+    if(result?.success!==true || !b || b.resource!==this.origin || b.externalAgentId!==agentId || b.runtimeAgentKey!==agentId
+      || !["platformId","installationId","workspaceId"].every(k=>identifier(b[k]))
+      || !["policyId","applicationPrincipalId","bindingId"].every(k=>typeof b[k]==="string" && /^[1-9][0-9]{0,18}$/.test(b[k]))
+      || typeof b.issuer!=="string" || !b.issuer.startsWith("https://") || typeof b.audience!=="string" || !b.audience.length || b.audience.length>128) {
+      throw new IdentityError("PROTOCOL_UNSUPPORTED","AKB returned mismatched connection metadata");
+    }
+    return Object.freeze(Object.fromEntries(["platformId","installationId","workspaceId","externalAgentId","runtimeAgentKey","policyId","applicationPrincipalId","bindingId","issuer","audience","resource"].map(k=>[k,b[k]]))) as unknown as AgentBinding;
   }
   async status(binding: AgentBinding, invocation: Invocation, signer: RsaSigner, signal: AbortSignal) {
     if (binding.resource !== this.origin) throw new IdentityError("PROTOCOL_UNSUPPORTED", "Binding resource does not match AKB origin");

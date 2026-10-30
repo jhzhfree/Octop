@@ -1,0 +1,24 @@
+{
+  "configVersion": 3,
+  "proofProfile": "AGENT_KEY_RS256_V2",
+  "workspaceRoot": "/srv/engineering",
+  "origin": "https://akb.example.com",
+  "transport": "mcp",
+  "serviceKeyFile": "/secure/akb/service.key",
+  "keyStore": {
+    "provider": "node-file",
+    "rootDirectory": "/secure/akb/keys"
+  },
+  "agents": [
+    {
+      "runtimeAgentKey": "builder",
+      "agentId": "e21cce9c-1b16-4ab8-a76a-bb761df919b8",
+      "privateKeyFile": "/secure/alpha/private.pem"
+    },
+    {
+      "runtimeAgentKey": "reviewer",
+      "agentId": "01965897-0976-471c-8d64-27eb682a227b",
+      "privateKeyFile": "/secure/beta/private.pem"
+    }
+  ]
+}

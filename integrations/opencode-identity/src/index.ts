@@ -4,7 +4,7 @@ import { Effect, Fiber } from "effect";
 import { WorkloadClient, readIdentityConfiguration, type Operation } from "./client.js";
 import type { ToolContext } from "@opencode-ai/plugin/tool";
 import type { PlatformAdapter } from "@akb/agent-identity-sdk/types";
-import { loadNodeRuntime } from "@akb/agent-identity-sdk/node";
+import { loadNodeRuntime, loadSimpleNodeRuntime } from "@akb/agent-identity-sdk/node";
 
 export const openCodeAdapter: PlatformAdapter<ToolContext> = {
   capture(context) {
@@ -22,10 +22,10 @@ export const openCodeAdapter: PlatformAdapter<ToolContext> = {
 const plugin: Plugin = async (input, options) => {
   if (typeof options?.configFile !== "string") throw new Error("Set the protected AKB configFile in global plugin options");
   const config = await readIdentityConfiguration(options.configFile, input.directory);
-  if (config.configVersion !== undefined && config.configVersion !== 2) throw new Error("Unsupported identity configuration version");
+  if (config.configVersion !== undefined && ![2,3].includes(config.configVersion)) throw new Error("Unsupported identity configuration version");
   if (config.proofProfile && config.proofProfile !== "AGENT_KEY_RS256_V2") throw new Error("Unsupported explicit identity profile");
-  if (config.proofProfile && config.configVersion !== 2) throw new Error("V2 profile requires V2 configuration");
-  const runtime = config.configVersion === 2 ? await loadNodeRuntime(options.configFile, input.directory, openCodeAdapter) : undefined;
+  if (config.proofProfile && ![2,3].includes(config.configVersion)) throw new Error("V2 profile requires V2 configuration");
+  const runtime = config.configVersion === 3 ? await loadSimpleNodeRuntime(options.configFile,input.directory,openCodeAdapter) : config.configVersion === 2 ? await loadNodeRuntime(options.configFile, input.directory, openCodeAdapter) : undefined;
   const client = runtime ? undefined : await WorkloadClient.load(options.configFile, input.directory);
   const filters = {
     query: tool.schema.string().min(1).max(4000),

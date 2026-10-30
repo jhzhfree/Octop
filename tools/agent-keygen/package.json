@@ -1,0 +1,11 @@
+{
+  "name": "@akb/agent-keygen",
+  "version": "1.0.0",
+  "description": "Offline RSA Agent key-pair generator. No platform SDK, network service or dependencies.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {"agent-keygen": "keygen.mjs"},
+  "files": ["keygen.mjs", "README.md", "LICENSE"],
+  "scripts": {"test": "node --test test/*.test.mjs"},
+  "engines": {"node": ">=22"}
+}

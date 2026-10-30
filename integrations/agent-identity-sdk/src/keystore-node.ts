@@ -124,6 +124,35 @@ export class NodeFileKeyStore implements AgentKeyStore {
     const version: Version = { kid: jwk.kid, state: "PENDING_REGISTRATION", createdAt: new Date().toISOString() }; manifest.keys.push(version);
     return Object.freeze({ owner: Object.freeze({ ...owner }), kid: jwk.kid, publicJwk: jwk, localState: version.state, createdAt: version.createdAt });
   }
+  /** Import only through trusted host management IPC; private bytes never leave the host. */
+  async importPrivateKey(owner: AgentKeyOwner, pem: string): Promise<PublicAgentKey> {
+    const key = createPrivateKey(pem), details = key.asymmetricKeyDetails;
+    if (key.asymmetricKeyType !== "rsa" || !details || (details.modulusLength ?? 0) < 3072 || (details.modulusLength ?? 0) > 4096 || details.publicExponent !== 65537n) throw new IdentityError("KEY_UNAVAILABLE", "RSA 3072–4096 private key required");
+    const jwk = await publicJwk(key), directory = await this.directory(owner);
+    await mkdir(directory, { recursive: true, mode: 0o700 }); await protection.harden(directory, "directory");
+    return this.withLock(directory, async () => {
+      let manifest: Manifest;
+      try { manifest = await this.manifest(owner); }
+      catch (e) {
+        if (!missing(e)) throw e;
+        const { readdir } = await import("node:fs/promises");
+        if ((await readdir(directory)).some(name => name !== ".lock")) throw new IdentityError("KEY_UNAVAILABLE", "Interrupted key import requires operator recovery");
+        manifest = { format: 1, owner: { ...owner }, keys: [] };
+      }
+      const existing = manifest.keys.find(v => v.kid === jwk.kid);
+      if (existing) {
+        if (["RETIRED", "REVOKED"].includes(existing.state)) throw new IdentityError("KEY_UNAVAILABLE", "Retired key cannot be imported again");
+        return this.readPublic(owner, jwk.kid);
+      }
+      if (manifest.keys.length >= 16) throw new IdentityError("KEY_UNAVAILABLE", "Local key history limit reached");
+      const target = path.join(directory, jwk.kid); await mkdir(target, { mode: 0o700 }); await protection.harden(target, "directory");
+      await durableCreate(path.join(target, "private.pem"), key.export({format:"pem",type:"pkcs8"}).toString());
+      await durableCreate(path.join(target, "public.json"), JSON.stringify(jwk));
+      const version: Version = {kid:jwk.kid,state:"PENDING_REGISTRATION",createdAt:new Date().toISOString()};
+      manifest.keys.push(version); await atomicWrite(path.join(directory,"identity.json"),JSON.stringify(manifest));
+      return Object.freeze({owner:Object.freeze({...owner}),kid:jwk.kid,publicJwk:jwk,localState:version.state,createdAt:version.createdAt});
+    });
+  }
   async stageRotation(owner: AgentKeyOwner) { return this.mutate(owner, manifest => this.generateVersion(owner, manifest)); }
   async describe(owner: AgentKeyOwner) {
     let manifest: Manifest;

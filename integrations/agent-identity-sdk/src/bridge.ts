@@ -8,10 +8,12 @@ import { AkbKnowledgeClient } from "./client.js";
 import type { AgentBinding, AgentKeyOwner, KnowledgeRequest } from "./types.js";
 
 interface HostRequest {
-  op: "capabilities" | "state" | "initialize" | "rotate" | "registration" | "activate" | "probe" | "execute";
+  op: "connect" | "capabilities" | "state" | "initialize" | "rotate" | "registration" | "activate" | "probe" | "execute";
   root: string;
   owner: AgentKeyOwner;
   binding: AgentBinding;
+  externalAgentId?: string;
+  privateKey?: string;
   kid?: string;
   challenge?: RegistrationChallenge;
   apiKey?: string;
@@ -23,8 +25,21 @@ interface HostRequest {
   request: KnowledgeRequest;
 }
 async function run(input: HostRequest): Promise<unknown> {
-  if (input.op === "capabilities") return { version: "0.3.2", supported: Number(process.versions.node.split(".")[0]) >= 22 && protectionSupported() };
+  if (input.op === "capabilities") return { version: "0.4.0", supported: Number(process.versions.node.split(".")[0]) >= 22 && protectionSupported() };
   if (Number(process.versions.node.split(".")[0]) < 22) throw new IdentityError("PROTOCOL_UNSUPPORTED", "Node 22 or later is required");
+  if (input.op === "connect") {
+    const signal = AbortSignal.timeout(Math.min(180000,(input.timeoutMs ?? 15000)*3+10000));
+    const client = new AkbKnowledgeClient({async readServiceKey(){return input.apiKey ?? "";}},input.origin,input.transport,input.timeoutMs,input.allowInsecureLoopback);
+    const binding=await client.configuration(input.externalAgentId ?? "",signal);
+    const owner={platformId:binding.platformId,installationId:binding.installationId,workspaceId:binding.workspaceId,externalAgentId:binding.externalAgentId};
+    const store=await NodeFileKeyStore.open(input.root);
+    const state=await store.describe(owner);
+    const imported=input.privateKey ? await store.importPrivateKey(owner,input.privateKey) : undefined;
+    const signer=await store.openSigner(owner,imported?.kid ?? state.activeKid ?? "");
+    const status=await client.status(binding,input.invocation,signer,signal);
+    await store.selectRegisteredKey(owner,signer.kid);
+    return {binding,status,...await store.describe(owner)};
+  }
   ownerIndex(input.owner);
   const store = await NodeFileKeyStore.open(input.root);
   if (input.op === "state") return store.describe(input.owner);

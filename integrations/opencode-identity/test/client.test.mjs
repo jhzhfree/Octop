@@ -144,3 +144,34 @@ test("cancelled invocations do not send a request", async () => {
     assert.equal(f.calls.length, 0);
   } finally { await f.close(); }
 });
+
+(process.platform==='win32'?test.skip:test)('simplified OpenCode configuration resolves two real host Agents with one shared key and no policy inputs',async()=>{
+ const root=await mkdtemp(path.join(tmpdir(),'opencode-simple-'));const workspace=path.join(root,'workspace');await mkdir(workspace);
+ const ids=['e21cce9c-1b16-4ab8-a76a-bb761df919b8','01965897-0976-471c-8d64-27eb682a227b'];
+ const pairs=ids.map(()=>generateKeyPairSync('rsa',{modulusLength:3072}));const calls=[];let origin;
+ const server=createServer(async(req,res)=>{
+  assert.equal(req.headers['x-api-key'],'shared-key');res.setHeader('Content-Type','application/json');
+  if(req.url.startsWith('/api/v1/external/identity/configuration?')){
+   const id=new URL(req.url,origin).searchParams.get('agentId');res.end(JSON.stringify({success:true,data:{platformId:'akb-service',installationId:'install',workspaceId:'workspace',externalAgentId:id,runtimeAgentKey:id,policyId:'17',bindingId:String(ids.indexOf(id)+21),applicationPrincipalId:'123',issuer:'https://akb.local/agent-identity',audience:'akb',resource:origin}}));return;
+  }
+  const buffers=[];for await(const b of req)buffers.push(b);const raw=Buffer.concat(buffers);
+  const [h,c,s]=req.headers['x-akb-workload-assertion'].split('.');const claims=JSON.parse(Buffer.from(c,'base64url')),header=JSON.parse(Buffer.from(h,'base64url'));
+  const id=claims.sub.slice(6),index=ids.indexOf(id);assert.ok(index>=0);assert.equal(claims.runtime_agent,id);
+  assert.ok(verify('sha256',Buffer.from(`${h}.${c}`),pairs[index].publicKey,Buffer.from(s,'base64url')));
+  assert.equal(claims.request_binding.body_sha256,createHash('sha256').update(raw).digest('hex'));
+  if(req.url==='/api/v1/external/identity/status'){res.end(JSON.stringify({success:true,data:{agentId:id,kid:header.kid,proofProfile:'AGENT_KEY_RS256_V2',keyStatus:'ACTIVE',policyId:17}}));return;}
+  calls.push(claims);res.end(JSON.stringify({success:true,data:{candidates:[{content:id}]}}));
+ });server.listen(0,'127.0.0.1');await once(server,'listening');origin=`http://127.0.0.1:${server.address().port}`;
+ try{
+  const config={configVersion:3,proofProfile:'AGENT_KEY_RS256_V2',origin,transport:'rest',allowInsecureLoopback:true,workspaceRoot:workspace,serviceKeyFile:path.join(root,'service.key'),keyStore:{provider:'node-file',rootDirectory:path.join(root,'keys')},agents:ids.map((id,i)=>({runtimeAgentKey:i?'review':'build',agentId:id,privateKeyFile:path.join(root,`${i}.pem`)}))};
+  await writeFile(config.serviceKeyFile,'shared-key',{mode:0o600});
+  for(let i=0;i<2;i++)await writeFile(config.agents[i].privateKeyFile,pairs[i].privateKey.export({format:'pem',type:'pkcs8'}),{mode:0o600});
+  const configFile=path.join(root,'config.json');await writeFile(configFile,JSON.stringify(config),{mode:0o600});
+  const hooks=await plugin.server({directory:workspace},{configFile});
+  const context=(agent,ask=()=>Effect.void)=>({agent,sessionID:'real-session',messageID:'real-message',directory:workspace,worktree:workspace,abort:new AbortController().signal,ask,metadata(){}});
+  await assert.rejects(hooks.tool.akb_search.execute({query:'denied'},context('build',()=>Effect.fail(new Error('DENIED')))),/DENIED/);assert.equal(calls.length,0);
+  await assert.rejects(hooks.tool.akb_search.execute({query:'unknown'},context('forged')),/not bound/);assert.equal(calls.length,0);
+  const [a,b]=await Promise.all([hooks.tool.akb_search.execute({query:'A',agentId:ids[1]},context('build')),hooks.tool.akb_search.execute({query:'B'},context('review'))]);
+  assert.equal(a.metadata.externalAgentId,ids[0]);assert.equal(b.metadata.externalAgentId,ids[1]);assert.equal(new Set(calls.map(c=>c.sub)).size,2);assert.equal(new Set(calls.map(c=>c.jti)).size,2);
+ }finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));await rm(root,{recursive:true,force:true});}
+});

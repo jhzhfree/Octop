@@ -1,7 +1,7 @@
 """Agent identity management and native retrieval through the platform-neutral SDK.
 
-No private key crosses the SDK process boundary. The backend supplies trusted
-runtime context; model tool arguments never choose a signing identity.
+Private keys enter protected storage only through trusted management IPC and
+never leave the host. Model tool arguments never choose a signing identity.
 """
 
 from __future__ import annotations
@@ -122,7 +122,7 @@ def _binding(config: dict[str, Any], native_id: str) -> tuple[dict[str, str], di
     owner["externalAgentId"] = str(agent["externalAgentId"])
     binding = {
         **owner,
-        "runtimeAgentKey": native_id,
+        "runtimeAgentKey": str(agent.get("runtimeAgentKey") or native_id),
         "bindingId": str(agent.get("bindingId") or "1"),
         **{
             key: str(config[key])
@@ -257,6 +257,101 @@ class AgentIdentityService:
         except ValueError as exc:
             raise _invalid() from exc
         self.sources.save_identity_config(row, config)
+
+    def simple_mode(self, source_id: str, user_id: int, is_admin: bool, enabled: bool) -> None:
+        row, config = self.source(source_id, user_id, is_admin)
+        # Existing advanced identity coordinates cannot silently become a different identity.
+        if (
+            enabled
+            and not config.get("simple")
+            and (config["mode"] == V2 or config.get("policyId") or config["agents"])
+        ):
+            raise _invalid()
+        config["mode"] = V2 if enabled else "LEGACY"
+        if enabled:
+            config["simple"] = True
+        self.sources.save_identity_config(row, config)
+
+    async def connect(
+        self,
+        source_id: str,
+        agent_id: str,
+        user_id: int,
+        is_admin: bool,
+        external_id: str,
+        private_key: str,
+    ) -> dict[str, Any]:
+        row, config = self.source(source_id, user_id, is_admin)
+        self.agent(agent_id, user_id, is_admin)
+        if not config.get("simple") or config["mode"] != V2:
+            raise _invalid()
+        try:
+            if str(uuid.UUID(external_id)) != external_id:
+                raise ValueError()
+        except ValueError as exc:
+            raise _invalid() from exc
+        if any(
+            native != agent_id and a.get("externalAgentId") == external_id
+            for native, a in config["agents"].items()
+        ):
+            raise _invalid()
+        current = config["agents"].get(agent_id)
+        if current and current.get("externalAgentId") != external_id:
+            # Rebinding requires explicit unbind, so keys cannot silently change the Agent ID.
+            raise _invalid()
+        creds = self.sources.credentials_for(row)
+        result = await sdk_call(
+            {
+                "op": "connect",
+                "externalAgentId": external_id,
+                "privateKey": private_key,
+                "apiKey": str(creds.get("api_key") or ""),
+                "origin": row.endpoint.rstrip("/"),
+                "transport": "mcp" if row.kind == "akb-mcp" else "rest",
+                "timeoutMs": row.timeout_ms,
+                "allowInsecureLoopback": row.allow_insecure_http,
+                "invocation": {
+                    "sessionId": f"management:{user_id}",
+                    "invocationId": str(uuid.uuid4()),
+                },
+            },
+            max(30, row.timeout_ms / 1000 * 3 + 10),
+        )
+        binding = result["binding"]
+        coordinates = (
+            "platformId",
+            "installationId",
+            "workspaceId",
+            "policyId",
+            "applicationPrincipalId",
+            "issuer",
+            "audience",
+            "resource",
+        )
+        if config["agents"] and any(config[k] != binding[k] for k in coordinates):
+            raise _invalid()
+        config.update({k: binding[k] for k in coordinates})
+        config["agents"][agent_id] = {
+            "externalAgentId": external_id,
+            "bindingId": binding["bindingId"],
+            "runtimeAgentKey": binding["runtimeAgentKey"],
+        }
+        self.sources.save_identity_config(row, config)
+        self.sources.set_binding(
+            source_id, user_id=user_id, is_admin=is_admin, target_type="agent", target_id=agent_id
+        )
+        return {"status": result["status"], "activeKid": result["activeKid"]}
+
+    def disconnect(self, source_id: str, agent_id: str, user_id: int, is_admin: bool) -> None:
+        row, config = self.source(source_id, user_id, is_admin)
+        self.agent(agent_id, user_id, is_admin)
+        if not config.get("simple"):
+            raise _invalid()
+        config["agents"].pop(agent_id, None)
+        self.sources.save_identity_config(row, config)
+        self.sources.delete_binding(
+            source_id, user_id=user_id, is_admin=is_admin, target_type="agent", target_id=agent_id
+        )
 
     async def prepare(
         self, source_id: str, agent_id: str, user_id: int, is_admin: bool, rotate: bool

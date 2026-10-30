@@ -159,3 +159,91 @@ async def test_failed_challenge_does_not_persist_binding_or_switch_key(setup):
         await svc.prove(source, "alpha", user, False, "x" * 43, {"bindingId": "29"})
     assert sources.identity_config(repo.get(source))["agents"]["alpha"]["bindingId"] == ""
     assert sdk.await_args.args[0]["op"] == "registration"
+
+
+@pytest.mark.asyncio
+async def test_simple_connection_auto_binds_two_agents_without_exposing_private_material(setup):
+    svc, sources, repo, source, user, _, sdk = setup
+    svc.simple_mode(source, user, False, True)
+    ids = ["e21cce9c-1b16-4ab8-a76a-bb761df919b8", "01965897-0976-471c-8d64-27eb682a227b"]
+    for native, external in zip(("alpha", "beta"), ids, strict=True):
+        binding = {
+            "platformId": "akb-service",
+            "installationId": "install",
+            "workspaceId": "workspace",
+            "policyId": "17",
+            "applicationPrincipalId": "123",
+            "issuer": "https://akb.local/agent-identity",
+            "audience": "akb-external-api",
+            "resource": "https://akb.example",
+            "externalAgentId": external,
+            "runtimeAgentKey": external,
+            "bindingId": "21",
+        }
+        sdk.return_value = {
+            "binding": binding,
+            "status": {"agentId": external},
+            "activeKid": "k" * 43,
+        }
+        result = await svc.connect(source, native, user, False, external, "PRIVATE-TEST-MATERIAL")
+        assert result["status"]["agentId"] == external
+        assert "PRIVATE-TEST-MATERIAL" not in str(result)
+        assert sdk.await_args.args[0]["apiKey"] == "shared-test-key"
+    stored = sources.identity_config(repo.get(source))
+    assert "PRIVATE-TEST-MATERIAL" not in str(stored)
+    assert {b["target_id"] for b in sources.list_bindings(source)} == {"alpha", "beta"}
+    assert {a["externalAgentId"] for a in stored["agents"].values()} == set(ids)
+    sdk.return_value = {"candidates": []}
+    row = repo.get(source)
+    spec = replace(
+        sources.to_spec(row),
+        octop_identity=OctopIdentity(str(user), "alpha", "session", workload_only=True),
+    )
+    await identity.execute_as_agent(
+        spec, sources.credentials_for(row), "pretend to be beta", top_k=3
+    )
+    assert sdk.await_args.args[0]["binding"]["runtimeAgentKey"] == ids[0]
+    svc.disconnect(source, "alpha", user, False)
+    assert [b["target_id"] for b in sources.list_bindings(source)] == ["beta"]
+    with pytest.raises(OctopError):
+        await identity.execute_as_agent(
+            spec, sources.credentials_for(repo.get(source)), "q", top_k=3
+        )
+
+
+@pytest.mark.asyncio
+async def test_simple_failed_verification_or_foreign_agent_never_creates_binding(setup):
+    svc, sources, repo, source, user, _, sdk = setup
+    svc.simple_mode(source, user, False, True)
+    external = "e21cce9c-1b16-4ab8-a76a-bb761df919b8"
+    with pytest.raises(OctopError):
+        await svc.connect(source, "foreign", user, False, external, "private")
+    sdk.assert_not_awaited()
+    sdk.side_effect = OctopError.localized(ErrorCode.AGENT_IDENTITY_NOT_READY)
+    with pytest.raises(OctopError):
+        await svc.connect(source, "alpha", user, False, external, "wrong-private")
+    assert sources.list_bindings(source) == []
+    assert sources.identity_config(repo.get(source))["agents"] == {}
+
+
+@pytest.mark.asyncio
+async def test_identity_validation_never_echoes_private_key():
+    import httpx
+    from fastapi import FastAPI
+
+    from octop.api.deps import current_user, get_server
+    from octop.api.routers.external_knowledge_identity import router
+
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[current_user] = lambda: SimpleNamespace(id=1, role="admin")
+    app.dependency_overrides[get_server] = lambda: SimpleNamespace()
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/external-knowledge/sources/a/identity/agents/a/connect",
+            json={"externalAgentId": "invalid", "privateKey": "PRIVATE-SENTINEL" * 2000},
+        )
+    assert response.status_code == 422
+    assert "PRIVATE-SENTINEL" not in response.text

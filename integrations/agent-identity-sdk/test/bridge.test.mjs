@@ -80,3 +80,31 @@ test('shipped full and bootstrap configurations export correctly; inconsistent b
   const conflicting=structuredClone(config);conflicting.audience='other';assert.equal((await run(conflicting)).code,1);
  }finally{await rm(root,{recursive:true,force:true});}
 });
+
+test('simplified imported keys use one shared key, distinct Agent signatures, and reject unregistered keys',async()=>{
+ const {generateKeyPairSync}=await import('node:crypto');const root=await mkdtemp(path.join(tmpdir(),'akb-simple-'));
+ const agents=['e21cce9c-1b16-4ab8-a76a-bb761df919b8','01965897-0976-471c-8d64-27eb682a227b'];
+ const pairs=agents.map(()=>generateKeyPairSync('rsa',{modulusLength:3072}));let origin;const seen=[];
+ const binding=id=>({platformId:'akb-service',installationId:'install',workspaceId:'workspace',externalAgentId:id,runtimeAgentKey:id,policyId:'17',bindingId:'21',applicationPrincipalId:'123',issuer:'https://akb.local/agent-identity',audience:'akb',resource:origin});
+ const server=createServer((req,res)=>{
+  assert.equal(req.headers['x-api-key'],'shared-key');
+  if(req.url.startsWith('/api/v1/external/identity/configuration?')){
+   const id=new URL(req.url,origin).searchParams.get('agentId');res.setHeader('Content-Type','application/json');res.end(JSON.stringify({success:true,data:binding(id)}));return;
+  }
+  const proof=req.headers['x-akb-workload-assertion'];assert.ok(!JSON.stringify(req.headers).includes('PRIVATE KEY'));
+  const [h,c,s]=proof.split('.'),claims=JSON.parse(Buffer.from(c,'base64url')),header=JSON.parse(Buffer.from(h,'base64url'));
+  const index=agents.indexOf(claims.sub.slice(6));
+  if(index<0||!verify('sha256',Buffer.from(`${h}.${c}`),pairs[index].publicKey,Buffer.from(s,'base64url'))){res.writeHead(401);res.end('{}');return;}
+  seen.push({id:agents[index],kid:header.kid});res.end(JSON.stringify({success:true,data:{agentId:agents[index],kid:header.kid,proofProfile:'AGENT_KEY_RS256_V2',keyStatus:'ACTIVE',policyId:17}}));
+ });server.listen(0,'127.0.0.1');await once(server,'listening');origin=`http://127.0.0.1:${server.address().port}`;
+ try{
+  const request={op:'connect',root:path.join(root,'keys'),origin,transport:'rest',allowInsecureLoopback:true,apiKey:'shared-key',invocation:{sessionId:'management:1',invocationId:crypto.randomUUID()}};
+  for(let i=0;i<2;i++){
+   const result=await call({...request,externalAgentId:agents[i],privateKey:pairs[i].privateKey.export({format:'pem',type:'pkcs8'})});assert.equal(result.ok,true);assert.equal(result.data.status.agentId,agents[i]);
+   assert.equal((await call({...request,externalAgentId:agents[i]})).ok,true);
+  }
+  assert.notEqual(seen[0].kid,seen[2].kid);
+  const wrong=await call({...request,externalAgentId:agents[0],privateKey:pairs[1].privateKey.export({format:'pem',type:'pkcs8'})});assert.equal(wrong.ok,false);
+  const state=await call({op:'state',root:request.root,owner:binding(agents[0])});assert.equal(state.data.activeKid,seen[0].kid);
+ }finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));await rm(root,{recursive:true,force:true});}
+});
