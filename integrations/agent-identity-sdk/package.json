@@ -1,6 +1,6 @@
 {
   "name": "@akb/agent-identity-sdk",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Platform independent Agent identity, protected per-Agent keys and AKB request proofs",
   "type": "module",
   "exports": {
@@ -12,7 +12,7 @@
     "./registration": { "types": "./dist/registration.d.ts", "default": "./dist/registration.js" },
     "./node": { "types": "./dist/node.d.ts", "default": "./dist/node.js" }
   },
-  "bin": { "akb-agent-identity": "dist/cli.js" },
+  "bin": { "akb-agent-identity": "dist/cli.js", "akb-agent-identity-bridge": "dist/bridge.js" },
   "files": ["dist", "README.md", "config.example.json"],
   "scripts": { "build": "tsc -p tsconfig.json", "test": "npm run build && node --test test/*.test.mjs", "test:live": "npm run build && node test/live.mjs", "prepack": "npm run build" },
   "engines": { "node": ">=22" },

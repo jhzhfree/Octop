@@ -1,6 +1,7 @@
 import { request } from "../request";
 
 export interface ExternalKnowledgeSource {
+  identity_mode?: string;
   source_id: string;
   display_name: string;
   kind: string;

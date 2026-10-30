@@ -517,7 +517,11 @@
     "TEAM_NOT_SHAREABLE": "Teams cannot be shared in this version.",
     "LOCAL_DOWNLOAD_UNAVAILABLE": "Saving to the host Downloads folder is only available when Octop is opened on this computer.",
     "SKILL_PACKAGE_COPY_DENIED": "The creator of this skill package has disabled copying its skills.",
-    "SKILL_PACKAGE_LOCKED": "This skill was copied from a locked skill package and cannot be edited in the workspace."
+    "SKILL_PACKAGE_LOCKED": "This skill was copied from a locked skill package and cannot be edited in the workspace.",
+    "AGENT_IDENTITY_UNAVAILABLE": "Agent identity SDK is unavailable. Check installation, host permissions and the AKB connection.",
+    "AGENT_IDENTITY_NOT_READY": "Agent identity is not ready. Select an Agent in Identity, complete registration and grants, then verify the current key.",
+    "AGENT_IDENTITY_INVALID": "Invalid identity settings or registration challenge. Check the AKB policy and endpoint.",
+    "AGENT_IDENTITY_CONFLICT": "Identity settings changed during this operation. Refresh and retry."
   },
   "desktop": {
     "install_log_deps": "Installing Python dependencies…",

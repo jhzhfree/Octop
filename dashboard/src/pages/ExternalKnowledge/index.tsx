@@ -26,6 +26,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  ShieldCheck,
   Trash2,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -39,6 +40,7 @@ import {
 import { useIsMobile } from "../../hooks/useIsMobile";
 import PageShell from "../../layouts/PageShell";
 import styles from "./index.module.less";
+import AgentIdentityDrawer from "./AgentIdentityDrawer";
 
 const TARGET_TYPES = [
   { value: "agent", label: "Agent" },
@@ -81,6 +83,8 @@ export default function ExternalKnowledgePage() {
   const [sources, setSources] = useState<ExternalKnowledgeSource[]>([]);
   const [kinds, setKinds] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+  const [identitySource, setIdentitySource] =
+    useState<ExternalKnowledgeSource | null>(null);
   const [editing, setEditing] = useState<ExternalKnowledgeSource | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [form] = Form.useForm<SourceFormValues>();
@@ -232,6 +236,10 @@ export default function ExternalKnowledgePage() {
 
   const probe = useCallback(
     async (row: ExternalKnowledgeSource) => {
+      if (row.identity_mode === "AGENT_KEY_RS256_V2") {
+        setIdentitySource(row);
+        return;
+      }
       try {
         const result = await externalKnowledgeApi.probe(row.source_id);
         if (result.ok) {
@@ -318,6 +326,11 @@ export default function ExternalKnowledgePage() {
               <Tag color={KIND_COLORS[row.kind] ?? "default"} bordered={false}>
                 {row.kind}
               </Tag>
+              {row.identity_mode === "AGENT_KEY_RS256_V2" && (
+                <Tag color="green">
+                  {t("externalKnowledge.identity.v2Badge")}
+                </Tag>
+              )}
               {!row.has_credentials && (
                 <Tooltip title={t("externalKnowledge.noCredentialsHint")}>
                   <Tag color="orange" bordered={false}>
@@ -382,9 +395,20 @@ export default function ExternalKnowledgePage() {
       {
         title: t("externalKnowledge.actions"),
         key: "actions",
-        width: 168,
+        width: 210,
         render: (_value: unknown, row) => (
           <div className={styles.rowActions}>
+            {row.can_manage && ["akb-mcp", "akb-rest"].includes(row.kind) && (
+              <Tooltip title={t("externalKnowledge.identity.manage")}>
+                <Button
+                  type="text"
+                  className={styles.iconBtn}
+                  aria-label={t("externalKnowledge.identity.manage")}
+                  icon={<ShieldCheck size={15} />}
+                  onClick={() => setIdentitySource(row)}
+                />
+              </Tooltip>
+            )}
             <Tooltip title={t("externalKnowledge.probe")}>
               <Button
                 type="text"
@@ -401,6 +425,10 @@ export default function ExternalKnowledgePage() {
                 aria-label={t("externalKnowledge.test")}
                 icon={<Search size={15} />}
                 onClick={() => {
+                  if (row.identity_mode === "AGENT_KEY_RS256_V2") {
+                    setIdentitySource(row);
+                    return;
+                  }
                   setTesting(row);
                   setTestChunks([]);
                   setTestQuery("");
@@ -511,6 +539,12 @@ export default function ExternalKnowledgePage() {
           />
         </div>
       </div>
+
+      <AgentIdentityDrawer
+        source={identitySource}
+        onClose={() => setIdentitySource(null)}
+        onSaved={() => void refresh()}
+      />
 
       <Drawer
         className={styles.drawer}
@@ -674,6 +708,7 @@ export default function ExternalKnowledgePage() {
           </Form.Item>
           <Form.Item name="kind" label={t("externalKnowledge.kind")}>
             <Select
+              disabled={editing?.identity_mode === "AGENT_KEY_RS256_V2"}
               options={kinds.map((kind) => ({ value: kind, label: kind }))}
             />
           </Form.Item>
@@ -683,7 +718,10 @@ export default function ExternalKnowledgePage() {
             rules={[{ required: true }]}
             extra={t("externalKnowledge.endpointHint")}
           >
-            <Input placeholder="https://akb.example.com" />
+            <Input
+              disabled={editing?.identity_mode === "AGENT_KEY_RS256_V2"}
+              placeholder="https://akb.example.com"
+            />
           </Form.Item>
           <Form.Item name="api_key" label={t("externalKnowledge.apiKey")}>
             <Input.Password
@@ -693,7 +731,11 @@ export default function ExternalKnowledgePage() {
           </Form.Item>
           <Form.Item
             label={t("externalKnowledge.ref")}
-            extra={t("externalKnowledge.refHint")}
+            extra={t(
+              editing?.identity_mode === "AGENT_KEY_RS256_V2"
+                ? "externalKnowledge.identity.v2RefsHint"
+                : "externalKnowledge.refHint",
+            )}
           >
             <Space.Compact style={{ width: "100%" }}>
               {refs.length > 0 ? (
@@ -718,7 +760,9 @@ export default function ExternalKnowledgePage() {
               )}
               <Button
                 loading={refsLoading}
-                disabled={!editing}
+                disabled={
+                  !editing || editing.identity_mode === "AGENT_KEY_RS256_V2"
+                }
                 onClick={() => void fetchRefs()}
                 title={editing ? "" : t("externalKnowledge.fetchRefsAfterSave")}
               >

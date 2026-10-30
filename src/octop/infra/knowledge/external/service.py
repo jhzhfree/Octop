@@ -100,7 +100,12 @@ class ExternalKnowledgeService:
                 "INVALID_ARGUMENT", "credentials are missing", origin=row.kind
             )
         try:
-            return decrypt_credentials(self._secret_repo, blob)
+            result = decrypt_credentials(self._secret_repo, blob)
+            if row.instance_id and row.credential_blob:
+                own = decrypt_credentials(self._secret_repo, row.credential_blob)
+                if "agent_identity" in own:
+                    result["agent_identity"] = own["agent_identity"]
+            return result
         except Exception as exc:  # noqa: BLE001 - never leak key material
             logger.warning("external knowledge credentials unreadable for source=%s", row.source_id)
             raise ExternalSourceError(
@@ -126,10 +131,21 @@ class ExternalKnowledgeService:
             )
         return result
 
-    @staticmethod
-    def _public_source(row: ExternalSourceRow, spec: ExternalSourceSpec) -> dict[str, Any]:
+    def _public_source(self, row: ExternalSourceRow, spec: ExternalSourceSpec) -> dict[str, Any]:
         """Public projection: no credentials, no key material."""
+        mode = "LEGACY"
+        has_credentials = row.has_credentials or bool(row.instance_id)
+        if row.credential_blob and row.kind in {"akb-mcp", "akb-rest"}:
+            try:
+                config = self.identity_config(row)
+                mode = config.get("mode", "LEGACY")
+                if config:
+                    has_credentials = bool(self.credentials_for(row).get("api_key"))
+            except ExternalSourceError:
+                mode = "UNAVAILABLE"
+                has_credentials = False
         return {
+            "identity_mode": mode,
             "source_id": row.source_id,
             "display_name": row.display_name,
             "kind": row.kind,
@@ -146,10 +162,37 @@ class ExternalKnowledgeService:
             "shared": row.shared,
             "owner_user_id": row.owner_user_id,
             "instance_id": row.instance_id,
-            "has_credentials": row.has_credentials or bool(row.instance_id),
+            "has_credentials": has_credentials,
             "created_at": row.created_at,
             "updated_at": row.updated_at,
         }
+
+    def identity_config(self, row: ExternalSourceRow) -> dict[str, Any]:
+        if not row.credential_blob:
+            return {}
+        try:
+            config = decrypt_credentials(self._secret_repo, row.credential_blob).get(
+                "agent_identity", {}
+            )
+            return config if isinstance(config, dict) else {}
+        except Exception as exc:
+            raise ExternalSourceError(
+                "INVALID_CREDENTIALS", "stored identity configuration could not be read"
+            ) from exc
+
+    def save_identity_config(self, row: ExternalSourceRow, config: dict[str, Any]) -> None:
+        own = (
+            decrypt_credentials(self._secret_repo, row.credential_blob)
+            if row.credential_blob
+            else {}
+        )
+        own["agent_identity"] = config
+        if not self._repo.compare_replace_credentials(
+            row.source_id, row.credential_blob, encrypt_credentials(self._secret_repo, own)
+        ):
+            from octop.infra.errors import ErrorCode, OctopError
+
+            raise OctopError.localized(ErrorCode.AGENT_IDENTITY_CONFLICT)
 
     def create_source(
         self,
@@ -220,6 +263,16 @@ class ExternalKnowledgeService:
         **fields: Any,
     ) -> dict[str, Any]:
         row = self._require_manage(source_id, user_id=user_id, is_admin=is_admin)
+        if self.identity_config(row).get("mode") == "AGENT_KEY_RS256_V2" and (
+            (fields.get("kind") is not None and fields["kind"] != row.kind)
+            or (
+                fields.get("endpoint") is not None
+                and fields["endpoint"].rstrip("/") != row.endpoint.rstrip("/")
+            )
+        ):
+            from octop.infra.errors import ErrorCode, OctopError
+
+            raise OctopError.localized(ErrorCode.AGENT_IDENTITY_INVALID)
         api_key = fields.pop("api_key", None)
         kind = fields.pop("kind", None)
         forbidden = fields.pop("forbidden_arguments", None)
@@ -234,8 +287,20 @@ class ExternalKnowledgeService:
             raise ExternalSourceError("INVALID_ARGUMENT", f"unsupported kind: {kind}")
         blob: bytes | None = None
         if isinstance(api_key, str) and api_key.strip() and not row.instance_id:
-            blob = encrypt_credentials(self._secret_repo, {"api_key": api_key.strip()})
+            previous = (
+                decrypt_credentials(self._secret_repo, row.credential_blob)
+                if row.credential_blob
+                else {}
+            )
+            blob = encrypt_credentials(self._secret_repo, {**previous, "api_key": api_key.strip()})
             replace_credentials = True
+            if "agent_identity" in previous:
+                if not self._repo.compare_replace_credentials(source_id, row.credential_blob, blob):
+                    from octop.infra.errors import ErrorCode, OctopError
+
+                    raise OctopError.localized(ErrorCode.AGENT_IDENTITY_CONFLICT)
+                replace_credentials = False
+                blob = None
         self._repo.update(
             source_id,
             kind=kind,
@@ -342,6 +407,7 @@ class ExternalKnowledgeService:
 
     async def probe(self, source_id: str, *, user_id: int, is_admin: bool) -> dict[str, Any]:
         row = self._require_manage(source_id, user_id=user_id, is_admin=is_admin)
+        self._require_legacy_management(row)
         adapter = get_adapter(row.kind)
         if adapter is None:
             raise ExternalSourceError(
@@ -369,6 +435,7 @@ class ExternalKnowledgeService:
     ) -> list[dict[str, str]]:
         """Knowledge bases the stored credential can read, for ref picklists."""
         row = self._require_manage(source_id, user_id=user_id, is_admin=is_admin)
+        self._require_legacy_management(row)
         adapter = get_adapter(row.kind)
         if adapter is None:
             raise ExternalSourceError(
@@ -376,6 +443,15 @@ class ExternalKnowledgeService:
             )
         spec = self.to_spec(row)
         return await adapter.list_refs(spec, self.credentials_for(row))
+
+    def _require_legacy_management(self, row: ExternalSourceRow) -> None:
+        if (
+            row.kind in {"akb-rest", "akb-mcp"}
+            and self.identity_config(row).get("mode") == "AGENT_KEY_RS256_V2"
+        ):
+            from octop.infra.errors import ErrorCode, OctopError
+
+            raise OctopError.localized(ErrorCode.AGENT_IDENTITY_NOT_READY)
 
     async def search_source(
         self,
@@ -410,6 +486,13 @@ class ExternalKnowledgeService:
                 "INVALID_ARGUMENT", f"unsupported kind: {spec.kind}", origin=spec.kind
             )
         creds = self.credentials_for(row)
+        if (
+            isinstance(creds.get("agent_identity"), dict)
+            and creds["agent_identity"].get("mode") == "AGENT_KEY_RS256_V2"
+        ):
+            from octop.infra.knowledge.external.agent_identity import search_as_agent
+
+            return await search_as_agent(spec, creds, query, top_k=top_k)
         return await adapter.search(
             spec,
             creds,

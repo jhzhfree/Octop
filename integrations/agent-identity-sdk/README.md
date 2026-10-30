@@ -104,3 +104,9 @@ node dist/cli.js key rotate /var/lib/akb/keys /etc/akb/builder-owner.json
 完整插件指南位于同仓库 `integrations/agent-identity-spec/`；AKB 接入与管理文档位于 AKB 仓库 docs/api/AGENT-IDENTITY-V2.md。
 
 每 Agent 独立密钥不能隔离同 UID 任意 shell、恶意插件或已被攻陷的宿主。需要强隔离时，将工具执行置于独立 UID/容器，保护宿主/签名器，并校验代理调用者身份；只把任意 agentId 交给 KMS 签名不会解决冒充。
+
+## Dashboard host bridge (0.3.0)
+
+The optional `akb-agent-identity-bridge` executable provides stdin/stdout IPC for trusted platform hosts such as Octop's dashboard backend. It reuses the same protected key store, registration proofs and AKB client. It is not an HTTP server or a model tool; only the host may supply the owner and runtime identity. Credentials are sent on stdin and never returned. Key selection requires a successful remote identity probe.
+
+See [dashboard setup and deployment](../agent-identity-spec/DASHBOARD-SETUP.md) for host installation, UI enrollment, security boundaries and frontend rebuild instructions.

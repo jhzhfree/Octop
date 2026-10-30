@@ -57,7 +57,7 @@ def _headers(spec: ExternalSourceSpec, creds: dict[str, Any]) -> dict[str, str]:
         "Content-Type": "application/json",
         "Accept": "application/json, text/event-stream",
     }
-    if isinstance(spec.octop_identity, OctopIdentity):
+    if isinstance(spec.octop_identity, OctopIdentity) and not spec.octop_identity.workload_only:
         headers["X-Octop-Identity"] = issue_assertion(spec.octop_identity)
     return headers
 

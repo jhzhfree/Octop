@@ -242,3 +242,7 @@ REST 客户端支持库发现、search、query；按库编码发现时仍使用�
 4. Runtime/Client 支持显式 V2，完成 A/B 双密钥、同 Key 的实际端到端测试。
 5. OpenCode 适配包迁移到通用 Runtime；由另一平台按本文独立完成适配，验证 SDK 没有残留 OpenCode 依赖。
 6. 按安装逐步切换新严格策略，撤销不再需要的旧 Key；不自动原地降低旧策略要求。
+
+### 管理界面与宿主 IPC
+
+Octop 已接入通用 SDK 0.3.0 的受信宿主 stdin/stdout 桥接；平台插件仍可以直接使用 SDK，不依赖 Octop。页面登记、部署和边界说明见 [DASHBOARD-SETUP.md](./DASHBOARD-SETUP.md)。桥接不得注册为模型工具或开放网络端口；平台服务负责验证管理操作所有权和从宿主运行上下文捕获调用身份。

@@ -88,6 +88,20 @@ class ExternalKnowledgeRepo:
     def __init__(self, db: DatabasePool) -> None:
         self._db = db
 
+    def compare_replace_credentials(self, source_id: str, old: bytes | None, new: bytes) -> bool:
+        with self._db.connect() as conn:
+            if old is None:
+                result = conn.execute(
+                    "UPDATE external_knowledge_sources SET credential_blob=?,updated_at=? WHERE source_id=? AND credential_blob IS NULL",
+                    (new, now_ts(), source_id),
+                )
+            else:
+                result = conn.execute(
+                    "UPDATE external_knowledge_sources SET credential_blob=?,updated_at=? WHERE source_id=? AND credential_blob=?",
+                    (new, now_ts(), source_id, old),
+                )
+            return bool(result.rowcount == 1)
+
     def create(
         self,
         *,

@@ -131,6 +131,18 @@ export class NodeFileKeyStore implements AgentKeyStore {
     return Object.freeze({ owner: Object.freeze({ ...owner }), kid: jwk.kid, publicJwk: jwk, localState: version.state, createdAt: version.createdAt });
   }
   async stageRotation(owner: AgentKeyOwner) { return this.mutate(owner, manifest => this.generateVersion(owner, manifest)); }
+  async describe(owner: AgentKeyOwner) {
+    let manifest: Manifest;
+    try { manifest = await this.manifest(owner); }
+    catch (error) {
+      if (!missing(error)) throw error;
+      const { readdir } = await import("node:fs/promises");
+      const entries = await readdir(await this.directory(owner)).catch(error => { if (!missing(error)) throw error; return []; });
+      if (entries.some(name => name !== ".lock")) throw new IdentityError("KEY_UNAVAILABLE", "Interrupted identity state requires operator recovery");
+      return { activeKid: null, keys: [] };
+    }
+    return { activeKid: manifest.activeKid ?? null, keys: await Promise.all(manifest.keys.map(key => this.readPublic(owner, key.kid))) };
+  }
   async readPublic(owner: AgentKeyOwner, kid: string): Promise<PublicAgentKey> {
     const manifest = await this.manifest(owner), version = manifest.keys.find(k => k.kid === kid);
     if (!version) throw new IdentityError("KEY_UNAVAILABLE", "Unknown local key version");
