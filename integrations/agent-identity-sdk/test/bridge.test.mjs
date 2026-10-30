@@ -57,3 +57,12 @@ posixTest('activation checks remote Agent, policy and kid before selecting the c
     assert.equal(activated.data.status.agentPrincipalId,77);
   } finally {server.closeAllConnections();await new Promise(resolve=>server.close(resolve));await rm(root,{recursive:true,force:true});}
 });
+
+posixTest('setup export emits only public policy inputs, before bindings or keys are prepared',async()=>{
+ const {writeFile}=await import('node:fs/promises');const root=await mkdtemp(path.join(tmpdir(),'akb-setup-'));
+ try{
+  const filename=path.join(root,'config.json');await writeFile(filename,JSON.stringify({configVersion:2,proofProfile:'AGENT_KEY_RS256_V2',...owner,issuer:'https://identity.example/agents',audience:'akb',origin:'https://akb.example',serviceKey:'NEVER_EXPORT_THIS',serviceKeyFile:'/private/key',keyStore:{rootDirectory:'/private/keys'},bindings:[]}),{mode:0o600});
+  const result=await new Promise((resolve,reject)=>{const child=spawn(process.execPath,[new URL('../dist/cli.js',import.meta.url).pathname,'setup','export',filename]);let out='',err='';child.stdout.on('data',c=>out+=c);child.stderr.on('data',c=>err+=c);child.on('error',reject);child.on('close',code=>resolve({code,out,err}));});
+  assert.equal(result.code,0,result.err);const value=JSON.parse(result.out);assert.equal(value.format,'akb-platform-setup/v1');assert.equal(value.workspaceId,'source');assert.ok(!result.out.includes('NEVER_EXPORT_THIS'));assert.ok(!result.out.includes('/private'));assert.equal(value.bindings,undefined);assert.equal(value.externalAgentId,undefined);
+ }finally{await rm(root,{recursive:true,force:true});}
+});

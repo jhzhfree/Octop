@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
-import { IdentityError, ownerIndex, ownerOf } from "./core.js";
+import { IdentityError, ownerIndex, ownerOf, identifier, canonicalOrigin, traceId } from "./core.js";
 import { NodeFileKeyStore, readProtectedFile } from "./keystore-node.js";
 import { loadNodeConfig } from "./node.js";
 import { proveRegistration } from "./registration.js";
@@ -13,6 +13,15 @@ const print = (data: unknown) => console.log(JSON.stringify(data, null, 2));
 const json = async (filename: string) => JSON.parse(await readProtectedFile(filename));
 async function main() {
   const [group, command, ...args] = process.argv.slice(2);
+  if (group === "setup" && command === "export" && args.length === 1) {
+    const config = await json(args[0]);
+    if (config.configVersion !== 2 || config.proofProfile !== "AGENT_KEY_RS256_V2" || !identifier(config.platformId) || !identifier(config.installationId) || !identifier(config.workspaceId)
+      || !traceId(config.audience) || typeof config.issuer !== "string" || config.issuer.length > 255) throw new IdentityError("PROTOCOL_UNSUPPORTED", "A V2 configuration with platform, installation, workspace, issuer and audience is required");
+    const issuer = new URL(config.issuer);
+    if (issuer.protocol !== "https:" || issuer.username || issuer.password || issuer.search || issuer.hash) throw new IdentityError("PROTOCOL_UNSUPPORTED", "Issuer must be an HTTPS identity URL");
+    print({format:"akb-platform-setup/v1",proofProfile:"AGENT_KEY_RS256_V2",platformId:config.platformId,installationId:config.installationId,workspaceId:config.workspaceId,issuer:config.issuer,audience:config.audience,resource:canonicalOrigin(config.origin,config.allowInsecureLoopback===true)});
+    return;
+  }
   if (group === "identity" && command === "create" && args.length === 4) {
     const [filename, platformId, installationId, workspaceId] = args;
     const owner = { platformId, installationId, workspaceId, externalAgentId: crypto.randomUUID() };
@@ -62,7 +71,7 @@ async function main() {
     }
     return;
   }
-  throw new IdentityError("PROTOCOL_UNSUPPORTED", "Usage: identity create <owner-file> <platform> <installation> <workspace>; agent init <root> <owner-file>; key rotate <root> <owner-file>; key export-public|retire|revoke <root> <owner-file> <kid>; key prove-registration <root> <binding-file> <kid> <challenge-file>; key select <config-file> <runtime-agent> <kid>; doctor <config-file>");
+  throw new IdentityError("PROTOCOL_UNSUPPORTED", "Usage: setup export <config-file>; identity create <owner-file> <platform> <installation> <workspace>; agent init <root> <owner-file>; key rotate <root> <owner-file>; key export-public|retire|revoke <root> <owner-file> <kid>; key prove-registration <root> <binding-file> <kid> <challenge-file>; key select <config-file> <runtime-agent> <kid>; doctor <config-file>");
 }
 main().catch(error => {
   console.error(error instanceof IdentityError ? `${error.code}: ${error.message}` : "Identity command failed; verify protected files and administrative inputs");

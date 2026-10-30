@@ -6980,7 +6980,18 @@
         "REVOKED": "Revoked"
       },
       "manage": "Configure Agent identity",
-      "v2RefsHint": "In V2 mode, select an Agent in Identity to test access. You can enter a knowledge base ID manually."
+      "v2RefsHint": "In V2 mode, select an Agent in Identity to test access. You can enter a knowledge base ID manually.",
+      "guidedTitle": "Exchange two public files to fill the connection settings",
+      "setupStep1": "1. Download this platform setup file. In AKB, open API Services → More → Credentials → Agent identity → Connect platform, upload it and follow the wizard.",
+      "downloadSetup": "Download AKB setup file",
+      "setupStep2": "2. After granting the application access in AKB, download its platform connection file and import it here. Enter the shared service key and save, then prepare each Agent public key below.",
+      "importConnection": "Import AKB connection file",
+      "setupPrivacy": "These files contain public connection settings only, without private keys or service keys. Do not upload complete configuration files.",
+      "setupImported": "Connection settings filled. Review and save; import does not change the authentication mode.",
+      "setupMismatch": "This file belongs to a different platform, installation, workspace or AKB origin. Select the correct AKB connection and download again.",
+      "setupInvalid": "Invalid AKB connection file. Export it with Download platform connection in AKB. Do not upload public key bundles, full configurations or credentials.",
+      "advancedParameters": "Connection settings (filled by import; manual setup if needed)",
+      "modeHelp": "Register, verify and select every Agent key before enabling V2. Unprepared Agents cannot access knowledge in V2 mode."
     }
   }
 }

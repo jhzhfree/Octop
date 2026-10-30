@@ -1,9 +1,16 @@
-import { useCallback, useEffect, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useState,
+  useRef,
+  type ChangeEvent,
+} from "react";
 import {
   Alert,
   App,
   Button,
   Descriptions,
+  Collapse,
   Drawer,
   Form,
   Input,
@@ -27,6 +34,8 @@ import {
   type ExternalKnowledgeChunk,
   type ExternalKnowledgeSource,
 } from "@/api/modules/externalKnowledge";
+
+import { platformSetup, readConnection, SetupFileError } from "./identitySetup";
 
 interface Props {
   source: ExternalKnowledgeSource | null;
@@ -54,6 +63,7 @@ export default function AgentIdentityDrawer({
   const { t } = useTranslation();
   const { message } = App.useApp();
   const [form] = Form.useForm<FormValues>();
+  const setupFile = useRef<HTMLInputElement>(null);
   const [state, setState] = useState<SourceIdentityState | null>(null);
   const [loading, setLoading] = useState(false),
     [busy, setBusy] = useState(false);
@@ -117,6 +127,32 @@ export default function AgentIdentityDrawer({
     } finally {
       setBusy(false);
     }
+  };
+  const importConnection = (event: ChangeEvent<HTMLInputElement>) => {
+    const target = event.target,
+      file = target.files?.[0];
+    if (!file || !state) return;
+    void act(async () => {
+      try {
+        if (file.size > 16384) throw new SetupFileError("invalid");
+        const values = readConnection(await file.text(), state);
+        form.setFieldsValue(values);
+        message.success(t(key + "setupImported"));
+      } catch (error) {
+        if (error instanceof SetupFileError)
+          throw new Error(
+            t(
+              key +
+                (error.reason === "mismatch"
+                  ? "setupMismatch"
+                  : "setupInvalid"),
+            ),
+          );
+        throw error;
+      } finally {
+        target.value = "";
+      }
+    });
   };
   const save = async () => {
     let values: FormValues;
@@ -260,6 +296,50 @@ export default function AgentIdentityDrawer({
                   description={t(key + "runtimeHelp")}
                 />
               )}
+              <div
+                style={{
+                  padding: 16,
+                  border: "1px solid var(--ant-color-border, #ddd)",
+                  borderRadius: 8,
+                }}
+              >
+                <Typography.Title level={5}>
+                  {t(key + "guidedTitle")}
+                </Typography.Title>
+                <Typography.Paragraph>
+                  {t(key + "setupStep1")}
+                </Typography.Paragraph>
+                <Button
+                  onClick={() =>
+                    download("akb-setup.json", platformSetup(state))
+                  }
+                >
+                  {t(key + "downloadSetup")}
+                </Button>
+                <Typography.Paragraph style={{ marginTop: 16 }}>
+                  {t(key + "setupStep2")}
+                </Typography.Paragraph>
+                <input
+                  hidden
+                  ref={setupFile}
+                  type="file"
+                  accept=".json,application/json"
+                  aria-label={t(key + "importConnection")}
+                  onChange={importConnection}
+                />
+                <Button
+                  disabled={busy}
+                  onClick={() => setupFile.current?.click()}
+                >
+                  {t(key + "importConnection")}
+                </Button>
+                <Typography.Paragraph
+                  type="secondary"
+                  style={{ marginTop: 12, marginBottom: 0 }}
+                >
+                  {t(key + "setupPrivacy")}
+                </Typography.Paragraph>
+              </div>
               <Descriptions bordered size="small" column={1}>
                 <Descriptions.Item label={t(key + "platform")}>
                   Octop {state.sdkVersion && <Tag>SDK {state.sdkVersion}</Tag>}
@@ -292,44 +372,59 @@ export default function AgentIdentityDrawer({
                 <Typography.Title level={5}>
                   {t(key + "policyTitle")}
                 </Typography.Title>
-                <Form.Item
-                  label={t(key + "appId")}
-                  name="applicationPrincipalId"
-                  rules={[
+                <Collapse
+                  style={{ marginBottom: 20 }}
+                  items={[
                     {
-                      pattern: /^$|^[1-9][0-9]{0,18}$/,
-                      message: t(key + "numericId"),
+                      key: "parameters",
+                      label: t(key + "advancedParameters"),
+                      forceRender: true,
+                      children: (
+                        <div>
+                          {" "}
+                          <Form.Item
+                            label={t(key + "appId")}
+                            name="applicationPrincipalId"
+                            rules={[
+                              {
+                                pattern: /^$|^[1-9][0-9]{0,18}$/,
+                                message: t(key + "numericId"),
+                              },
+                            ]}
+                          >
+                            <Input autoComplete="off" />
+                          </Form.Item>
+                          <Form.Item
+                            label={t(key + "policyId")}
+                            name="policyId"
+                            rules={[
+                              {
+                                pattern: /^$|^[1-9][0-9]{0,18}$/,
+                                message: t(key + "numericId"),
+                              },
+                            ]}
+                          >
+                            <Input autoComplete="off" />
+                          </Form.Item>
+                          <Form.Item
+                            label={t(key + "issuer")}
+                            name="issuer"
+                            rules={[{ required: true }, { type: "url" }]}
+                          >
+                            <Input />
+                          </Form.Item>
+                          <Form.Item
+                            label={t(key + "audience")}
+                            name="audience"
+                            rules={[{ required: true }]}
+                          >
+                            <Input />
+                          </Form.Item>
+                        </div>
+                      ),
                     },
                   ]}
-                >
-                  <Input autoComplete="off" />
-                </Form.Item>
-                <Form.Item
-                  label={t(key + "policyId")}
-                  name="policyId"
-                  rules={[
-                    {
-                      pattern: /^$|^[1-9][0-9]{0,18}$/,
-                      message: t(key + "numericId"),
-                    },
-                  ]}
-                >
-                  <Input autoComplete="off" />
-                </Form.Item>
-                <Form.Item
-                  label={t(key + "issuer")}
-                  name="issuer"
-                  rules={[{ required: true }, { type: "url" }]}
-                >
-                  <Input />
-                </Form.Item>
-                <Form.Item
-                  label={t(key + "audience")}
-                  name="audience"
-                  rules={[{ required: true }]}
-                >
-                  <Input />
-                </Form.Item>
+                />
                 <Form.Item
                   label={t(key + "serviceKey")}
                   name="apiKey"
@@ -340,7 +435,11 @@ export default function AgentIdentityDrawer({
                     disabled={!!source?.instance_id}
                   />
                 </Form.Item>
-                <Form.Item label={t(key + "mode")} name="mode">
+                <Form.Item
+                  label={t(key + "mode")}
+                  name="mode"
+                  extra={t(key + "modeHelp")}
+                >
                   <Select
                     options={[
                       { value: "LEGACY", label: t(key + "legacy") },

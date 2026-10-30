@@ -110,3 +110,7 @@ node dist/cli.js key rotate /var/lib/akb/keys /etc/akb/builder-owner.json
 The optional `akb-agent-identity-bridge` executable provides stdin/stdout IPC for trusted platform hosts such as Octop's dashboard backend. It reuses the same protected key store, registration proofs and AKB client. It is not an HTTP server or a model tool; only the host may supply the owner and runtime identity. Credentials are sent on stdin and never returned. Key selection requires a successful remote identity probe.
 
 See [dashboard setup and deployment](../agent-identity-spec/DASHBOARD-SETUP.md) for host installation, UI enrollment, security boundaries and frontend rebuild instructions.
+
+## Public onboarding export (0.3.1)
+
+`akb-agent-identity setup export /absolute/path/identity.json > akb-setup.json` exports only the public platform, installation, workspace, issuer, audience and canonical AKB origin for the AKB connection wizard. It works before Agent bindings and keys are enrolled. The protected V2 configuration stays on the host; credentials, key paths, private keys and Agent bindings are excluded. The command does not initialize keys, change registration or enable authentication.

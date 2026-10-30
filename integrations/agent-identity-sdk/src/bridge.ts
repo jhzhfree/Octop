@@ -22,7 +22,7 @@ interface HostRequest {
   request: KnowledgeRequest;
 }
 async function run(input: HostRequest): Promise<unknown> {
-  if (input.op === "capabilities") return { version: "0.3.0", supported: process.platform !== "win32" && Number(process.versions.node.split(".")[0]) >= 22 };
+  if (input.op === "capabilities") return { version: "0.3.1", supported: process.platform !== "win32" && Number(process.versions.node.split(".")[0]) >= 22 };
   if (Number(process.versions.node.split(".")[0]) < 22) throw new IdentityError("PROTOCOL_UNSUPPORTED", "Node 22 or later is required");
   ownerIndex(input.owner);
   const store = await NodeFileKeyStore.open(input.root);
