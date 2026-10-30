@@ -1,11 +1,27 @@
 {
   "name": "@akb/agent-keygen",
-  "version": "1.0.0",
-  "description": "Offline RSA Agent key-pair generator. No platform SDK, network service or dependencies.",
+  "version": "1.1.0",
+  "description": "Offline RSA Agent key-pair generator. No platform SDK, network service or runtime dependencies.",
   "license": "MIT",
   "type": "module",
-  "bin": {"agent-keygen": "keygen.mjs"},
-  "files": ["keygen.mjs", "README.md", "LICENSE"],
-  "scripts": {"test": "node --test test/*.test.mjs"},
-  "engines": {"node": ">=22"}
+  "bin": {
+    "agent-keygen": "keygen.cjs"
+  },
+  "files": [
+    "keygen.cjs",
+    "sea-config.json",
+    "build-exe.mjs",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "build:exe": "node build-exe.mjs"
+  },
+  "devDependencies": {
+    "postject": "1.0.0-alpha.6"
+  },
+  "engines": {
+    "node": ">=22"
+  }
 }
