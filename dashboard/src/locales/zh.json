@@ -6930,7 +6930,7 @@
     "simple": {
       "title": "绑定 Agent · {{name}}",
       "stepGenerate": "生成密钥对",
-      "stepGenerateHelp": "运行离线生成器 tools/agent-keygen（node keygen.cjs generate --out 目录），得到 identity.json、public.jwk 和 private.pem，私钥只留在本机。",
+      "stepGenerateHelp": "在下方填入或随机一个 Agent ID，点「生成并下载 zip」即可得到 identity.json、public.jwk 和 private.pem；私钥只留在本机。",
       "stepImport": "在 AKB 登记公钥",
       "stepImportHelp": "在 AKB 打开「Agent 接入 → 添加 Agent」，导入 public.jwk，并填写 identity.json 里的 agentId。",
       "stepBind": "在这里完成绑定",
@@ -6964,7 +6964,15 @@
       "query": "输入测试问题",
       "testSearch": "测试检索",
       "empty": "认证请求已完成，未找到匹配内容。请检查知识库范围、发布及索引状态。",
-      "privateRequired": "首次绑定请导入 private.pem 或粘贴对应私钥"
+      "privateRequired": "首次绑定请导入 private.pem 或粘贴对应私钥",
+      "keygenTitle": "生成密钥对",
+      "keygenHelp": "在浏览器本地生成 RSA-3072 密钥对，产物与离线生成器完全一致。私钥不会上传服务器；下载 zip 后，Agent ID 与私钥已自动填入下方表单。zip 落在浏览器的下载目录，权限由该目录决定；需要强制 0600 / 仅本人可读写时请仍使用离线生成器。",
+      "keygenIdPlaceholder": "AKB 登记的 Agent ID（小写 UUID）",
+      "randomAgentId": "随机生成",
+      "generate": "生成并下载 zip",
+      "keygenUnsafe": "当前页面不是安全上下文（需 https 或 localhost），浏览器不允许生成密钥。请改用离线生成器 tools/agent-keygen。",
+      "copyJwk": "复制 public.jwk（可粘贴到 AKB）",
+      "generated": "密钥对已生成并打包下载，Agent ID 与私钥已填入下方表单。"
     }
   }
 }

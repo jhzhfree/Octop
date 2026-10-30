@@ -3,6 +3,7 @@ import {
   Alert,
   App,
   Button,
+  Card,
   Drawer,
   Form,
   Input,
@@ -23,6 +24,16 @@ import {
   externalKnowledgeApi,
   type ExternalKnowledgeSource,
 } from "@/api/modules/externalKnowledge";
+import { saveBlobAsFile } from "@/utils/saveBlobAsFile";
+import {
+  archiveName,
+  canGenerate,
+  generateAgentKeyPair,
+  isAgentId,
+  keyPairArchive,
+  randomAgentId,
+  type AgentKeyPair,
+} from "./agentKeygen";
 
 interface Props {
   source: ExternalKnowledgeSource | null;
@@ -49,6 +60,8 @@ export default function SimpleAgentBindingDrawer({
   const [apiKey, setApiKey] = useState("");
   const [query, setQuery] = useState(""),
     [result, setResult] = useState<string | null>(null);
+  const [newId, setNewId] = useState(""),
+    [generated, setGenerated] = useState<AgentKeyPair | null>(null);
   const selected = Form.useWatch("agentId", form);
   const file = useRef<HTMLInputElement>(null);
   const generation = useRef(0);
@@ -66,6 +79,8 @@ export default function SimpleAgentBindingDrawer({
     setApiKey("");
     setQuery("");
     setResult(null);
+    setGenerated(null);
+    setNewId(canGenerate() ? randomAgentId() : "");
     form.resetFields();
     if (source) void load().catch(() => setError(t(k + "loadFailed")));
     return () => {
@@ -117,6 +132,18 @@ export default function SimpleAgentBindingDrawer({
       message.success(t(k + "connected"));
     });
   }
+  async function generate() {
+    await act(async () => {
+      const pair = await generateAgentKeyPair(newId);
+      await saveBlobAsFile(await keyPairArchive(pair), archiveName(pair));
+      setGenerated(pair);
+      form.setFieldsValue({
+        externalAgentId: pair.agentId,
+        privateKey: pair.privatePem,
+      });
+      setResult(null);
+    });
+  }
   const active = state?.agents.filter((a) => a.externalAgentId) ?? [];
   const step = active.length ? 2 : 1;
   return (
@@ -145,6 +172,52 @@ export default function SimpleAgentBindingDrawer({
             { title: t(k + "stepBind"), description: t(k + "stepBindHelp") },
           ]}
         />
+        <Card size="small" title={t(k + "keygenTitle")}>
+          <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+            <Typography.Text type="secondary">
+              {t(k + "keygenHelp")}
+            </Typography.Text>
+            <Space.Compact style={{ width: "100%" }}>
+              <Input
+                value={newId}
+                disabled={busy}
+                style={{ flex: 1 }}
+                onChange={(e) => setNewId(e.target.value)}
+                placeholder={t(k + "keygenIdPlaceholder")}
+              />
+              <Button
+                disabled={busy || !canGenerate()}
+                onClick={() => setNewId(randomAgentId())}
+              >
+                {t(k + "randomAgentId")}
+              </Button>
+              <Button
+                type="primary"
+                loading={busy}
+                disabled={!canGenerate() || !isAgentId(newId)}
+                onClick={() => void generate()}
+              >
+                {t(k + "generate")}
+              </Button>
+            </Space.Compact>
+            {!canGenerate() && (
+              <Alert type="warning" showIcon message={t(k + "keygenUnsafe")} />
+            )}
+            {generated && (
+              <Space direction="vertical" size={4}>
+                <Typography.Text>{t(k + "generated")}</Typography.Text>
+                <Typography.Text copyable={{ tooltips: false }}>
+                  {generated.kid}
+                </Typography.Text>
+                <Typography.Text
+                  copyable={{ text: generated.publicJwk, tooltips: false }}
+                >
+                  {t(k + "copyJwk")}
+                </Typography.Text>
+              </Space>
+            )}
+          </Space>
+        </Card>
         {error && <Alert type="error" showIcon message={error} />}
         {!state?.runtimeReady && (
           <Alert type="warning" showIcon message={t(k + "runtimeMissing")} />

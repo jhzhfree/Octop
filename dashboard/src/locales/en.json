@@ -6931,7 +6931,7 @@
     "simple": {
       "title": "Bind Agent · {{name}}",
       "stepGenerate": "Generate a key pair",
-      "stepGenerateHelp": "Run the offline generator in tools/agent-keygen (node keygen.cjs generate --out DIR) to get identity.json, public.jwk and private.pem. Keep the private key on this host.",
+      "stepGenerateHelp": "Enter or randomize an Agent ID below, then choose 'Generate and download zip' to get identity.json, public.jwk and private.pem. Keep the private key on this host.",
       "stepImport": "Register the public key in AKB",
       "stepImportHelp": "In AKB, open Agent access → Add Agent, import public.jwk and enter the agentId from identity.json.",
       "stepBind": "Bind it here",
@@ -6966,7 +6966,15 @@
       "query": "Enter a test question",
       "testSearch": "Test retrieval",
       "empty": "Authenticated request completed with no matching content. Check knowledge scope, publication and indexing.",
-      "privateRequired": "Import private.pem or paste the matching private key for the first binding"
+      "privateRequired": "Import private.pem or paste the matching private key for the first binding",
+      "keygenTitle": "Generate a key pair",
+      "keygenHelp": "Generates an RSA-3072 pair locally in the browser, identical to what the offline generator writes. The private key is never uploaded; after the zip download, the Agent ID and private key are filled into the form below. The zip lands in the browser download folder, so its permissions follow that folder; use the offline generator when you need enforced owner-only 0600.",
+      "keygenIdPlaceholder": "Agent ID registered in AKB (lowercase UUID)",
+      "randomAgentId": "Randomize",
+      "generate": "Generate and download zip",
+      "keygenUnsafe": "This page is not a secure context (https or localhost is required), so the browser refuses to generate keys. Use the offline generator in tools/agent-keygen instead.",
+      "copyJwk": "Copy public.jwk (paste it into AKB)",
+      "generated": "Key pair generated and downloaded; the Agent ID and private key are filled in below."
     }
   }
 }
