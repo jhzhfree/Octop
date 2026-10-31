@@ -15,7 +15,8 @@ export declare function sha256(v: Uint8Array): Promise<string>;
 export declare function publicKid(jwk: Pick<RsaPublicJwk, "e" | "kty" | "n">): Promise<string>;
 export declare function ownerIndex(owner: AgentKeyOwner): string;
 export declare function ownerOf(binding: AgentBinding): AgentKeyOwner;
-export declare function canonicalOrigin(value: string, insecureLoopback?: boolean): string;
+export declare function isPrivateHost(hostname: string): boolean;
+export declare function canonicalOrigin(value: string, insecureLoopback?: boolean, allowPrivateHttp?: boolean): string;
 export declare function signJws(claims: Record<string, unknown>, signer: RsaSigner, type: string, signal: AbortSignal): Promise<string>;
 export interface Invocation {
     readonly sessionId: string;

@@ -29,11 +29,24 @@ export function ownerIndex(owner: AgentKeyOwner): string {
 export function ownerOf(binding: AgentBinding): AgentKeyOwner {
   return Object.freeze({ platformId: binding.platformId, installationId: binding.installationId, workspaceId: binding.workspaceId, externalAgentId: binding.externalAgentId });
 }
-export function canonicalOrigin(value: string, insecureLoopback = false): string {
+/** RFC1918 (plus link-local) literal IPv4 ranges, for private-network HTTP. */
+const PRIVATE_IPV4 = [/^10\./, /^192\.168\./, /^169\.254\./, /^172\.(1[6-9]|2\d|3[01])\./];
+export function isPrivateHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (["localhost", "127.0.0.1", "::1"].includes(host)) return true;
+  if (/^(fc|fd|fe80)/.test(host)) return true; // IPv6 unique-local / link-local
+  return /^\d+\.\d+\.\d+\.\d+$/.test(host) && PRIVATE_IPV4.some(range => range.test(host));
+}
+export function canonicalOrigin(value: string, insecureLoopback = false, allowPrivateHttp = false): string {
   const url = new URL(value);
   const loopback = insecureLoopback && url.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname);
-  if ((!loopback && url.protocol !== "https:") || url.username || url.password || url.pathname !== "/" || url.search || url.hash) {
-    throw new IdentityError("PROTOCOL_UNSUPPORTED", "AKB origin must be HTTPS (explicit loopback development override only)");
+  // Deployments inside a trusted LAN often cannot terminate TLS at the AKB
+  // host; that stays opt-in and is limited to private address space.
+  const privateHttp = allowPrivateHttp && url.protocol === "http:" && isPrivateHost(url.hostname);
+  if ((url.protocol !== "https:" && !loopback && !privateHttp) || url.username || url.password || url.pathname !== "/" || url.search || url.hash) {
+    throw new IdentityError("PROTOCOL_UNSUPPORTED", allowPrivateHttp
+      ? "AKB origin must be HTTPS, an explicit loopback override, or a private-network host"
+      : "AKB origin must be HTTPS (explicit loopback development override only)");
   }
   return url.origin;
 }

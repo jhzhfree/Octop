@@ -6,7 +6,7 @@ export { IdentityError } from "./core.js";
 
 export function createRuntime<NativeContext>(dependencies: RuntimeDependencies<NativeContext>): AgentIdentityRuntime<NativeContext> {
   const bindings = Object.freeze(dependencies.bindings.map(value => Object.freeze({ ...value })));
-  const keys = new Set<string>(), origin = canonicalOrigin(dependencies.origin, dependencies.allowInsecureLoopback);
+  const keys = new Set<string>(), origin = canonicalOrigin(dependencies.origin, dependencies.allowInsecureLoopback, dependencies.allowPrivateHttp);
   for (const binding of bindings) {
     ownerIndex(binding);
     if (!identifier(binding.runtimeAgentKey) || !/^\d+$/.test(binding.policyId) || !/^\d+$/.test(binding.bindingId)
@@ -16,7 +16,7 @@ export function createRuntime<NativeContext>(dependencies: RuntimeDependencies<N
     if (keys.has(key)) throw new IdentityError("AGENT_UNREGISTERED", "Ambiguous runtime Agent binding");
     keys.add(key);
   }
-  const client = new AkbKnowledgeClient(dependencies.credentials, origin, dependencies.transport, dependencies.timeoutMs, dependencies.allowInsecureLoopback);
+  const client = new AkbKnowledgeClient(dependencies.credentials, origin, dependencies.transport, dependencies.timeoutMs, dependencies.allowInsecureLoopback, dependencies.allowPrivateHttp);
   return {
     async invoke(native: NativeContext, request: KnowledgeRequest) {
       // This must execute on the host fiber, before the first await.

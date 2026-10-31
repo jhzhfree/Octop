@@ -12,6 +12,7 @@ import json
 from typing import Any
 
 from octop.infra.knowledge.akb_identity import OctopIdentity, issue_assertion
+from octop.infra.knowledge.external.adapters._auth import auth_headers
 from octop.infra.knowledge.external.http import (
     drop_api_prefix,
     post_json,
@@ -54,11 +55,8 @@ def _url(spec: ExternalSourceSpec) -> str:
 
 
 def _headers(spec: ExternalSourceSpec, creds: dict[str, Any]) -> dict[str, str]:
-    api_key = str(creds.get("api_key") or "").strip()
-    if not api_key:
-        raise ExternalSourceError("INVALID_ARGUMENT", "AKB API key is missing", origin=ORIGIN)
     headers = {
-        "X-API-Key": api_key,
+        **auth_headers(creds, origin=ORIGIN),
         "Content-Type": "application/json",
         "Accept": "application/json, text/event-stream",
     }
@@ -185,8 +183,9 @@ async def search(
     )
 
 
-async def _initialize(spec: ExternalSourceSpec, creds: dict[str, Any]) -> str:
-    result = await _rpc(
+async def _initialize(spec: ExternalSourceSpec, creds: dict[str, Any]) -> dict[str, Any]:
+    """Run the MCP handshake and return the server's full answer."""
+    return await _rpc(
         _url(spec),
         spec,
         creds,
@@ -198,8 +197,10 @@ async def _initialize(spec: ExternalSourceSpec, creds: dict[str, Any]) -> str:
         },
         timeout=spec.timeout_seconds,
     )
-    negotiated = result.get("protocolVersion")
-    return negotiated if isinstance(negotiated, str) else ""
+
+
+def _as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
 
 
 async def list_refs(spec: ExternalSourceSpec, creds: dict[str, Any]) -> list[dict[str, str]]:
@@ -227,7 +228,15 @@ async def list_refs(spec: ExternalSourceSpec, creds: dict[str, Any]) -> list[dic
 
 async def probe(spec: ExternalSourceSpec, creds: dict[str, Any]) -> SourceProbeResult:
     url = _url(spec)
-    negotiated = await _initialize(spec, creds)
+    hello = await _initialize(spec, creds)
+    negotiated = hello.get("protocolVersion")
+    negotiated = negotiated if isinstance(negotiated, str) else ""
+    # What the server advertises at handshake: it tells the operator whether
+    # they reached the intended deployment and which tools it offers.
+    server_info = _as_dict(hello.get("serverInfo"))
+    capabilities = _as_dict(hello.get("capabilities"))
+    raw_instructions = hello.get("instructions")
+    instructions = raw_instructions if isinstance(raw_instructions, str) else ""
     listed = await _rpc(
         url, spec, creds, "tools/list", {}, timeout=spec.timeout_seconds, request_id=2
     )
@@ -243,6 +252,10 @@ async def probe(spec: ExternalSourceSpec, creds: dict[str, Any]) -> SourceProbeR
             ok=False,
             message="AKB granted no search or query tool",
             tools=tools,
+            protocol_version=negotiated,
+            server_info=server_info,
+            capabilities=capabilities,
+            instructions=instructions,
         )
     refs: list[dict[str, str]] = []
     if "list_knowledge_bases" in tools:
@@ -251,4 +264,13 @@ async def probe(spec: ExternalSourceSpec, creds: dict[str, Any]) -> SourceProbeR
         except ExternalSourceError:
             refs = []
     suffix = f" (protocol {negotiated})" if negotiated else ""
-    return SourceProbeResult(ok=True, message=f"AKB reachable{suffix}", tools=tools, refs=refs)
+    return SourceProbeResult(
+        ok=True,
+        message=f"AKB reachable{suffix}",
+        tools=tools,
+        refs=refs,
+        protocol_version=negotiated,
+        server_info=server_info,
+        capabilities=capabilities,
+        instructions=instructions,
+    )

@@ -222,6 +222,51 @@ async def test_akb_mcp_signs_a_fresh_assertion_per_request(
     assert all(jtis) and jtis[0] != jtis[1]
 
 
+@pytest.mark.asyncio
+async def test_akb_mcp_sends_the_key_as_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A gateway that strips custom headers forces ``Authorization: Bearer``."""
+    seen: list[dict[str, Any]] = []
+
+    async def fake_post_json(url: str, **kwargs: Any) -> Any:
+        seen.append(kwargs["headers"])
+        return {"result": {"protocolVersion": "2025-06-18"}}
+
+    monkeypatch.setattr(akb_mcp, "post_json", fake_post_json)
+    await akb_mcp.probe(_spec(kind="akb-mcp"), {"api_key": "k"})
+    assert seen[0]["X-API-Key"] == "k"
+
+    seen.clear()
+    await akb_mcp.probe(_spec(kind="akb-mcp"), {"api_key": "k", "api_key_header": "authorization"})
+    assert "X-API-Key" not in seen[0]
+    assert seen[0]["Authorization"] == "Bearer k"
+
+
+@pytest.mark.asyncio
+async def test_akb_mcp_probe_reports_the_handshake(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The initialize answer is the operator's proof of what they connected to."""
+
+    async def fake_post_json(url: str, **kwargs: Any) -> Any:
+        if kwargs["payload"]["method"] == "initialize":
+            return {
+                "result": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {"tools": {"listChanged": False}},
+                    "serverInfo": {"name": "knowledge-os", "version": "1.2.0"},
+                    "instructions": "优先用 knowledge_query",
+                }
+            }
+        return {"result": {"tools": [{"name": "knowledge_query"}]}}
+
+    monkeypatch.setattr(akb_mcp, "post_json", fake_post_json)
+    result = await akb_mcp.probe(_spec(kind="akb-mcp"), {"api_key": "k"})
+    assert result.ok is True
+    assert result.protocol_version == "2025-06-18"
+    assert result.server_info == {"name": "knowledge-os", "version": "1.2.0"}
+    assert result.capabilities == {"tools": {"listChanged": False}}
+    assert result.instructions == "优先用 knowledge_query"
+    assert result.tools == ["knowledge_query"]
+
+
 def test_akb_rest_accepts_a_pasted_retrieval_url() -> None:
     """Pasting the whole retrieval URL must not produce a doubled path."""
     pasted = _spec(

@@ -18,11 +18,11 @@ export class AkbKnowledgeClient {
     transport;
     timeoutMs;
     origin;
-    constructor(credentials, origin, transport, timeoutMs = 15000, insecureLoopback = false) {
+    constructor(credentials, origin, transport, timeoutMs = 15000, insecureLoopback = false, allowPrivateHttp = false) {
         this.credentials = credentials;
         this.transport = transport;
         this.timeoutMs = timeoutMs;
-        this.origin = canonicalOrigin(origin, insecureLoopback);
+        this.origin = canonicalOrigin(origin, insecureLoopback, allowPrivateHttp);
         if (!["mcp", "rest"].includes(transport) || !Number.isInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 60000)
             throw new IdentityError("PROTOCOL_UNSUPPORTED", "Invalid transport settings");
     }

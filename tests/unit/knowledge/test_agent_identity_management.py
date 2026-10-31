@@ -329,3 +329,130 @@ async def test_generate_api_filters_private_fields_and_documents_public_response
         "post"
     ]["responses"]["200"]["content"]["application/json"]["schema"]
     assert schema["$ref"].endswith("GeneratedAgentKeyResponse")
+
+
+@pytest.mark.asyncio
+async def test_describe_reports_saved_state_without_exposing_secrets(setup):
+    svc, _sources, _repo, source, user, _, sdk = setup
+    sdk.return_value = {"supported": True, "version": "0.4.0", "activeKid": None}
+    fresh = await svc.describe(source, user, False)
+    assert fresh["serviceKeySaved"] is True
+    assert all(a["publicJwk"] is None and a["keySaved"] is False for a in fresh["agents"])
+    await _connect(svc, sdk, source, "alpha", user, ALPHA)
+    kid = "k" * 43
+    sdk.return_value = {
+        "supported": True,
+        "activeKid": kid,
+        "keys": [{"kid": kid, "publicJwk": {"kty": "RSA", "n": "public-n", "e": "AQAB"}}],
+    }
+    result = await svc.describe(source, user, False)
+    alpha = next(a for a in result["agents"] if a["agentId"] == "alpha")
+    assert alpha["activeKid"] == kid
+    assert alpha["publicJwk"]["n"] == "public-n"
+    assert alpha["keySaved"] is True
+    assert "shared-test-key" not in str(result)
+
+
+@pytest.mark.asyncio
+async def test_agent_id_change_requires_fresh_key_material(setup):
+    svc, sources, repo, source, user, _, sdk = setup
+    await _connect(svc, sdk, source, "alpha", user, ALPHA)
+    sdk.return_value = {
+        "binding": _binding(BETA),
+        "status": {"agentId": BETA},
+        "activeKid": "k" * 43,
+    }
+    with pytest.raises(OctopError):
+        await svc.connect(source, "alpha", user, False, BETA, "")
+    assert sources.identity_config(repo.get(source))["agents"]["alpha"]["externalAgentId"] == ALPHA
+    await svc.connect(source, "alpha", user, False, BETA, "ROTATED-PRIVATE-MATERIAL")
+    stored = sources.identity_config(repo.get(source))["agents"]["alpha"]
+    assert stored["externalAgentId"] == BETA
+    assert "ROTATED-PRIVATE-MATERIAL" not in str(stored)
+
+
+def test_bridge_lookup_explains_a_missing_host_runtime(monkeypatch, tmp_path: Path):
+    bridge = tmp_path / "bridge.js"
+    bridge.write_text("// bridge")
+    monkeypatch.setenv("OCTOP_AGENT_IDENTITY_SDK_BRIDGE", str(bridge))
+    monkeypatch.setattr(identity.shutil, "which", lambda name: "node" if name == "node" else None)
+    assert identity._sdk_path() == ("node", str(bridge))
+    assert identity._sdk_problem() is None
+    # A checkout without the SDK at all must say so instead of failing generically.
+    monkeypatch.setattr(identity, "_bridge_script", lambda: None)
+    assert identity._sdk_problem() == "bridge-missing"
+    monkeypatch.setattr(identity.shutil, "which", lambda name: None)
+    assert identity._sdk_problem() == "node-missing"
+
+
+@pytest.mark.asyncio
+async def test_unavailable_runtime_explains_itself_in_error_details(monkeypatch):
+    monkeypatch.setattr(identity, "_bridge_script", lambda: None)
+    with pytest.raises(OctopError) as err:
+        await identity.sdk_call({"op": "capabilities"})
+    assert err.value.code == ErrorCode.AGENT_IDENTITY_UNAVAILABLE
+    assert err.value.details["reason"] == "bridge-missing"
+
+
+@pytest.mark.asyncio
+async def test_describe_reports_why_the_host_runtime_is_unavailable(setup):
+    svc, _sources, _repo, source, user, _, sdk = setup
+    sdk.side_effect = OctopError.localized(ErrorCode.AGENT_IDENTITY_UNAVAILABLE)
+    result = await svc.describe(source, user, False)
+    assert result["runtimeReady"] is False
+    assert result["runtimeReason"] == "bridge-failed"
+    sdk.side_effect = None
+    sdk.return_value = {"supported": False}
+    result = await svc.describe(source, user, False)
+    assert result["runtimeReady"] is False
+    assert result["runtimeReason"] == "unsupported"
+    sdk.return_value = {"supported": True}
+    assert (await svc.describe(source, user, False))["runtimeReason"] is None
+
+
+def _row(endpoint: str, insecure: bool) -> SimpleNamespace:
+    return SimpleNamespace(endpoint=endpoint, allow_insecure_http=insecure)
+
+
+@pytest.mark.parametrize(
+    "endpoint,insecure,allowed",
+    [
+        ("https://akb.example", False, True),
+        ("http://127.0.0.1:8088", True, True),
+        ("http://localhost:8088", True, True),
+        # A trusted LAN often cannot terminate TLS at the AKB host.
+        ("http://172.16.2.47:8088", True, True),
+        ("http://192.168.24.201:8088", True, True),
+        ("http://10.0.0.5", True, True),
+        # ...but the override never extends to the public internet.
+        ("http://8.8.8.8", True, False),
+        ("http://172.32.0.1", True, False),
+        ("http://akb.example", True, False),
+        ("http://172.16.2.47:8088", False, False),
+        # A pasted MCP endpoint is stripped, the way plain retrieval already does.
+        ("http://192.168.24.201:8088/api/mcp", True, True),
+        ("https://akb.example/api", False, True),
+        ("https://user:pw@akb.example", False, False),
+    ],
+)
+def test_origin_check_matches_the_sdk(endpoint: str, insecure: bool, allowed: bool) -> None:
+    if allowed:
+        identity._require_origin(_row(endpoint, insecure))
+        return
+    with pytest.raises(OctopError) as err:
+        identity._require_origin(_row(endpoint, insecure))
+    assert err.value.details["reason"] == "origin-unsupported"
+
+
+@pytest.mark.parametrize(
+    "endpoint,expected",
+    [
+        ("http://192.168.24.201:8088/api/mcp", "http://192.168.24.201:8088"),
+        ("https://akb.example/api/v1/external", "https://akb.example"),
+        ("https://akb.example:8443", "https://akb.example:8443"),
+        ("http://[fd00::1]:8088/api/mcp", "http://[fd00::1]:8088"),
+        ("https://akb.example", "https://akb.example"),
+    ],
+)
+def test_sdk_origin_strips_the_pasted_path(endpoint: str, expected: str) -> None:
+    assert identity._sdk_origin(endpoint) == expected

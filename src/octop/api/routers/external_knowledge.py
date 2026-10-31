@@ -57,6 +57,8 @@ class SourceCreateBody(BaseModel):
     display_name: str = Field(min_length=1, max_length=120)
     endpoint: str = Field(min_length=1, max_length=2048)
     api_key: str = Field(default="", max_length=2048)
+    # How the key is sent: "x-api-key" (default) or "authorization" (Bearer).
+    api_key_header: str = Field(default="", max_length=32)
     instance_id: str = Field(default="", max_length=120)
     ref: str = Field(default="", max_length=255)
     top_k: int = Field(default=DEFAULT_TOP_K, ge=1, le=MAX_TOP_K)
@@ -76,6 +78,7 @@ class SourcePatchBody(BaseModel):
     display_name: str | None = Field(default=None, min_length=1, max_length=120)
     endpoint: str | None = Field(default=None, min_length=1, max_length=2048)
     api_key: str | None = Field(default=None, max_length=2048)
+    api_key_header: str | None = Field(default=None, max_length=32)
     ref: str | None = Field(default=None, max_length=255)
     top_k: int | None = Field(default=None, ge=1, le=MAX_TOP_K)
     min_score: float | None = Field(default=None, ge=0.0, le=1.0)
@@ -141,6 +144,7 @@ async def create_source(
             display_name=body.display_name,
             endpoint=body.endpoint,
             api_key=body.api_key,
+            api_key_header=body.api_key_header,
             instance_id=body.instance_id,
             ref=body.ref,
             top_k=body.top_k,

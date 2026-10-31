@@ -18,6 +18,8 @@ export interface NodeIdentityConfig {
   keyStore: { provider: "node-file"; rootDirectory: string };
   bindings: AgentBinding[];
   allowInsecureLoopback?: boolean;
+  /** Opt in to plain HTTP against private address space (RFC1918 / link-local). */
+  allowPrivateHttp?: boolean;
   timeoutMs?: number;
 }
 export async function loadNodeConfig(filename: string, workspace: string): Promise<NodeIdentityConfig> {
@@ -27,7 +29,7 @@ export async function loadNodeConfig(filename: string, workspace: string): Promi
     || !identifier(config.platformId) || !identifier(config.installationId) || !identifier(config.workspaceId)
     || !Array.isArray(config.bindings) || config.bindings.length === 0 || config.bindings.length > 100
     || await realpath(config.workspaceRoot) !== root) throw new IdentityError("PROTOCOL_UNSUPPORTED", "Invalid V2 identity configuration");
-  const origin = canonicalOrigin(config.origin, config.allowInsecureLoopback);
+  const origin = canonicalOrigin(config.origin, config.allowInsecureLoopback, config.allowPrivateHttp);
   for (const b of config.bindings) if (b.platformId !== config.platformId || b.installationId !== config.installationId
     || b.workspaceId !== config.workspaceId || b.resource !== origin) throw new IdentityError("AGENT_UNREGISTERED", "Binding scope does not match installation configuration");
   return config;
@@ -38,6 +40,7 @@ export async function loadNodeRuntime<NativeContext>(filename: string, workspace
   return createRuntime({ adapter, bindings: config.bindings, keyStore,
     credentials: { async readServiceKey(signal) { signal.throwIfAborted(); return (await readProtectedFile(config.serviceKeyFile, approved)).trim(); } },
     origin: config.origin, transport: config.transport, timeoutMs: config.timeoutMs, allowInsecureLoopback: config.allowInsecureLoopback,
+    allowPrivateHttp: config.allowPrivateHttp,
     async validateWorkspace(directory) { try { return await realpath(directory) === approved; } catch { return false; } },
   });
 }
@@ -51,7 +54,7 @@ export async function loadSimpleNodeRuntime<NativeContext>(filename: string, wor
     throw new IdentityError("PROTOCOL_UNSUPPORTED","Invalid simplified identity configuration");
   }
   const credentials={async readServiceKey(signal:AbortSignal){signal.throwIfAborted();return (await readProtectedFile(config.serviceKeyFile,approved)).trim();}};
-  const client=new AkbKnowledgeClient(credentials,config.origin,config.transport,config.timeoutMs,config.allowInsecureLoopback);
+  const client=new AkbKnowledgeClient(credentials,config.origin,config.transport,config.timeoutMs,config.allowInsecureLoopback,config.allowPrivateHttp);
   const store=await NodeFileKeyStore.open(config.keyStore.rootDirectory,approved);
   const bindings:AgentBinding[]=[];const mapping=new Map<string,AgentBinding>();const ids=new Set<string>();
   for(const local of config.agents){

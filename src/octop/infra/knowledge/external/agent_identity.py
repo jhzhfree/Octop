@@ -7,6 +7,7 @@ never leave the host. Model tool arguments never choose a signing identity.
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import logging
 import os
@@ -16,6 +17,7 @@ from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from octop.infra.db.repos.agents import AgentRepo
 from octop.infra.db.repos.external_knowledge import ExternalSourceRow
@@ -34,26 +36,129 @@ def _invalid() -> OctopError:
     return OctopError.localized(ErrorCode.AGENT_IDENTITY_INVALID)
 
 
+def _bridge_script() -> str | None:
+    """Locates the bundled host bridge, falling back to a global install.
+
+    The checkout depth differs between a source run and an installed layout, so
+    every plausible ancestor is searched instead of one fixed level.
+    """
+    configured = os.environ.get("OCTOP_AGENT_IDENTITY_SDK_BRIDGE", "").strip()
+    if configured:
+        return configured if Path(configured).is_file() else None
+    for parent in list(Path(__file__).resolve().parents)[:8]:
+        candidate = parent / "integrations" / "agent-identity-sdk" / "dist" / "bridge.js"
+        if candidate.is_file():
+            return str(candidate)
+    return shutil.which("akb-agent-identity-bridge")
+
+
 def _sdk_path() -> tuple[str, str] | None:
     node = shutil.which("node")
-    configured = os.environ.get("OCTOP_AGENT_IDENTITY_SDK_BRIDGE", "").strip()
-    candidate = (
-        Path(configured)
-        if configured
-        else Path(__file__).resolve().parents[5] / "integrations/agent-identity-sdk/dist/bridge.js"
-    )
-    script = (
-        str(candidate)
-        if candidate.is_absolute() and candidate.is_file()
-        else shutil.which("akb-agent-identity-bridge")
-    )
+    script = _bridge_script()
     return (node, script) if node and script else None
+
+
+def _sdk_problem() -> str | None:
+    """Why the host bridge cannot run, for the UI to explain to the operator."""
+    if shutil.which("node") is None:
+        return "node-missing"
+    if _bridge_script() is None:
+        return "bridge-missing"
+    return None
+
+
+def _stderr_hint(stderr: bytes, limit: int = 200) -> str:
+    return stderr.decode("utf-8", "replace").strip().replace("\n", " ")[:limit]
+
+
+_PRIVATE_IPV4 = (
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("169.254.0.0/16"),
+)
+
+
+def _is_private_host(host: str) -> bool:
+    """Private address space, mirroring the SDK's opt-in plain-HTTP range."""
+    if host in {"localhost", "127.0.0.1", "::1"}:
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    if isinstance(address, ipaddress.IPv6Address):
+        return bool(address.is_private or address.is_link_local)
+    return any(address in network for network in _PRIVATE_IPV4)
+
+
+def _sdk_origin(endpoint: str) -> str:
+    """Reduce the stored endpoint to the bare origin the SDK needs.
+
+    The SDK appends its own paths (``/api/mcp``, ``/api/v1/external/...``), so a
+    pasted MCP endpoint has to be stripped. Plain retrieval already tolerates
+    that form, and a source should not bind one way and fail the other.
+    """
+    parts = urlsplit((endpoint or "").strip())
+    host = parts.hostname or ""
+    if not parts.scheme or not host:
+        return (endpoint or "").strip().rstrip("/")
+    authority = f"[{host}]" if ":" in host else host
+    if parts.port:
+        authority = f"{authority}:{parts.port}"
+    return f"{parts.scheme}://{authority}"
+
+
+def _require_origin(row: ExternalSourceRow) -> None:
+    """Reject endpoints the SDK's origin check would refuse anyway.
+
+    The SDK answers those with a bare ``PROTOCOL_UNSUPPORTED``, which tells the
+    operator nothing; naming the scheme and host lets them fix the endpoint.
+    """
+    raw = urlsplit((row.endpoint or "").strip())
+    parts = urlsplit(_sdk_origin(row.endpoint))
+    host = (parts.hostname or "").lower()
+    # Credentials in the URL are a leak by themselves, never silently dropped.
+    has_userinfo = bool(raw.username or raw.password)
+    if parts.scheme == "https" and not has_userinfo:
+        return
+    # Trusted LANs often cannot terminate TLS at the AKB host, so plain HTTP is
+    # allowed there too — but only when the source explicitly opts in.
+    allowed_host = host in {"127.0.0.1", "localhost", "::1"} or _is_private_host(host)
+    if parts.scheme == "http" and row.allow_insecure_http and allowed_host and not has_userinfo:
+        return
+    raise OctopError.localized(
+        ErrorCode.AGENT_IDENTITY_UNAVAILABLE,
+        details={
+            "reason": "origin-unsupported",
+            "scheme": parts.scheme or "",
+            "host": host,
+            "path": raw.path,
+        },
+    )
+
+
+def _log_bridge_failure(stderr: bytes, reason: str) -> None:
+    """Surface why the bridge failed; the UI only reports it as unavailable.
+
+    A bridge that cannot even start (a missing dependency, a wrong Node
+    version) writes the real cause to stderr, which the caller never sees.
+    """
+    detail = _stderr_hint(stderr, 500)
+    logging.getLogger(__name__).warning(
+        "agent identity bridge failed (%s)%s",
+        reason,
+        f": {detail}" if detail else "",
+    )
 
 
 async def sdk_call(payload: dict[str, Any], timeout: float = 30) -> dict[str, Any]:
     command = _sdk_path()
     if command is None:
-        raise OctopError.localized(ErrorCode.AGENT_IDENTITY_UNAVAILABLE)
+        raise OctopError.localized(
+            ErrorCode.AGENT_IDENTITY_UNAVAILABLE,
+            details={"reason": _sdk_problem() or "sdk-missing"},
+        )
     root = str(PathLayout.from_env().root.resolve() / "agent-identity-keys")
     try:
         process = await asyncio.create_subprocess_exec(
@@ -63,9 +168,13 @@ async def sdk_call(payload: dict[str, Any], timeout: float = 30) -> dict[str, An
             stderr=asyncio.subprocess.PIPE,
         )
     except OSError as exc:
-        raise OctopError.localized(ErrorCode.AGENT_IDENTITY_UNAVAILABLE) from exc
+        _log_bridge_failure(b"", f"cannot execute bridge: {exc}")
+        raise OctopError.localized(
+            ErrorCode.AGENT_IDENTITY_UNAVAILABLE,
+            details={"reason": "bridge-launch-failed", "detail": str(exc)},
+        ) from exc
     try:
-        stdout, _stderr = await asyncio.wait_for(
+        stdout, stderr = await asyncio.wait_for(
             process.communicate(json.dumps({**payload, "root": root}, ensure_ascii=False).encode()),
             timeout=timeout,
         )
@@ -75,7 +184,10 @@ async def sdk_call(payload: dict[str, Any], timeout: float = 30) -> dict[str, An
         await process.wait()
         if isinstance(exc, asyncio.CancelledError):
             raise
-        raise OctopError.localized(ErrorCode.AGENT_IDENTITY_UNAVAILABLE) from exc
+        raise OctopError.localized(
+            ErrorCode.AGENT_IDENTITY_UNAVAILABLE,
+            details={"reason": "bridge-timeout", "timeoutSeconds": timeout},
+        ) from exc
     try:
         if len(stdout) > 3_000_000:
             raise ValueError()
@@ -83,21 +195,37 @@ async def sdk_call(payload: dict[str, Any], timeout: float = 30) -> dict[str, An
         if not isinstance(result, dict):
             raise ValueError()
         if process.returncode != 0 or result.get("ok") is not True:
+            _log_bridge_failure(stderr, f"exit={process.returncode}")
             code = result.get("code")
+            message = result.get("message")
+            failure = {
+                "reason": "bridge-error",
+                "bridgeCode": str(code or ""),
+                "bridgeMessage": str(message or "")[:400],
+                "detail": _stderr_hint(stderr),
+            }
             if code in {
                 "AUTHENTICATION_FAILED",
                 "AUTHORIZATION_DENIED",
                 "KEY_NOT_REGISTERED",
                 "KEY_UNAVAILABLE",
             }:
-                raise OctopError.localized(ErrorCode.AGENT_IDENTITY_NOT_READY)
-            raise OctopError.localized(ErrorCode.AGENT_IDENTITY_UNAVAILABLE)
+                raise OctopError.localized(ErrorCode.AGENT_IDENTITY_NOT_READY, details=failure)
+            raise OctopError.localized(ErrorCode.AGENT_IDENTITY_UNAVAILABLE, details=failure)
         data = result["data"]
         if not isinstance(data, dict):
             raise ValueError()
         return data
     except (ValueError, KeyError, TypeError) as exc:
-        raise OctopError.localized(ErrorCode.AGENT_IDENTITY_UNAVAILABLE) from exc
+        _log_bridge_failure(stderr, f"unreadable bridge response (exit={process.returncode})")
+        raise OctopError.localized(
+            ErrorCode.AGENT_IDENTITY_UNAVAILABLE,
+            details={
+                "reason": "bridge-unreadable",
+                "exit": process.returncode,
+                "detail": _stderr_hint(stderr),
+            },
+        ) from exc
 
 
 def _default(row: ExternalSourceRow, config: dict[str, Any]) -> dict[str, Any]:
@@ -109,7 +237,7 @@ def _default(row: ExternalSourceRow, config: dict[str, Any]) -> dict[str, Any]:
         "audience": "akb-external-api",
         "policyId": "",
         "applicationPrincipalId": "",
-        "resource": row.endpoint.rstrip("/"),
+        "resource": _sdk_origin(row.endpoint),
         "agents": {},
         **config,
     }
@@ -136,15 +264,17 @@ def _binding(config: dict[str, Any], native_id: str) -> tuple[dict[str, str], di
 def _request(
     row: ExternalSourceRow, config: dict[str, Any], native_id: str, api_key: str
 ) -> dict[str, Any]:
+    _require_origin(row)
     owner, binding = _binding(config, native_id)
     return {
         "owner": owner,
         "binding": binding,
         "apiKey": api_key,
-        "origin": row.endpoint.rstrip("/"),
+        "origin": _sdk_origin(row.endpoint),
         "transport": "mcp" if row.kind == "akb-mcp" else "rest",
         "timeoutMs": row.timeout_ms,
         "allowInsecureLoopback": row.allow_insecure_http,
+        "allowPrivateHttp": row.allow_insecure_http,
         "invocation": {"sessionId": "management", "invocationId": str(uuid.uuid4())},
     }
 
@@ -168,25 +298,48 @@ class AgentIdentityService:
             raise OctopError.localized(ErrorCode.KNOWLEDGE_FORBIDDEN)
         return row
 
+    def _service_key_saved(self, row: ExternalSourceRow) -> bool:
+        try:
+            return bool(self.sources.credentials_for(row).get("api_key"))
+        except ExternalSourceError:
+            return False
+
     async def describe(self, source_id: str, user_id: int, is_admin: bool) -> dict[str, Any]:
         row, config = self.source(source_id, user_id, is_admin)
+        problem = _sdk_problem()
         try:
             capabilities = await sdk_call({"op": "capabilities"})
         except (TimeoutError, OctopError, OSError):
             capabilities = {"supported": False}
+            problem = problem or "bridge-failed"
         ready = bool(capabilities.get("supported"))
         available = self.agents.list_all() if is_admin else self.agents.list_by_user(user_id)
         bound = config["agents"] if config.get("simple") else {}
-        result: dict[str, Any] = {"runtimeReady": ready, "agents": []}
+        result: dict[str, Any] = {
+            "runtimeReady": ready,
+            "runtimeReason": None if ready else (problem or "unsupported"),
+            "serviceKeySaved": self._service_key_saved(row),
+            "agents": [],
+        }
         for record in available:
             current = bound.get(record.agent_id)
             active_kid = None
+            public_jwk = None
             if current and ready:
                 try:
                     state = await sdk_call(
                         {"op": "state", "owner": _binding(config, record.agent_id)[0]}
                     )
                     active_kid = state.get("activeKid")
+                    # Public keys are not secret, so a saved one is returned for display.
+                    public_jwk = next(
+                        (
+                            key.get("publicJwk")
+                            for key in state.get("keys") or []
+                            if isinstance(key, dict) and key.get("kid") == active_kid
+                        ),
+                        None,
+                    )
                 except (TimeoutError, OctopError):
                     active_kid = None
             result["agents"].append(
@@ -195,6 +348,8 @@ class AgentIdentityService:
                     "name": record.name,
                     "externalAgentId": current.get("externalAgentId", "") if current else "",
                     "activeKid": active_kid,
+                    "publicJwk": public_jwk,
+                    "keySaved": bool(public_jwk),
                     "lastVerifiedAt": current.get("lastVerifiedAt") if current else None,
                     "lastVerificationStatus": current.get("lastVerificationStatus")
                     if current
@@ -229,6 +384,7 @@ class AgentIdentityService:
     ) -> dict[str, Any]:
         row, config = self.source(source_id, user_id, is_admin)
         self.agent(agent_id, user_id, is_admin)
+        _require_origin(row)
         try:
             if str(uuid.UUID(external_id)) != external_id:
                 raise ValueError()
@@ -240,8 +396,13 @@ class AgentIdentityService:
         ):
             raise _invalid()
         current = config["agents"].get(agent_id)
-        if current and current.get("externalAgentId") != external_id:
-            # Rebinding requires explicit unbind, so keys cannot silently change the Agent ID.
+        if (
+            current
+            and current.get("externalAgentId") != external_id
+            and not (private_key or key_reference)
+        ):
+            # Moving to another Agent ID requires fresh key material (or an explicit
+            # unbind), so a live binding cannot silently point at another identity.
             raise _invalid()
         creds = self.sources.credentials_for(row)
         result = await sdk_call(
@@ -252,10 +413,11 @@ class AgentIdentityService:
                 "keyReference": key_reference,
                 "keyScope": row.source_id,
                 "apiKey": str(creds.get("api_key") or ""),
-                "origin": row.endpoint.rstrip("/"),
+                "origin": _sdk_origin(row.endpoint),
                 "transport": "mcp" if row.kind == "akb-mcp" else "rest",
                 "timeoutMs": row.timeout_ms,
                 "allowInsecureLoopback": row.allow_insecure_http,
+                "allowPrivateHttp": row.allow_insecure_http,
                 "invocation": {
                     "sessionId": f"management:{user_id}",
                     "invocationId": str(uuid.uuid4()),

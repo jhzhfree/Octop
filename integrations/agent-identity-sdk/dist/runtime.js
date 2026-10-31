@@ -3,7 +3,7 @@ import { canonicalOrigin, identifier, IdentityError, ownerIndex, ownerOf, traceI
 export { IdentityError } from "./core.js";
 export function createRuntime(dependencies) {
     const bindings = Object.freeze(dependencies.bindings.map(value => Object.freeze({ ...value })));
-    const keys = new Set(), origin = canonicalOrigin(dependencies.origin, dependencies.allowInsecureLoopback);
+    const keys = new Set(), origin = canonicalOrigin(dependencies.origin, dependencies.allowInsecureLoopback, dependencies.allowPrivateHttp);
     for (const binding of bindings) {
         ownerIndex(binding);
         if (!identifier(binding.runtimeAgentKey) || !/^\d+$/.test(binding.policyId) || !/^\d+$/.test(binding.bindingId)
@@ -15,7 +15,7 @@ export function createRuntime(dependencies) {
             throw new IdentityError("AGENT_UNREGISTERED", "Ambiguous runtime Agent binding");
         keys.add(key);
     }
-    const client = new AkbKnowledgeClient(dependencies.credentials, origin, dependencies.transport, dependencies.timeoutMs, dependencies.allowInsecureLoopback);
+    const client = new AkbKnowledgeClient(dependencies.credentials, origin, dependencies.transport, dependencies.timeoutMs, dependencies.allowInsecureLoopback, dependencies.allowPrivateHttp);
     return {
         async invoke(native, request) {
             // This must execute on the host fiber, before the first await.

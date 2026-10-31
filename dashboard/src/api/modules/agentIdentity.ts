@@ -6,11 +6,17 @@ export interface SourceAgentIdentity {
   name: string;
   externalAgentId: string;
   activeKid: string | null;
+  /** Saved public key, safe to show and copy. The private half is never returned. */
+  publicJwk?: Record<string, string> | null;
+  keySaved?: boolean;
   lastVerifiedAt?: string | null;
   lastVerificationStatus?: "success" | "failure" | null;
 }
 export interface SourceIdentityState {
   runtimeReady: boolean;
+  /** Why the host bridge is unavailable: node-missing, bridge-missing, bridge-failed, unsupported. */
+  runtimeReason?: string | null;
+  serviceKeySaved?: boolean;
   agents: SourceAgentIdentity[];
 }
 const root = (id: string) =>

@@ -2,6 +2,7 @@ import { request } from "../request";
 
 export interface ExternalKnowledgeSource {
   identity_ready?: boolean;
+  api_key_header?: string;
   source_id: string;
   display_name: string;
   kind: string;
@@ -47,6 +48,11 @@ export interface ExternalKnowledgeProbe {
   message: string;
   tools: string[];
   refs: { ref: string; name: string }[];
+  // MCP handshake details advertised by the server.
+  protocol_version?: string;
+  server_info?: Record<string, unknown>;
+  capabilities?: Record<string, unknown>;
+  instructions?: string;
 }
 
 export interface ExternalKnowledgeBinding {
@@ -61,6 +67,7 @@ export interface ExternalSourceCreateBody {
   display_name: string;
   endpoint: string;
   api_key?: string;
+  api_key_header?: string;
   instance_id?: string;
   ref?: string;
   top_k?: number;

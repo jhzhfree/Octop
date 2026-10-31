@@ -25,6 +25,7 @@ from octop.infra.knowledge.akb_identity import OctopIdentity
 from octop.infra.knowledge.external.fuse import rrf_fuse
 from octop.infra.knowledge.external.registry import get_adapter, supported_kinds
 from octop.infra.knowledge.external.types import (
+    API_KEY_HEADERS,
     DEFAULT_TOP_K,
     MAX_TIMEOUT_SECONDS,
     MAX_TOP_K,
@@ -48,6 +49,12 @@ def _join_list(items: Any) -> str:
     if isinstance(items, (list, tuple)):
         return ",".join(str(item).strip() for item in items if str(item).strip())
     return str(items or "")
+
+
+def _normalize_api_key_header(value: str) -> str:
+    """Keep only a known header scheme so an arbitrary string cannot leak in."""
+    scheme = (value or "").strip().lower()
+    return scheme if scheme in API_KEY_HEADERS else ""
 
 
 class ExternalKnowledgeService:
@@ -144,8 +151,17 @@ class ExternalKnowledgeService:
                     has_credentials = bool(self.credentials_for(row).get("api_key"))
             except ExternalSourceError:
                 has_credentials = False
+        api_key_header = API_KEY_HEADERS[0]
+        if row.credential_blob:
+            try:
+                stored = str(self.credentials_for(row).get("api_key_header") or "")
+                if stored in API_KEY_HEADERS:
+                    api_key_header = stored
+            except ExternalSourceError:
+                api_key_header = API_KEY_HEADERS[0]
         return {
             "identity_ready": identity_ready,
+            "api_key_header": api_key_header,
             "source_id": row.source_id,
             "display_name": row.display_name,
             "kind": row.kind,
@@ -215,6 +231,7 @@ class ExternalKnowledgeService:
         display_name: str,
         endpoint: str,
         api_key: str = "",
+        api_key_header: str = "",
         instance_id: str = "",
         ref: str = "",
         top_k: int = DEFAULT_TOP_K,
@@ -244,7 +261,11 @@ class ExternalKnowledgeService:
             if self._connector_repo.get(instance_id) is None:
                 raise ExternalSourceError("INVALID_ARGUMENT", "connector instance does not exist")
         elif api_key.strip():
-            blob = encrypt_credentials(self._secret_repo, {"api_key": api_key.strip()})
+            payload: dict[str, Any] = {"api_key": api_key.strip()}
+            scheme = _normalize_api_key_header(api_key_header)
+            if scheme:
+                payload["api_key_header"] = scheme
+            blob = encrypt_credentials(self._secret_repo, payload)
         source_id = new_ulid()
         self._repo.create(
             source_id=source_id,
@@ -287,6 +308,7 @@ class ExternalKnowledgeService:
 
             raise OctopError.localized(ErrorCode.AGENT_IDENTITY_INVALID)
         api_key = fields.pop("api_key", None)
+        api_key_header = fields.pop("api_key_header", None)
         kind = fields.pop("kind", None)
         forbidden = fields.pop("forbidden_arguments", None)
         read_tools = fields.pop("read_tools", None)
@@ -299,13 +321,23 @@ class ExternalKnowledgeService:
         if kind is not None and kind not in SOURCE_KINDS:
             raise ExternalSourceError("INVALID_ARGUMENT", f"unsupported kind: {kind}")
         blob: bytes | None = None
-        if isinstance(api_key, str) and api_key.strip() and not row.instance_id:
+        scheme = (
+            _normalize_api_key_header(api_key_header) if isinstance(api_key_header, str) else None
+        )
+        new_key = api_key.strip() if isinstance(api_key, str) else ""
+        # The header scheme lives with the key, so it can be changed on its own.
+        if (new_key or scheme is not None) and not row.instance_id:
             previous = (
                 decrypt_credentials(self._secret_repo, row.credential_blob)
                 if row.credential_blob
                 else {}
             )
-            blob = encrypt_credentials(self._secret_repo, {**previous, "api_key": api_key.strip()})
+            merged = {**previous}
+            if new_key:
+                merged["api_key"] = new_key
+            if scheme is not None:
+                merged["api_key_header"] = scheme
+            blob = encrypt_credentials(self._secret_repo, merged)
             replace_credentials = True
             if "agent_identity" in previous:
                 if not self._repo.compare_replace_credentials(source_id, row.credential_blob, blob):
@@ -441,6 +473,10 @@ class ExternalKnowledgeService:
             "message": result.message,
             "tools": result.tools,
             "refs": result.refs,
+            "protocol_version": result.protocol_version,
+            "server_info": result.server_info,
+            "capabilities": result.capabilities,
+            "instructions": result.instructions,
         }
 
     async def list_refs(

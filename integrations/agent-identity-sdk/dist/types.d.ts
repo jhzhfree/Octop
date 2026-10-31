@@ -129,6 +129,8 @@ export interface RuntimeDependencies<NativeContext> {
     readonly origin: string;
     readonly validateWorkspace: (directory: string) => Promise<boolean>;
     readonly allowInsecureLoopback?: boolean;
+    /** Opt in to plain HTTP against private address space (RFC1918 / link-local). */
+    readonly allowPrivateHttp?: boolean;
     readonly timeoutMs?: number;
 }
 /** Factory shape for dependency injection into a platform plugin. */

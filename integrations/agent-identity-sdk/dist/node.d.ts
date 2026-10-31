@@ -15,6 +15,8 @@ export interface NodeIdentityConfig {
     };
     bindings: AgentBinding[];
     allowInsecureLoopback?: boolean;
+    /** Opt in to plain HTTP against private address space (RFC1918 / link-local). */
+    allowPrivateHttp?: boolean;
     timeoutMs?: number;
 }
 export declare function loadNodeConfig(filename: string, workspace: string): Promise<NodeIdentityConfig>;

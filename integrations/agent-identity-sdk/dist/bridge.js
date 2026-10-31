@@ -28,7 +28,7 @@ async function run(input) {
     }
     if (input.op === "connect") {
         const signal = AbortSignal.timeout(Math.min(180000, (input.timeoutMs ?? 15000) * 3 + 10000));
-        const client = new AkbKnowledgeClient({ async readServiceKey() { return input.apiKey ?? ""; } }, input.origin, input.transport, input.timeoutMs, input.allowInsecureLoopback);
+        const client = new AkbKnowledgeClient({ async readServiceKey() { return input.apiKey ?? ""; } }, input.origin, input.transport, input.timeoutMs, input.allowInsecureLoopback, input.allowPrivateHttp);
         const binding = await client.configuration(input.externalAgentId ?? "", signal);
         const owner = { platformId: binding.platformId, installationId: binding.installationId, workspaceId: binding.workspaceId, externalAgentId: binding.externalAgentId };
         const store = await NodeFileKeyStore.open(input.root);
@@ -66,7 +66,7 @@ async function run(input) {
             throw new IdentityError("KEY_NOT_REGISTERED", "Registration challenge is required");
         return { registrationProof: await proveRegistration(input.binding, input.challenge, await store.openSigner(input.owner, input.kid), signal) };
     }
-    const client = new AkbKnowledgeClient({ async readServiceKey() { return input.apiKey ?? ""; } }, input.origin, input.transport, input.timeoutMs, input.allowInsecureLoopback);
+    const client = new AkbKnowledgeClient({ async readServiceKey() { return input.apiKey ?? ""; } }, input.origin, input.transport, input.timeoutMs, input.allowInsecureLoopback, input.allowPrivateHttp);
     if (input.op === "activate" || input.op === "probe") {
         const signer = input.op === "activate" && input.kid ? await store.openSigner(input.owner, input.kid) : await store.openActiveSigner(input.owner);
         const status = await client.status(input.binding, input.invocation, signer, signal);
@@ -92,6 +92,14 @@ async function main() {
     process.stdout.write(JSON.stringify({ ok: true, data }));
 }
 main().catch(error => {
-    process.stdout.write(JSON.stringify({ ok: false, code: error instanceof IdentityError ? error.code : "IDENTITY_UNAVAILABLE" }));
+    // The host needs the reason, not just the code: several failures share a code
+    // (HTTPS origin, Node version, unknown operation) and only the message
+    // distinguishes them.
+    const identity = error instanceof IdentityError;
+    process.stdout.write(JSON.stringify({
+        ok: false,
+        code: identity ? error.code : "IDENTITY_UNAVAILABLE",
+        message: identity ? error.safeMessage : String(error?.message ?? error),
+    }));
     process.exitCode = 1;
 });

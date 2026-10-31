@@ -299,6 +299,10 @@ _DEFAULT_STATUS: dict[ErrorCode, int] = {
 }
 
 
+# Parameter names of the message function, which details must never shadow.
+_RESERVED_MESSAGE_PARAMS = frozenset({"code", "locale"})
+
+
 @dataclass
 class OctopError(Exception):
     code: ErrorCode
@@ -313,8 +317,15 @@ class OctopError(Exception):
 
     def localized_message(self, locale: str | Locale, **kwargs: object) -> str:
         loc = normalize_locale(str(locale))
+        # Details are spliced into the message template, so any key that clashes
+        # with a parameter name of the message function must be dropped first.
+        params = {
+            key: value
+            for key, value in {**self.details, **kwargs}.items()
+            if key not in _RESERVED_MESSAGE_PARAMS
+        }
         try:
-            return i18n_error_message(self.code.value, loc, **{**self.details, **kwargs})
+            return i18n_error_message(self.code.value, loc, **params)
         except KeyError:
             return self.message
 

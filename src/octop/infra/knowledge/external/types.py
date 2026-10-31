@@ -13,6 +13,9 @@ SOURCE_KINDS: tuple[str, ...] = (
     "standard-retrieval",
 )
 
+# Ways an AKB source may present its API key; the first one is the default.
+API_KEY_HEADERS: tuple[str, ...] = ("x-api-key", "authorization")
+
 DEFAULT_TOP_K = 8
 MAX_TOP_K = 50
 MAX_TIMEOUT_SECONDS = 60.0
@@ -69,6 +72,11 @@ class SourceProbeResult:
     message: str = ""
     tools: list[str] = field(default_factory=list)
     refs: list[dict[str, str]] = field(default_factory=list)
+    # MCP handshake details, so an operator sees what the server advertises.
+    protocol_version: str = ""
+    server_info: dict[str, Any] = field(default_factory=dict)
+    capabilities: dict[str, Any] = field(default_factory=dict)
+    instructions: str = ""
 
 
 @dataclass(frozen=True)

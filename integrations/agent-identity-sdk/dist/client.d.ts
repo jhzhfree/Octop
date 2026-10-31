@@ -6,7 +6,7 @@ export declare class AkbKnowledgeClient {
     private readonly transport;
     private readonly timeoutMs;
     readonly origin: string;
-    constructor(credentials: CredentialSource, origin: string, transport: "mcp" | "rest", timeoutMs?: number, insecureLoopback?: boolean);
+    constructor(credentials: CredentialSource, origin: string, transport: "mcp" | "rest", timeoutMs?: number, insecureLoopback?: boolean, allowPrivateHttp?: boolean);
     private request;
     configuration(agentId: string, signal: AbortSignal): Promise<AgentBinding>;
     status(binding: AgentBinding, invocation: Invocation, signer: RsaSigner, signal: AbortSignal): Promise<any>;

@@ -35,3 +35,20 @@ def test_octop_error_to_envelope_localized():
 def test_unknown_error_code_rejected():
     with pytest.raises(ValueError):
         ErrorCode("NOT_A_CODE")
+
+
+def test_details_never_shadow_message_parameters():
+    """Details are spliced into the template, so reserved names must be dropped.
+
+    A detail key called ``code`` used to collide with the message function's own
+    parameter and turned every localized response into a 500.
+    """
+    err = OctopError(
+        ErrorCode.AGENT_IDENTITY_UNAVAILABLE,
+        "unavailable",
+        details={"code": "BRIDGE", "reason": "bridge-error", "locale": "zh"},
+    )
+    envelope = err.to_envelope(locale="zh")
+    assert envelope["error"]["details"]["code"] == "BRIDGE"
+    assert envelope["error"]["message"] == err.localized_message("zh")
+    assert err.localized_message("en")

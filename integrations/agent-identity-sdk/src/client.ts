@@ -17,8 +17,8 @@ export function validateRequest(request: KnowledgeRequest): KnowledgeRequest {
 export class AkbKnowledgeClient {
   readonly origin: string;
   constructor(private readonly credentials: CredentialSource, origin: string, private readonly transport: "mcp" | "rest",
-    private readonly timeoutMs = 15000, insecureLoopback = false) {
-    this.origin = canonicalOrigin(origin, insecureLoopback);
+    private readonly timeoutMs = 15000, insecureLoopback = false, allowPrivateHttp = false) {
+    this.origin = canonicalOrigin(origin, insecureLoopback, allowPrivateHttp);
     if (!["mcp", "rest"].includes(transport) || !Number.isInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 60000) throw new IdentityError("PROTOCOL_UNSUPPORTED", "Invalid transport settings");
   }
   private async request(proofs: BoundRequestProofIssuer, method: "GET" | "POST", target: string, payload: unknown, signal: AbortSignal): Promise<any> {

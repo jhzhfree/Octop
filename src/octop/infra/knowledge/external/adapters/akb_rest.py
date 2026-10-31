@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from octop.infra.knowledge.akb_identity import OctopIdentity, issue_assertion
+from octop.infra.knowledge.external.adapters._auth import auth_headers
 from octop.infra.knowledge.external.http import (
     drop_api_prefix,
     get_json,
@@ -64,16 +65,9 @@ def _url(spec: ExternalSourceSpec) -> str:
     return _base_url(spec) + "/api/v1/external/kb/retrievals"
 
 
-def _api_key(creds: dict[str, Any]) -> str:
-    api_key = str(creds.get("api_key") or "").strip()
-    if not api_key:
-        raise ExternalSourceError("INVALID_ARGUMENT", "AKB API key is missing", origin=ORIGIN)
-    return api_key
-
-
 def _headers(spec: ExternalSourceSpec, creds: dict[str, Any]) -> dict[str, str]:
     headers = {
-        "X-API-Key": _api_key(creds),
+        **auth_headers(creds, origin=ORIGIN),
         "Content-Type": "application/json",
         "Accept": "application/json",
     }

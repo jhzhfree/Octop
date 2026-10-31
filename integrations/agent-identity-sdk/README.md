@@ -113,6 +113,15 @@ node dist/cli.js key rotate /var/lib/akb/keys /etc/akb/builder-owner.json
 
 The optional `akb-agent-identity-bridge` executable provides stdin/stdout IPC for trusted platform hosts such as Octop's dashboard backend. It reuses the same protected key store, registration proofs and AKB client. It is not an HTTP server or a model tool; only the host may supply the owner and runtime identity. Credentials are sent on stdin and never returned. Key selection requires a successful remote identity probe.
 
+`dist/` is committed so a host does not have to build it, but the bridge still resolves `@akb/agent-keygen` through `node_modules`, and that dependency is a local `file:` path rather than a registry package. Install it once per clone before the bridge is used:
+
+```sh
+cd integrations/agent-identity-sdk
+npm install --omit=dev
+```
+
+`npm ci` (full checkout with dev dependencies) covers this too. Without the dependency Node exits with `ERR_MODULE_NOT_FOUND` before the bridge runs, and the host reports the signing component as unavailable rather than the real cause; Octop logs the bridge's own stderr.
+
 See [dashboard setup and deployment](../agent-identity-spec/DASHBOARD-SETUP.md) for host installation, UI enrollment, security boundaries and frontend rebuild instructions.
 
 ## Public onboarding export (0.3.1)

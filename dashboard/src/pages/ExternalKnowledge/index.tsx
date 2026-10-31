@@ -34,6 +34,7 @@ import { useTranslation } from "react-i18next";
 import {
   externalKnowledgeApi,
   type ExternalKnowledgeChunk,
+  type ExternalKnowledgeProbe,
   type ExternalKnowledgeSource,
   type ExternalSourceCreateBody,
 } from "@/api/modules/externalKnowledge";
@@ -61,6 +62,7 @@ interface SourceFormValues {
   kind: string;
   endpoint: string;
   api_key?: string;
+  api_key_header?: string;
   ref?: string;
   top_k: number;
   min_score: number;
@@ -102,6 +104,10 @@ export default function ExternalKnowledgePage() {
 
   const [refs, setRefs] = useState<{ ref: string; name: string }[]>([]);
   const [refsLoading, setRefsLoading] = useState(false);
+  const [probing, setProbing] = useState(false);
+  const [probeResult, setProbeResult] = useState<ExternalKnowledgeProbe | null>(
+    null,
+  );
   const insecureHttp = Form.useWatch("allow_insecure_http", form);
   const formKind = Form.useWatch("kind", form);
 
@@ -140,9 +146,11 @@ export default function ExternalKnowledgePage() {
   const openCreate = useCallback(() => {
     setEditing(null);
     setRefs([]);
+    setProbeResult(null);
     form.resetFields();
     form.setFieldsValue({
       kind: kinds[0] ?? "akb-mcp",
+      api_key_header: "x-api-key",
       top_k: 8,
       min_score: 0,
       timeout_ms: 10000,
@@ -156,11 +164,13 @@ export default function ExternalKnowledgePage() {
     (row: ExternalKnowledgeSource) => {
       setEditing(row);
       setRefs([]);
+      setProbeResult(null);
       form.resetFields();
       form.setFieldsValue({
         display_name: row.display_name,
         kind: row.kind,
         endpoint: row.endpoint,
+        api_key_header: row.api_key_header || "x-api-key",
         ref: row.ref,
         top_k: row.top_k,
         min_score: row.min_score,
@@ -189,6 +199,8 @@ export default function ExternalKnowledgePage() {
       shared: values.shared,
     };
     if (values.api_key) body.api_key = values.api_key;
+    if (values.kind === "akb-mcp" && values.api_key_header)
+      body.api_key_header = values.api_key_header;
     try {
       let saved: ExternalKnowledgeSource;
       if (editing) {
@@ -209,6 +221,21 @@ export default function ExternalKnowledgePage() {
       message.error(t("externalKnowledge.saveFailed"));
     }
   }, [editing, form, message, refresh, t]);
+
+  const runProbe = useCallback(async () => {
+    if (!editing) {
+      message.info(t("externalKnowledge.probeAfterSave"));
+      return;
+    }
+    setProbing(true);
+    try {
+      setProbeResult(await externalKnowledgeApi.probe(editing.source_id));
+    } catch {
+      message.error(t("externalKnowledge.probeFailedHint"));
+    } finally {
+      setProbing(false);
+    }
+  }, [editing, message, t]);
 
   const fetchRefs = useCallback(async () => {
     if (!editing) {
@@ -456,20 +483,24 @@ export default function ExternalKnowledgePage() {
                 }}
               />
             </Tooltip>
-            <Tooltip title={t("externalKnowledge.bind")}>
-              <Button
-                size="small"
-                aria-label={t("externalKnowledge.bind")}
-                icon={<Link2 size={15} />}
-                onClick={() =>
-                  row.identity_ready
-                    ? setBindingSource(row)
-                    : setIdentitySource(row)
-                }
-              >
-                {t("externalKnowledge.bind")}
-              </Button>
-            </Tooltip>
+            {/* AKB sources are bound from the identity drawer, which also
+                verifies the key, so a separate bind button only duplicates it. */}
+            {!["akb-mcp", "akb-rest"].includes(row.kind) && (
+              <Tooltip title={t("externalKnowledge.bind")}>
+                <Button
+                  size="small"
+                  aria-label={t("externalKnowledge.bind")}
+                  icon={<Link2 size={15} />}
+                  onClick={() =>
+                    row.identity_ready
+                      ? setBindingSource(row)
+                      : setIdentitySource(row)
+                  }
+                >
+                  {t("externalKnowledge.bind")}
+                </Button>
+              </Tooltip>
+            )}
             <Tooltip title={t("externalKnowledge.edit")}>
               <Button
                 type="text"
@@ -796,41 +827,183 @@ export default function ExternalKnowledgePage() {
               placeholder={editing ? t("externalKnowledge.apiKeyHint") : ""}
             />
           </Form.Item>
-          <Form.Item
-            label={t("externalKnowledge.ref")}
-            extra={t("externalKnowledge.refHint")}
-          >
-            <Space.Compact style={{ width: "100%" }}>
-              {refs.length > 0 ? (
-                <Form.Item name="ref" noStyle>
-                  <Select
-                    allowClear
-                    showSearch
-                    optionFilterProp="label"
-                    placeholder={t("externalKnowledge.refPickerPlaceholder")}
-                    options={refs.map((item) => ({
-                      value: item.ref,
-                      label: item.name
-                        ? `${item.name}（${item.ref}）`
-                        : item.ref,
-                    }))}
-                  />
-                </Form.Item>
-              ) : (
-                <Form.Item name="ref" noStyle>
-                  <Input placeholder="HR-POLICY" />
-                </Form.Item>
-              )}
-              <Button
-                loading={refsLoading}
-                disabled={!editing || editing.identity_ready}
-                onClick={() => void fetchRefs()}
-                title={editing ? "" : t("externalKnowledge.fetchRefsAfterSave")}
+          {formKind === "akb-mcp" && (
+            <Form.Item
+              name="api_key_header"
+              label={t("externalKnowledge.apiKeyHeader")}
+              extra={t("externalKnowledge.apiKeyHeaderHint")}
+            >
+              <Select
+                options={[
+                  { value: "x-api-key", label: "X-API-Key" },
+                  { value: "authorization", label: "Authorization: Bearer" },
+                ]}
+              />
+            </Form.Item>
+          )}
+          {/* MCP calls tools instead of addressing a knowledge base, so the
+              knowledge base identifier is replaced by a tool listing. */}
+          {formKind !== "akb-mcp" ? (
+            <Form.Item
+              label={t("externalKnowledge.ref")}
+              extra={t("externalKnowledge.refHint")}
+            >
+              <Space.Compact style={{ width: "100%" }}>
+                {refs.length > 0 ? (
+                  <Form.Item name="ref" noStyle>
+                    <Select
+                      allowClear
+                      showSearch
+                      optionFilterProp="label"
+                      placeholder={t("externalKnowledge.refPickerPlaceholder")}
+                      options={refs.map((item) => ({
+                        value: item.ref,
+                        label: item.name
+                          ? `${item.name}（${item.ref}）`
+                          : item.ref,
+                      }))}
+                    />
+                  </Form.Item>
+                ) : (
+                  <Form.Item name="ref" noStyle>
+                    <Input placeholder="HR-POLICY" />
+                  </Form.Item>
+                )}
+                <Button
+                  loading={refsLoading}
+                  disabled={!editing || editing.identity_ready}
+                  onClick={() => void fetchRefs()}
+                  title={
+                    editing ? "" : t("externalKnowledge.fetchRefsAfterSave")
+                  }
+                >
+                  {t("externalKnowledge.fetchRefs")}
+                </Button>
+              </Space.Compact>
+            </Form.Item>
+          ) : (
+            <>
+              <div className={styles.sectionTitle}>
+                {t("externalKnowledge.mcpSection")}
+              </div>
+              <Form.Item
+                label={t("externalKnowledge.tools")}
+                extra={
+                  editing?.identity_ready
+                    ? t("externalKnowledge.probeIdentityManaged")
+                    : t("externalKnowledge.toolsHint")
+                }
               >
-                {t("externalKnowledge.fetchRefs")}
-              </Button>
-            </Space.Compact>
-          </Form.Item>
+                <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                  <Button
+                    loading={probing}
+                    disabled={!editing || !!editing.identity_ready}
+                    onClick={() => void runProbe()}
+                    title={editing ? "" : t("externalKnowledge.probeAfterSave")}
+                  >
+                    {t("externalKnowledge.testConnection")}
+                  </Button>
+                  {probeResult && (
+                    <>
+                      <Space size={4} wrap>
+                        <Tag color={probeResult.ok ? "green" : "red"}>
+                          {probeResult.ok
+                            ? t("externalKnowledge.probeOk")
+                            : t("externalKnowledge.probeFailed")}
+                        </Tag>
+                        {probeResult.message && (
+                          <Typography.Text type="secondary">
+                            {probeResult.message}
+                          </Typography.Text>
+                        )}
+                      </Space>
+                      {probeResult.protocol_version && (
+                        <Space size={4} wrap>
+                          <Typography.Text type="secondary">
+                            {t("externalKnowledge.protocol")}
+                          </Typography.Text>
+                          <Tag>{probeResult.protocol_version}</Tag>
+                        </Space>
+                      )}
+                      {probeResult.server_info &&
+                        Object.keys(probeResult.server_info).length > 0 && (
+                          <Space size={4} wrap>
+                            <Typography.Text type="secondary">
+                              {t("externalKnowledge.server")}
+                            </Typography.Text>
+                            <Tag>
+                              {String(probeResult.server_info.name ?? "")}
+                              {probeResult.server_info.version
+                                ? ` v${probeResult.server_info.version}`
+                                : ""}
+                            </Tag>
+                          </Space>
+                        )}
+                      {probeResult.capabilities &&
+                        Object.keys(probeResult.capabilities).length > 0 && (
+                          <Space size={4} wrap>
+                            <Typography.Text type="secondary">
+                              {t("externalKnowledge.capabilities")}
+                            </Typography.Text>
+                            {Object.entries(probeResult.capabilities).map(
+                              ([key, value]) => (
+                                <Tag key={key}>
+                                  {key}
+                                  {value && typeof value === "object"
+                                    ? `: ${Object.keys(
+                                        value as Record<string, unknown>,
+                                      ).join(", ")}`
+                                    : ""}
+                                </Tag>
+                              ),
+                            )}
+                          </Space>
+                        )}
+                      {probeResult.tools.length ? (
+                        <Space size={4} wrap>
+                          {probeResult.tools.map((tool) => (
+                            <Typography.Text
+                              key={tool}
+                              copyable={{ text: tool, tooltips: false }}
+                            >
+                              <Tag>{tool}</Tag>
+                            </Typography.Text>
+                          ))}
+                        </Space>
+                      ) : (
+                        probeResult.ok && (
+                          <Typography.Text type="secondary">
+                            {t("externalKnowledge.toolsEmpty")}
+                          </Typography.Text>
+                        )
+                      )}
+                      {probeResult.instructions && (
+                        <>
+                          <Typography.Text type="secondary">
+                            {t("externalKnowledge.instructions")}
+                          </Typography.Text>
+                          <Typography.Paragraph
+                            copyable={{
+                              text: probeResult.instructions,
+                              tooltips: false,
+                            }}
+                            ellipsis={{
+                              rows: 3,
+                              expandable: true,
+                              symbol: t("externalKnowledge.instructionsMore"),
+                            }}
+                            style={{ marginBottom: 0 }}
+                          >
+                            {probeResult.instructions}
+                          </Typography.Paragraph>
+                        </>
+                      )}
+                    </>
+                  )}
+                </Space>
+              </Form.Item>
+            </>
+          )}
 
           <div className={styles.sectionTitle}>
             {t("externalKnowledge.retrievalSection")}
