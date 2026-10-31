@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import replace
+from datetime import UTC, datetime
 from typing import Any
 
 from octop.infra.connectors.crypto import decrypt_credentials, encrypt_credentials
@@ -179,16 +180,29 @@ class ExternalKnowledgeService:
                 "INVALID_CREDENTIALS", "stored identity configuration could not be read"
             ) from exc
 
-    def save_identity_config(self, row: ExternalSourceRow, config: dict[str, Any]) -> None:
+    def save_identity_config(
+        self,
+        row: ExternalSourceRow,
+        config: dict[str, Any],
+        *,
+        agent_id: str | None = None,
+        bound: bool = True,
+    ) -> None:
         own = (
             decrypt_credentials(self._secret_repo, row.credential_blob)
             if row.credential_blob
             else {}
         )
         own["agent_identity"] = config
-        if not self._repo.compare_replace_credentials(
-            row.source_id, row.credential_blob, encrypt_credentials(self._secret_repo, own)
-        ):
+        blob = encrypt_credentials(self._secret_repo, own)
+        saved = (
+            self._repo.compare_replace_identity_binding(
+                row.source_id, row.credential_blob, blob, agent_id, bound=bound
+            )
+            if agent_id is not None
+            else self._repo.compare_replace_credentials(row.source_id, row.credential_blob, blob)
+        )
+        if not saved:
             from octop.infra.errors import ErrorCode, OctopError
 
             raise OctopError.localized(ErrorCode.AGENT_IDENTITY_CONFLICT)
@@ -483,15 +497,41 @@ class ExternalKnowledgeService:
             )
         creds = self.credentials_for(row)
         if isinstance(creds.get("agent_identity"), dict) and creds["agent_identity"].get("simple"):
+            from octop.infra.errors import OctopError
             from octop.infra.knowledge.external.agent_identity import search_as_agent
 
-            return await search_as_agent(spec, creds, query, top_k=top_k)
+            try:
+                result = await search_as_agent(spec, creds, query, top_k=top_k)
+            except (OctopError, ExternalSourceError):
+                self._record_runtime_verification(row, spec, creds["agent_identity"], "failure")
+                raise
+            self._record_runtime_verification(row, spec, creds["agent_identity"], "success")
+            return result
         return await adapter.search(
             spec,
             creds,
             query,
             top_k=top_k,
         )
+
+    def _record_runtime_verification(
+        self, row: ExternalSourceRow, spec: ExternalSourceSpec, config: dict[str, Any], status: str
+    ) -> None:
+        from octop.infra.errors import OctopError
+
+        identity = spec.octop_identity
+        if not isinstance(identity, OctopIdentity):
+            return
+        agent = config.get("agents", {}).get(identity.agent_id)
+        if not agent:
+            return
+        agent["lastVerifiedAt"] = datetime.now(UTC).isoformat()
+        agent["lastVerificationStatus"] = status
+        try:
+            # CAS prevents an in-flight search from restoring a removed or rotated binding.
+            self.save_identity_config(row, config)
+        except OctopError:
+            logger.info("Identity state changed during retrieval for source=%s", row.source_id)
 
     async def retrieve(
         self,

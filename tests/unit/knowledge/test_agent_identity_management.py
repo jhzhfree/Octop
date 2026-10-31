@@ -223,3 +223,109 @@ async def test_identity_validation_never_echoes_private_key():
         )
     assert response.status_code == 422
     assert "PRIVATE-SENTINEL" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_generation_is_scoped_and_never_returns_private_material(setup):
+    svc, _, _, source, user, other, sdk = setup
+    sdk.return_value = {
+        "externalAgentId": ALPHA,
+        "publicJwk": {"kid": "k" * 43},
+        "keyReference": BETA,
+    }
+    result = await svc.generate(source, user, False, ALPHA)
+    assert sdk.await_args.args[0] == {
+        "op": "generate",
+        "externalAgentId": ALPHA,
+        "keyScope": source,
+    }
+    assert "private" not in str(result).lower()
+    sdk.reset_mock()
+    with pytest.raises(ExternalSourceError):
+        await svc.generate(source, other, False, ALPHA)
+    sdk.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_management_probe_records_failure_without_removing_binding(setup):
+    svc, sources, repo, source, user, _, sdk = setup
+    await _connect(svc, sdk, source, "alpha", user, ALPHA)
+    sdk.side_effect = OctopError.localized(ErrorCode.AGENT_IDENTITY_NOT_READY)
+    with pytest.raises(OctopError):
+        await svc.search(source, "alpha", user, False, "q", 3)
+    stored = sources.identity_config(repo.get(source))["agents"]["alpha"]
+    assert stored["lastVerificationStatus"] == "failure"
+    assert stored["lastVerifiedAt"]
+    assert len(sources.list_bindings(source)) == 1
+
+
+@pytest.mark.asyncio
+async def test_runtime_retrieval_records_verification_without_rebinding(setup):
+    svc, sources, repo, source, user, _, sdk = setup
+    await _connect(svc, sdk, source, "alpha", user, ALPHA)
+    row = repo.get(source)
+    spec = replace(
+        sources.to_spec(row),
+        octop_identity=OctopIdentity(str(user), "alpha", "chat", workload_only=True),
+    )
+    sdk.side_effect = OctopError.localized(ErrorCode.AGENT_IDENTITY_NOT_READY)
+    with pytest.raises(OctopError):
+        await sources._search_spec(spec, "q", top_k=3)
+    assert (
+        sources.identity_config(repo.get(source))["agents"]["alpha"]["lastVerificationStatus"]
+        == "failure"
+    )
+    sdk.side_effect = None
+    sdk.return_value = {"candidates": []}
+    await sources._search_spec(spec, "q", top_k=3)
+    assert (
+        sources.identity_config(repo.get(source))["agents"]["alpha"]["lastVerificationStatus"]
+        == "success"
+    )
+    assert len(sources.list_bindings(source)) == 1
+
+
+@pytest.mark.asyncio
+async def test_generate_api_filters_private_fields_and_documents_public_response(monkeypatch):
+    import httpx
+    from fastapi import FastAPI
+
+    from octop.api.deps import current_user, get_server
+    from octop.api.routers import external_knowledge_identity as routes
+
+    generator = AsyncMock(
+        return_value={
+            "externalAgentId": ALPHA,
+            "kid": "k" * 43,
+            "keyReference": BETA,
+            "privateKey": "PRIVATE-SENTINEL",
+            "publicJwk": {
+                "kty": "RSA",
+                "n": "public-n",
+                "e": "AQAB",
+                "kid": "k" * 43,
+                "alg": "RS256",
+                "use": "sig",
+                "d": "PRIVATE-SENTINEL",
+            },
+        }
+    )
+    monkeypatch.setattr(routes, "_identity", lambda server: SimpleNamespace(generate=generator))
+    app = FastAPI()
+    app.include_router(routes.router)
+    app.dependency_overrides[current_user] = lambda: SimpleNamespace(id=1, role="admin")
+    app.dependency_overrides[get_server] = lambda: SimpleNamespace()
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/external-knowledge/sources/source-a/identity/generate",
+            json={"externalAgentId": ALPHA},
+        )
+    assert response.status_code == 200
+    assert "PRIVATE-SENTINEL" not in response.text
+    assert response.json()["keyReference"] == BETA
+    schema = app.openapi()["paths"]["/external-knowledge/sources/{source_id}/identity/generate"][
+        "post"
+    ]["responses"]["200"]["content"]["application/json"]["schema"]
+    assert schema["$ref"].endswith("GeneratedAgentKeyResponse")

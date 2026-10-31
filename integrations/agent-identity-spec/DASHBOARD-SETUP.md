@@ -1,34 +1,37 @@
-# 简化 Agent 接入第一版
+# Agent 身份接入与安全升级
 
-## 日常操作
+## 日常接入
 
-1. 独立工具 `tools/agent-keygen` 为每个 Agent 生成密钥对。
-2. AKB：接口服务 → 凭证 → Agent 身份接入 → 新建服务接入。填名称、AKB 对外根地址、可读知识库，保存共享服务 Key。
-3. AKB：添加 Agent，填名称、工具生成的 UUID，导入 public.jwk。同一个服务接入可以登记多名 Agent。
-4. Octop：外部知识库 → 新建 AKB REST/MCP 连接 → 认证方式选 Agent 密钥，填 AKB 地址和共享服务 Key，保存。
-5. Octop 自动打开绑定抽屉：选择 Octop 系统 Agent，填同一个 AKB UUID，导入 private.pem，点「保存并测试，自动绑定」。不再单独点知识库绑定。
-6. 选中已绑定 Agent，输入问题点「测试检索」；之后用该系统 Agent 聊天触发知识库检索。只保存配置或登记公钥不会自动执行搜索。
+1. AKB 管理员创建平台连接，选择平台类型、AKB 对外根地址、可读知识库，并保存共享服务 Key。新连接使用 SERVICE_SCOPE：该连接下所有 Agent 继承平台范围。
+2. Octop 创建 AKB REST/MCP 外部知识连接，填写同一个根地址和共享服务 Key。
+3. 在身份抽屉选择系统 Agent，生成宿主密钥。Octop 调用 SDK bridge，bridge 复用独立本地工具 `@akb/agent-keygen`；只返回公钥、Agent UUID 和受连接作用域约束的密钥引用，私钥不进入浏览器。
+4. 在 AKB 为该连接登记 Agent UUID 和 public.jwk。回到 Octop 保存并测试，身份映射与检索挂载在同一数据库事务中完成。
+5. 测试检索，随后在对应系统 Agent 的对话中使用知识工具。一个连接可以绑定多名 Agent，但每名 Agent 使用独立密钥和 UUID。
 
-私钥导入本平台宿主受保护存储，不发送 AKB、不进入模型参数。远程管理请使用 HTTPS。一个 Agent 的 AKB UUID 与 Octop 内部 Agent ID 是两个标识，页面通过选择器自动关联。不同 Octop Agent 不允许绑定同一个 AKB UUID。
+也可以使用 `tools/agent-keygen` 离线生成，并向平台导入 private.pem。平台管理员掌握信任边界；不要把宿主密钥目录挂入 Agent 沙箱。所有平台均可调用同一离线 CLI 或 Node API，无需依赖 Octop UI。
 
-认证方式切回「原有认证」不会把严格共享 Key 变成普通 Key：还需在连接中替换成原有认证对应的普通凭证。密钥认证失败不自动降级。
+## 历史连接升级：V79
 
-## 权限与状态
+V78 已将旧 V2 的 simple_mode 全部置为 TRUE，因此仅看当前值不能可靠恢复原权限。V79 不修改已执行的 V78 文件：增加独立 authorization_mode，并暂停所有既有未撤销连接，标记 REVIEW_REQUIRED。新建连接不受影响。
 
-同一服务接入下所有 Agent 继承共享可读范围，第一版不再单独配置每个 Agent 的知识库策略。默认只读所选库的无权限标签内容；带标签数据仍按服务侧授权约束，不会自动开放。
+升级前备份数据库。升级后管理员逐个核对升级前记录，在「Agent 接入」确认授权方式与理由，再单独启用连接：
 
-“已验证并选中”表示本地密钥上次完成验证，不代表 AKB 之后一直未停用。点击保存并测试或实际调用重新检查服务 / Agent / 公钥有效状态。
+- AGENT_INTERSECTION：平台范围与 Agent 现有资源/标签授权取交集。
+- SERVICE_SCOPE：所有 Agent 继承平台范围；选择它可能扩大原 Agent 权限，必须明确确认。
 
-- 解除 Octop 绑定：停止向该 Agent 提供知识源，受保护文件保留以便恢复。永久撤销需在 AKB 撤销公钥。
-- 更换 Agent 密钥：独立工具保留原 UUID 生成新密钥，AKB 为原 Agent 登记新公钥，Octop 导入新私钥测试，最后撤销旧公钥。
-- 轮换共享 Key：AKB 轮换后立即替换 Octop 连接的服务 Key；无需更换 Agent 私钥。
-- 已有高级接入保持原有应用与 Agent 权限交集，不自动迁移或扩大权限；AKB 页面底部有高级兼容入口。
+确认记录写入管理审计；确认本身不自动启用，不可通过普通状态接口绕过 REVIEW_REQUIRED。重复运行迁移不改变管理员确认结果。无法确认的连接保持暂停，不要猜测原授权。被 V78 删除的旧 V1 数据需从备份调查恢复，不会由 V79 凭空重建。
 
-## 宿主部署
+## 状态、轮换与身份边界
 
-新功能需要 AKB 后端数据库迁移 V76、AKB 前端、Octop 后端与前端同时更新。仅拉代码不会更新已部署页面。
+「本地已配置」不是实时远端认证结论。保存测试和管理检索记录最后验证时间与成功/失败；实际请求始终重新检查 AKB 的平台、主体、绑定及公钥状态。AKB 自检按同一启用 Agent 检查其有效公钥，不能把不同 Agent 的状态拼成成功。
 
-Octop 宿主安装 Node.js 22+，构建 SDK 0.4.0：
+解除 Octop 绑定会原子移除身份映射与挂载，保留私钥以便恢复。永久撤销公钥需在 AKB 执行。轮换时使用原 UUID 生成新密钥，登记新公钥，验证新私钥，再撤销旧公钥。共享服务 Key 轮换无需更换 Agent 密钥。
+
+公钥证明的是登记密钥的持有者代表该 Agent 调用；不自动证明背后的自然人。员工委托身份需要另行接入可信用户认证。平台类型是展示元数据，应用主体/连接与公钥绑定才决定可信归属。
+
+## 安装和接口
+
+宿主需要 Node.js 22+。源码构建：
 
 ```sh
 cd integrations/agent-identity-sdk
@@ -36,20 +39,14 @@ npm ci
 npm run build
 ```
 
-源码运行时自动查找 `dist/bridge.js`。wheel/容器部署须安装 SDK TGZ，并将 `OCTOP_AGENT_IDENTITY_SDK_BRIDGE` 设置为宿主可读的绝对 `dist/bridge.js` 路径，重启 Octop。私钥位于 `$OCTOP_HOME/agent-identity-keys`，POSIX 0700/0600，Windows 使用账户独占 ACL，所有祖先目录都须可信。该目录不能暴露给 Agent 工作区或模型工具。
+SDK TGZ 已包含运行期密钥工具。wheel/容器需安装 SDK TGZ，并设置 `OCTOP_AGENT_IDENTITY_SDK_BRIDGE` 为绝对 bridge.js 路径。根地址使用 HTTPS；显式 HTTP 开关只用于 loopback 开发。
 
-AKB 根地址须使用 HTTPS；当前 SDK 的 HTTP 开关仅用于显式允许的本机 loopback 测试。普通认证支持的内网明文 HTTP 不代表 Agent 签名模式也支持。生产跨机部署使用 HTTPS。
+- Octop 状态：GET /api/external-knowledge/sources/{id}/identity
+- 宿主生成：POST .../identity/generate
+- 绑定/解绑：POST/DELETE .../identity/agents/{nativeId}/connect
+- AKB：/api/external/admin/agent-connections
+- 历史授权确认：PUT /api/external/admin/agent-connections/{id}/authorization
 
-前端构建：AKB `cd frontend && npm ci && npm run build`；Octop `make build-frontend`，按各自部署方式发布产物并重启后端。勿直接编辑 Octop 的 `src/octop/dashboard` 构建目录。
+确认请求示例：`{"authorizationMode":"AGENT_INTERSECTION","platformType":"octop","reason":"根据升级前授权记录核对"}`。
 
-## 不同平台
-
-Octop 使用内置适配，不加载 OpenCode 插件。OpenCode 使用独立适配器，见 `integrations/opencode-identity/README.md` 的 configVersion 3。其他平台只需实现：可信运行上下文 → 本地 Agent/UUID 绑定 → 私钥签名 → MCP/REST。密钥生成工具与平台无关。
-
-接口：Octop 管理 `/api/external-knowledge/sources/{id}/identity/simple`、`/agents/{nativeId}/connect`；AKB 管理 `/api/external/admin/agent-connections`。AKB 的公开配置发现不认证 Agent，只返回签名坐标；知识请求仍必须通过严格签名、短期有效期、防重放和服务可读范围检查。
-
-## 本地验收记录
-
-本版已通过 AKB 223 项 Java 测试、Octop `make all`（4764 通过 / 16 跳过）、SDK 与 OpenCode 插件测试和独立 TGZ 安装验证。浏览器完成服务接入创建、双 Agent 公钥登记、私钥导入与自动绑定。真实本地 AKB / Octop 联调中，REST 和 MCP 分别以两名 Agent 检索到非空内容；越权、重放、跨 Agent 冒充、停用和撤销按预期拒绝。
-
-上述结果来自隔离的本地测试环境，并不表示用户线上部署已更新；Windows 账户 ACL 仍需在目标主机验收。
+SDK、OpenCode 插件及离线工具可以分别打包，不需要启动 Octop。真实部署仍需验证对应 OS 的密钥权限、反向代理原始路径以及 REST/MCP 请求。

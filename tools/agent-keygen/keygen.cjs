@@ -25,7 +25,7 @@ const { promisify } = require("node:util");
 const exec = promisify(execFile);
 const generate = promisify(generateKeyPair);
 
-const VERSION = "1.1.0";
+const VERSION = "1.2.0";
 const USAGE =
   "Usage: agent-keygen generate --out <new-directory> [--agent-id <existing-UUID>]";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -231,23 +231,21 @@ function parse(argv) {
   return values;
 }
 
-async function main() {
-  if (Number(process.versions.node.split(".")[0]) < 22)
-    throw new Error("Node.js 22 or newer is required");
-  const args = parse(process.argv.slice(2));
-  if (args.help === "version") {
-    process.stdout.write(`agent-keygen ${VERSION}\n`);
-    return;
-  }
-  if (args.help === "usage") {
-    process.stdout.write(`${USAGE}\n`);
-    return;
-  }
-
-  const agentId = args["--agent-id"] ?? randomUUID();
+/** Generate platform-neutral RSA material in trusted host memory. No output or network. */
+async function generateKeyMaterial(agentId = randomUUID()) {
   if (!UUID.test(agentId)) throw new Error("Agent ID must be a lowercase UUID");
-  const output = path.resolve(args["--out"]);
+  const pair = await generate("rsa", { modulusLength: 3072, publicExponent: 65537 });
+  const raw = pair.publicKey.export({ format: "jwk" });
+  const kid = createHash("sha256").update(JSON.stringify({ e: raw.e, kty: "RSA", n: raw.n })).digest("base64url");
+  return { agentId, privateKey: pair.privateKey, publicJwk: { kty: "RSA", n: raw.n, e: raw.e, kid, alg: "RS256", use: "sig" } };
+}
 
+/** Protected offline output for CLI users and trusted platform plugins. */
+async function generateToDirectory({ directory, agentId = randomUUID() }) {
+  if (Number(process.versions.node.split(".")[0]) < 22) throw new Error("Node.js 22 or newer is required");
+  if (!UUID.test(agentId)) throw new Error("Agent ID must be a lowercase UUID");
+  if (typeof directory !== "string" || !directory) throw new Error("Output directory is required");
+  const output = path.resolve(directory);
   let owner = null;
   if (process.platform === "win32") {
     if (
@@ -274,24 +272,10 @@ async function main() {
         `*${owner.sid}:(OI)(CI)F`,
         "/Q",
       ]);
-    const pair = await generate("rsa", {
-      modulusLength: 3072,
-      publicExponent: 65537,
-    });
-    const raw = pair.publicKey.export({ format: "jwk" });
-    const kid = createHash("sha256")
-      .update(JSON.stringify({ e: raw.e, kty: "RSA", n: raw.n }))
-      .digest("base64url");
-    const jwk = {
-      kty: "RSA",
-      n: raw.n,
-      e: raw.e,
-      kid,
-      alg: "RS256",
-      use: "sig",
-    };
+    const material = await generateKeyMaterial(agentId);
+    const jwk = material.publicJwk, kid = jwk.kid;
     const files = {
-      "private.pem": pair.privateKey.export({ type: "pkcs8", format: "pem" }),
+      "private.pem": material.privateKey.export({ type: "pkcs8", format: "pem" }),
       "public.jwk": `${JSON.stringify(jwk, null, 2)}\n`,
       "identity.json": `${JSON.stringify(
         { format: "akb-agent-key/v1", agentId, kid },
@@ -336,21 +320,26 @@ async function main() {
       await verifyPosix(path.join(output, "private.pem"), "file");
     }
 
-    process.stdout.write(
-      `${JSON.stringify({ agentId, kid, directory: output })}\n`,
-    );
-    process.stderr.write(
-      `Private key: ${path.join(output, "private.pem")} — keep it on this host, never upload it to AKB or send it to a model.\n`,
-    );
+    return { agentId, kid: jwk.kid, directory: output, publicJwk: jwk };
   } catch (error) {
     await rm(output, { recursive: true, force: true });
     throw error;
   }
 }
 
-main().catch((error) => {
-  process.stderr.write(
-    `agent-keygen: ${error instanceof Error ? error.message : "key generation failed"}\n${USAGE}\n`,
-  );
+async function main() {
+  const args = parse(process.argv.slice(2));
+  if (args.help) {
+    process.stdout.write(args.help === "version" ? `agent-keygen ${VERSION}\n` : `${USAGE}\n`);
+    return;
+  }
+  const result = await generateToDirectory({ directory: args["--out"], agentId: args["--agent-id"] });
+  process.stdout.write(`${JSON.stringify({ agentId: result.agentId, kid: result.kid, directory: result.directory })}\n`);
+  process.stderr.write(`Private key: ${path.join(result.directory, "private.pem")} — keep it on this host, never upload it to AKB or send it to a model.\n`);
+}
+exports.generateKeyMaterial = generateKeyMaterial;
+exports.generateToDirectory = generateToDirectory;
+if (require.main === module || require("node:sea").isSea()) main().catch((error) => {
+  process.stderr.write(`agent-keygen: ${error instanceof Error ? error.message : "key generation failed"}\n${USAGE}\n`);
   process.exitCode = 1;
 });

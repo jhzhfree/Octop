@@ -196,3 +196,16 @@ opencode run --agent reviewer '使用 akb_search 检索我的知识库中的发�
 插件证明受信 OpenCode 宿主的执行身份。受保护目录不能防御同 UID 任意 shell、恶意插件或已被攻陷的宿主。需要强隔离时，隔离模型工具执行账户 / 容器，保护宿主和签名器。不得将任意 curl 的参数或用户自己传入的 Agent 名作为可靠身份。
 
 完整跨平台协议和开发规范可在[项目文档](https://github.com/jhzhfree/Octop/tree/codex/opencode-workload-identity/integrations/agent-identity-spec)阅读。当前公共 npm 未发布、独立远端仓库未创建；这两项需按项目交付决策另行落实。
+
+## 使用独立本地密钥工具
+
+平台初始化工具可单独安装 `@akb/agent-keygen` TGZ（源码在 Octop/tools/agent-keygen），无需启动 Octop。
+
+```sh
+agent-keygen generate --out /secure/opencode/alpha
+# 轮换：agent-keygen generate --out /secure/opencode/alpha-next --agent-id <原UUID>
+```
+
+也可在受信管理命令中 `import { generateToDirectory } from '@akb/agent-keygen'`，传入不存在的目录，取得 Agent ID 与公钥。私钥保存在 0600/账户独占 ACL 文件；不得发送到模型工具结果。登记 public.jwk 后，按 SDK 的导入/选择流程或简化配置使用私钥。SDK 自身生成密钥也复用该工具；插件无需复制 RSA 或 RFC7638 实现。新身份生成不应放在普通聊天工具或插件自动启动回调里。
+
+AKB V79 会暂停历史连接以确认 SERVICE_SCOPE 或 AGENT_INTERSECTION；请管理员确认并启用后再调用。不同授权模式不会通过平台类型或 UI 显示自动切换。

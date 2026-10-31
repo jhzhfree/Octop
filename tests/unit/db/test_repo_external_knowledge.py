@@ -248,3 +248,43 @@ def test_expert_can_mount_external_sources(
     ]
     # Agent scope and knowledge-base scope stay independent.
     assert service.specs_for_target("knowledge_base", "kb-1") == []
+
+
+def test_identity_and_mount_roll_back_together(db: SqlitePool, owner_id: int) -> None:
+    import sqlite3
+
+    repo = ExternalKnowledgeRepo(db)
+    repo.create(
+        source_id="atomic",
+        owner_user_id=owner_id,
+        kind="akb-rest",
+        display_name="Atomic",
+        endpoint="https://akb.example",
+        credential_blob=b"old",
+    )
+    with db.connect() as conn:
+        conn.execute(
+            "CREATE TRIGGER reject_identity_mount BEFORE INSERT ON external_knowledge_bindings BEGIN SELECT RAISE(ABORT, 'mount failed'); END"
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        repo.compare_replace_identity_binding("atomic", b"old", b"new", "alpha", bound=True)
+    assert repo.get("atomic").credential_blob == b"old"
+    assert repo.list_bindings("atomic") == []
+    with db.connect() as conn:
+        conn.execute("DROP TRIGGER reject_identity_mount")
+    assert repo.compare_replace_identity_binding(
+        "atomic", b"old", b"connected", "alpha", bound=True
+    )
+    # A concurrent caller holding an old snapshot cannot overwrite the map or mount another Agent.
+    assert not repo.compare_replace_identity_binding("atomic", b"old", b"stale", "beta", bound=True)
+    assert [b.target_id for b in repo.list_bindings("atomic")] == ["alpha"]
+    with db.connect() as conn:
+        conn.execute(
+            "CREATE TRIGGER reject_identity_unmount BEFORE DELETE ON external_knowledge_bindings BEGIN SELECT RAISE(ABORT, 'unmount failed'); END"
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        repo.compare_replace_identity_binding(
+            "atomic", b"connected", b"disconnected", "alpha", bound=False
+        )
+    assert repo.get("atomic").credential_blob == b"connected"
+    assert len(repo.list_bindings("atomic")) == 1

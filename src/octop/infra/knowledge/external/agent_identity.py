@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import shutil
 import uuid
 from dataclasses import asdict, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +22,11 @@ from octop.infra.db.repos.external_knowledge import ExternalSourceRow
 from octop.infra.errors import ErrorCode, OctopError
 from octop.infra.knowledge.akb_identity import OctopIdentity
 from octop.infra.knowledge.external.service import ExternalKnowledgeService
-from octop.infra.knowledge.external.types import ExternalSearchResult, ExternalSourceSpec
+from octop.infra.knowledge.external.types import (
+    ExternalSearchResult,
+    ExternalSourceError,
+    ExternalSourceSpec,
+)
 from octop.infra.utils.paths import PathLayout
 
 
@@ -189,9 +195,27 @@ class AgentIdentityService:
                     "name": record.name,
                     "externalAgentId": current.get("externalAgentId", "") if current else "",
                     "activeKid": active_kid,
+                    "lastVerifiedAt": current.get("lastVerifiedAt") if current else None,
+                    "lastVerificationStatus": current.get("lastVerificationStatus")
+                    if current
+                    else None,
                 }
             )
         return result
+
+    async def generate(
+        self, source_id: str, user_id: int, is_admin: bool, external_id: str
+    ) -> dict[str, Any]:
+        row, _config = self.source(source_id, user_id, is_admin)
+        external_id = external_id or str(uuid.uuid4())
+        try:
+            if str(uuid.UUID(external_id)) != external_id:
+                raise ValueError()
+        except ValueError as exc:
+            raise _invalid() from exc
+        return await sdk_call(
+            {"op": "generate", "externalAgentId": external_id, "keyScope": row.source_id}
+        )
 
     async def connect(
         self,
@@ -201,6 +225,7 @@ class AgentIdentityService:
         is_admin: bool,
         external_id: str,
         private_key: str,
+        key_reference: str = "",
     ) -> dict[str, Any]:
         row, config = self.source(source_id, user_id, is_admin)
         self.agent(agent_id, user_id, is_admin)
@@ -224,6 +249,8 @@ class AgentIdentityService:
                 "op": "connect",
                 "externalAgentId": external_id,
                 "privateKey": private_key,
+                "keyReference": key_reference,
+                "keyScope": row.source_id,
                 "apiKey": str(creds.get("api_key") or ""),
                 "origin": row.endpoint.rstrip("/"),
                 "transport": "mcp" if row.kind == "akb-mcp" else "rest",
@@ -255,11 +282,10 @@ class AgentIdentityService:
             "externalAgentId": external_id,
             "bindingId": binding["bindingId"],
             "runtimeAgentKey": binding["runtimeAgentKey"],
+            "lastVerifiedAt": datetime.now(UTC).isoformat(),
+            "lastVerificationStatus": "success",
         }
-        self.sources.save_identity_config(row, config)
-        self.sources.set_binding(
-            source_id, user_id=user_id, is_admin=is_admin, target_type="agent", target_id=agent_id
-        )
+        self.sources.save_identity_config(row, config, agent_id=agent_id)
         return {"status": result["status"], "activeKid": result["activeKid"]}
 
     def disconnect(self, source_id: str, agent_id: str, user_id: int, is_admin: bool) -> None:
@@ -268,10 +294,7 @@ class AgentIdentityService:
         if agent_id not in config.get("agents", {}):
             raise _invalid()
         config["agents"].pop(agent_id, None)
-        self.sources.save_identity_config(row, config)
-        self.sources.delete_binding(
-            source_id, user_id=user_id, is_admin=is_admin, target_type="agent", target_id=agent_id
-        )
+        self.sources.save_identity_config(row, config, agent_id=agent_id, bound=False)
 
     async def search(
         self, source_id: str, agent_id: str, user_id: int, is_admin: bool, query: str, top_k: int
@@ -283,13 +306,40 @@ class AgentIdentityService:
         )
         spec = replace(self.sources.to_spec(row), octop_identity=identity)
         creds = {**self.sources.credentials_for(row), "agent_identity": config}
-        result = await search_as_agent(spec, creds, query, top_k=top_k)
+        try:
+            result = await search_as_agent(spec, creds, query, top_k=top_k)
+        except (OctopError, ExternalSourceError):
+            self._record_verification(source_id, agent_id, config, user_id, is_admin, "failure")
+            raise
+        self._record_verification(source_id, agent_id, config, user_id, is_admin, "success")
         return {
             "source_id": source_id,
             "chunks": [asdict(chunk) for chunk in result.chunks],
             "warnings": [],
             "trace_ids": result.trace_ids,
         }
+
+    def _record_verification(
+        self,
+        source_id: str,
+        agent_id: str,
+        previous: dict[str, Any],
+        user_id: int,
+        is_admin: bool,
+        status: str,
+    ) -> None:
+        try:
+            row, current = self.source(source_id, user_id, is_admin)
+            agent = current.get("agents", {}).get(agent_id)
+            if not agent or agent != previous.get("agents", {}).get(agent_id):
+                return  # An unbind or key change during the request must not be undone.
+            agent["lastVerifiedAt"] = datetime.now(UTC).isoformat()
+            agent["lastVerificationStatus"] = status
+            self.sources.save_identity_config(row, current)
+        except (OctopError, ExternalSourceError):
+            logging.getLogger(__name__).info(
+                "Identity verification state changed concurrently for source=%s", source_id
+            )
 
 
 async def execute_as_agent(

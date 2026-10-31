@@ -102,6 +102,36 @@ class ExternalKnowledgeRepo:
                 )
             return bool(result.rowcount == 1)
 
+    def compare_replace_identity_binding(
+        self, source_id: str, old: bytes | None, new: bytes, agent_id: str, *, bound: bool
+    ) -> bool:
+        """Commit encrypted identity and its retrieval mount together, with CAS protection."""
+        with self._db.transaction() as conn:
+            predicate = "credential_blob IS NULL" if old is None else "credential_blob=?"
+            values: tuple[object, ...] = (new, now_ts(), source_id)
+            if old is not None:
+                values += (old,)
+            result = conn.execute(
+                "UPDATE external_knowledge_sources SET credential_blob=?,updated_at=? "
+                f"WHERE source_id=? AND {predicate}",
+                values,
+            )
+            if result.rowcount != 1:
+                return False
+            if bound:
+                conn.execute(
+                    "INSERT INTO external_knowledge_bindings(source_id,target_type,target_id,enabled,created_at) "
+                    "VALUES (?,'agent',?,1,?) ON CONFLICT(source_id,target_type,target_id) "
+                    "DO UPDATE SET enabled=1",
+                    (source_id, agent_id, now_ts()),
+                )
+            else:
+                conn.execute(
+                    "DELETE FROM external_knowledge_bindings WHERE source_id=? AND target_type='agent' AND target_id=?",
+                    (source_id, agent_id),
+                )
+            return True
+
     def create(
         self,
         *,

@@ -1,13 +1,12 @@
 import { constants } from "node:fs";
 import { mkdir, open, realpath, lstat, rename, unlink } from "node:fs/promises";
 import path from "node:path";
-import { createPrivateKey, createPublicKey, generateKeyPair, sign, type KeyObject } from "node:crypto";
-import { promisify } from "node:util";
+import { createPrivateKey, createPublicKey, sign, type KeyObject } from "node:crypto";
+import { generateKeyMaterial } from "@akb/agent-keygen";
 import { bytes, IdentityError, ownerIndex, publicKid, sha256 } from "./core.js";
 import { protectionPolicy } from "./permissions.js";
 import type { AgentKeyOwner, AgentKeyStore, PublicAgentKey, RsaPublicJwk, RsaSigner } from "./types.js";
 
-const generate = promisify(generateKeyPair);
 const missing = (e: unknown) => (e as NodeJS.ErrnoException).code === "ENOENT";
 const protection = protectionPolicy();
 export function outside(workspace: string, filename: string): boolean {
@@ -115,7 +114,7 @@ export class NodeFileKeyStore implements AgentKeyStore {
   }
   private async generateVersion(owner: AgentKeyOwner, manifest: Manifest) {
     if (manifest.keys.length >= 16) throw new IdentityError("KEY_UNAVAILABLE", "Local key history limit reached");
-    const pair = await generate("rsa", { modulusLength: 3072, publicExponent: 65537 });
+    const pair = await generateKeyMaterial(owner.externalAgentId);
     const jwk = await publicJwk(pair.privateKey), directory = await this.directory(owner);
     const keyDirectory = path.join(directory, jwk.kid); await mkdir(keyDirectory, { mode: 0o700 });
     await protection.harden(keyDirectory, "directory");

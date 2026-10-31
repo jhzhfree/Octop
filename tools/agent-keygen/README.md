@@ -9,7 +9,7 @@
 ```bash
 node keygen.cjs generate --out /secure/alpha
 # 或在此目录 npm pack，再安装生成的 tgz：
-# npm install -g ./akb-agent-keygen-1.1.0.tgz
+# npm install -g ./akb-agent-keygen-1.2.0.tgz
 # agent-keygen generate --out /secure/alpha
 ```
 
@@ -58,3 +58,23 @@ Octop：新建 AKB REST/MCP 外部知识库，选择「Agent 密钥」认证，�
 输出 RSA-3072 / RS256、公钥 RFC 7638 指纹、PKCS#8 PEM 私钥。
 
 测试：`npm test`。打包：`npm pack`。没有创建独立远端仓库或发布到 npm；当前作为独立可打包工程存放在 Octop/tools/agent-keygen。
+
+## 平台插件的 Node API
+
+工具提供稳定的包入口和 TypeScript 类型；导入模块不会执行 CLI，不打印日志、不联网。
+
+```js
+import { generateToDirectory } from '@akb/agent-keygen';
+const generated = await generateToDirectory({
+  directory: '/secure/platform/alpha', // 必须不存在，放在 Agent 工作区之外
+  // agentId: '原 UUID',              // 轮换时保留
+});
+// generated: agentId、kid、directory、publicJwk；不包含私钥内容。
+// 平台在受信管理流程中导入该目录的 private.pem，并向 AKB 登记 public.jwk。
+```
+
+SDK 内部也可调用 `generateKeyMaterial(agentId?)`，获得宿主内存中的私钥 KeyObject 与 publicJwk，再交给自身的受保护存储。这是宿主权限接口，不能直接注册成提供给模型的工具。
+
+OpenCode 插件开发者可以在本机初始化/管理命令调用 CLI，或直接导入以上 API；不要在每次聊天、模型工具调用或插件自动加载时生成新身份。CLI 成功 stdout 仍只有 agentId、kid、directory，不含私钥。生成完成后通过 SDK 导入或初始化注册流程使用密钥，不能靠生成密钥自动取得 AKB 权限。
+
+Octop 的宿主生成流程使用同一个包，浏览器只拿到公钥与作用域引用。浏览器不再自行生成并下载含私钥的 zip。密钥引用不允许跨知识连接或跨 Agent 使用。

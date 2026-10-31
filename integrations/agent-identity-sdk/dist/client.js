@@ -125,7 +125,7 @@ export class AkbKnowledgeClient {
             throw new IdentityError("UPSTREAM_UNAVAILABLE", "AKB connection discovery failed", true);
         }
         const b = result?.data;
-        if (result?.success !== true || !b || b.resource !== this.origin || b.externalAgentId !== agentId || b.runtimeAgentKey !== agentId
+        if (result?.success !== true || !b || b.resource !== this.origin || b.externalAgentId !== agentId || !identifier(b.runtimeAgentKey)
             || !["platformId", "installationId", "workspaceId"].every(k => identifier(b[k]))
             || !["policyId", "applicationPrincipalId", "bindingId"].every(k => typeof b[k] === "string" && /^[1-9][0-9]{0,18}$/.test(b[k]))
             || typeof b.issuer !== "string" || !b.issuer.startsWith("https://") || typeof b.audience !== "string" || !b.audience.length || b.audience.length > 128) {

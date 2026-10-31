@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 /** Trusted host IPC, not a model tool or network listener. Secrets travel through stdin only. */
-import { NodeFileKeyStore } from "./keystore-node.js";
-import { IdentityError, ownerIndex } from "./core.js";
+import path from "node:path";
+import { mkdir } from "node:fs/promises";
+import { generateToDirectory } from "@akb/agent-keygen";
+import { readProtectedFile, NodeFileKeyStore } from "./keystore-node.js";
+import { IdentityError, ownerIndex, uuid, sha256, bytes } from "./core.js";
 import { protectionSupported } from "./permissions.js";
 import { proveRegistration } from "./registration.js";
 import { AkbKnowledgeClient } from "./client.js";
@@ -10,6 +13,19 @@ async function run(input) {
         return { version: "0.4.0", supported: Number(process.versions.node.split(".")[0]) >= 22 && protectionSupported() };
     if (Number(process.versions.node.split(".")[0]) < 22)
         throw new IdentityError("PROTOCOL_UNSUPPORTED", "Node 22 or later is required");
+    const generatedDirectory = async () => {
+        if (typeof input.keyScope !== "string" || !input.keyScope.length || input.keyScope.length > 128)
+            throw new IdentityError("KEY_UNAVAILABLE", "Key scope required");
+        return path.join(input.root, "generated", await sha256(bytes(input.keyScope)));
+    };
+    if (input.op === "generate") {
+        await NodeFileKeyStore.open(input.root);
+        const parent = await generatedDirectory();
+        await mkdir(parent, { recursive: true, mode: 0o700 });
+        const reference = crypto.randomUUID();
+        const generated = await generateToDirectory({ directory: path.join(parent, reference), agentId: input.externalAgentId });
+        return { externalAgentId: generated.agentId, kid: generated.kid, publicJwk: generated.publicJwk, keyReference: reference };
+    }
     if (input.op === "connect") {
         const signal = AbortSignal.timeout(Math.min(180000, (input.timeoutMs ?? 15000) * 3 + 10000));
         const client = new AkbKnowledgeClient({ async readServiceKey() { return input.apiKey ?? ""; } }, input.origin, input.transport, input.timeoutMs, input.allowInsecureLoopback);
@@ -17,7 +33,17 @@ async function run(input) {
         const owner = { platformId: binding.platformId, installationId: binding.installationId, workspaceId: binding.workspaceId, externalAgentId: binding.externalAgentId };
         const store = await NodeFileKeyStore.open(input.root);
         const state = await store.describe(owner);
-        const imported = input.privateKey ? await store.importPrivateKey(owner, input.privateKey) : undefined;
+        let pem = input.privateKey;
+        if (input.keyReference) {
+            if (pem || !uuid(input.keyReference))
+                throw new IdentityError("KEY_UNAVAILABLE", "Invalid generated key reference");
+            const directory = path.join(await generatedDirectory(), input.keyReference);
+            const metadata = JSON.parse(await readProtectedFile(path.join(directory, "identity.json")));
+            if (metadata.agentId !== binding.externalAgentId)
+                throw new IdentityError("KEY_UNAVAILABLE", "Generated key belongs to a different Agent");
+            pem = await readProtectedFile(path.join(directory, "private.pem"));
+        }
+        const imported = pem ? await store.importPrivateKey(owner, pem) : undefined;
         const signer = await store.openSigner(owner, imported?.kid ?? state.activeKid ?? "");
         const status = await client.status(binding, input.invocation, signer, signal);
         await store.selectRegisteredKey(owner, signer.kid);

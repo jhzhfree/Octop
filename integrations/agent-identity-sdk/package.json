@@ -57,5 +57,11 @@
   "devDependencies": {
     "typescript": "5.8.3",
     "@types/node": "^22.0.0"
-  }
+  },
+  "dependencies": {
+    "@akb/agent-keygen": "file:../../tools/agent-keygen"
+  },
+  "bundledDependencies": [
+    "@akb/agent-keygen"
+  ]
 }

@@ -108,3 +108,35 @@ test('simplified imported keys use one shared key, distinct Agent signatures, an
   const state=await call({op:'state',root:request.root,owner:binding(agents[0])});assert.equal(state.data.activeKid,seen[0].kid);
  }finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));await rm(root,{recursive:true,force:true});}
 });
+
+test('host generation returns public data only and references cannot cross source scopes', async () => {
+ const root=await mkdtemp(path.join(tmpdir(),'akb-host-generation-'));
+ try {
+  const generated=await call({op:'generate',root:path.join(root,'keys'),keyScope:'source-a',externalAgentId:owner.externalAgentId});
+  assert.equal(generated.ok,true);
+  assert.equal(generated.data.externalAgentId,owner.externalAgentId);
+  assert.ok(generated.data.keyReference);
+  assert.equal(generated.data.publicJwk.d,undefined);
+  assert.equal(generated.data.privateKey,undefined);
+  assert.equal(generated.data.directory,undefined);
+  assert.equal((await call({op:'generate',root:path.join(root,'keys'),externalAgentId:owner.externalAgentId})).ok,false);
+  const server=createServer((req,res)=>{
+    res.setHeader('Content-Type','application/json');
+    const resource=`http://127.0.0.1:${server.address().port}`;
+    if(req.url.startsWith('/api/v1/external/identity/configuration')) {
+      const id=new URL(req.url,resource).searchParams.get('agentId');
+      res.end(JSON.stringify({success:true,data:{...owner,externalAgentId:id,runtimeAgentKey:id,resource,policyId:'17',bindingId:'21',applicationPrincipalId:'123',issuer:'https://issuer.example',audience:'akb'}}));return;
+    }
+    const [h,c,s]=req.headers['x-akb-workload-assertion'].split('.');
+    assert.ok(verify('sha256',Buffer.from(`${h}.${c}`),createPublicKey({key:generated.data.publicJwk,format:'jwk'}),Buffer.from(s,'base64url')));
+    res.end(JSON.stringify({success:true,data:{agentId:owner.externalAgentId,kid:generated.data.kid,proofProfile:'AGENT_KEY_RS256_V2',keyStatus:'ACTIVE',policyId:17}}));
+  });
+  server.listen(0,'127.0.0.1');await once(server,'listening');
+  try {
+    const request={op:'connect',root:path.join(root,'keys'),keyScope:'source-a',externalAgentId:owner.externalAgentId,keyReference:generated.data.keyReference,origin:`http://127.0.0.1:${server.address().port}`,transport:'rest',allowInsecureLoopback:true,apiKey:'shared-key',invocation:{sessionId:'management',invocationId:crypto.randomUUID()}};
+    assert.equal((await call({...request,keyScope:'source-b'})).ok,false);
+    assert.equal((await call({...request,externalAgentId:crypto.randomUUID()})).ok,false);
+    const connected=await call(request);assert.equal(connected.ok,true);assert.equal(connected.data.activeKid,generated.data.kid);
+  } finally {server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
+ } finally {await rm(root,{recursive:true,force:true});}
+});

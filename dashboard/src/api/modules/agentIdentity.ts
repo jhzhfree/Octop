@@ -6,6 +6,8 @@ export interface SourceAgentIdentity {
   name: string;
   externalAgentId: string;
   activeKid: string | null;
+  lastVerifiedAt?: string | null;
+  lastVerificationStatus?: "success" | "failure" | null;
 }
 export interface SourceIdentityState {
   runtimeReady: boolean;
@@ -20,16 +22,25 @@ function post<T>(url: string, body: unknown = {}) {
     body: JSON.stringify(body),
   });
 }
+export interface GeneratedAgentKey {
+  externalAgentId: string;
+  kid: string;
+  publicJwk: Record<string, string>;
+  keyReference: string;
+}
 export const agentIdentityApi = {
+  generate: (id: string, externalAgentId: string) =>
+    post<GeneratedAgentKey>(`${root(id)}/generate`, { externalAgentId }),
   connect: (
     id: string,
     agent: string,
     externalAgentId: string,
     privateKey: string,
+    keyReference = "",
   ) =>
     post<{ activeKid: string | null }>(
       `${root(id)}/agents/${encodeURIComponent(agent)}/connect`,
-      { externalAgentId, privateKey },
+      { externalAgentId, privateKey, keyReference },
     ),
   disconnect: (id: string, agent: string) =>
     request<{ ok: boolean }>(

@@ -121,3 +121,7 @@ See [dashboard setup and deployment](../agent-identity-spec/DASHBOARD-SETUP.md) 
 
 
 0.3.2 的 `setup export` 可从现有 bindings 读取一致的 issuer/audience，也支持顶层填写这两项的空绑定引导配置（`config.bootstrap.example.json`）。已有绑定与顶层或彼此不一致时明确拒绝导出。两种示例都随包发布，运行配置在完成登记前仍不可用于调用。
+
+## Local key tool and host generation
+
+RSA generation is provided by the bundled `@akb/agent-keygen` package. Its offline CLI and Node API work independently of Octop and can be used by other platform management commands. Trusted bridge `generate` takes `keyScope` and an optional externalAgentId and returns only publicJwk, kid, externalAgentId and keyReference. `connect` resolves that reference only inside the same scope and verifies its Agent ID before importing it. Do not expose bridge management operations as model tools. Installed TGZs include the runtime key generator; sibling source directories are not required.

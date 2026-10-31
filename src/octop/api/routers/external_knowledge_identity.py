@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Coroutine
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
@@ -43,8 +43,35 @@ def _identity(server: Any) -> AgentIdentityService:
     return AgentIdentityService(_service(server), server.services.agent_repo)
 
 
+class GenerateKeyBody(BaseModel):
+    external_agent_id: str = Field(default="", alias="externalAgentId", max_length=36)
+
+
+class GeneratedPublicJwk(BaseModel):
+    kty: Literal["RSA"]
+    n: str
+    e: str
+    kid: str
+    alg: Literal["RS256"]
+    use: Literal["sig"]
+
+
+class GeneratedAgentKeyResponse(BaseModel):
+    external_agent_id: str = Field(
+        alias="externalAgentId", description="需要在 AKB 登记的 Agent UUID"
+    )
+    kid: str = Field(description="公钥指纹")
+    public_jwk: GeneratedPublicJwk = Field(
+        alias="publicJwk", description="仅公钥字段，可在 AKB 登记"
+    )
+    key_reference: str = Field(
+        alias="keyReference", description="仅能用于本连接的宿主密钥引用，不是文件路径"
+    )
+
+
 class SimpleBindingBody(BaseModel):
     external_agent_id: str = Field(alias="externalAgentId", pattern=r"^[0-9a-f-]{36}$")
+    key_reference: str = Field(default="", alias="keyReference", max_length=36)
     private_key: str = Field(
         default="",
         alias="privateKey",
@@ -74,6 +101,26 @@ async def state(
 
 
 @router.post(
+    "/generate",
+    response_model=GeneratedAgentKeyResponse,
+    summary="在宿主生成 Agent 密钥",
+    description="仅连接拥有者或管理员。复用离线密钥工具，返回公钥和受作用域约束的引用，不返回私钥。",
+)
+async def generate(
+    source_id: str,
+    body: GenerateKeyBody,
+    user: Any = Depends(current_user),
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    try:
+        return await _identity(server).generate(
+            source_id, user.id, user.role == "admin", body.external_agent_id
+        )
+    except ExternalSourceError as exc:
+        raise _fail(exc) from exc
+
+
+@router.post(
     "/agents/{agent_id}/connect",
     summary="绑定系统 Agent 并验证密钥",
     description="仅连接和 Agent 拥有者或管理员。私钥仅经管理请求进入 Octop 安全存储，不发送给 AKB；认证成功后自动绑定检索。",
@@ -93,6 +140,7 @@ async def connect(
             user.role == "admin",
             body.external_agent_id,
             body.private_key,
+            body.key_reference,
         )
     except ExternalSourceError as exc:
         raise _fail(exc) from exc

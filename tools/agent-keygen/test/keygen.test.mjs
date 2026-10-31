@@ -131,3 +131,21 @@ test(
     }
   },
 );
+
+test("platform libraries can generate protected output without invoking the CLI", async () => {
+  const { generateToDirectory, generateKeyMaterial } = await import('../keygen.cjs');
+  const root = await mkdtemp(path.join(tmpdir(), 'keygen-library-'));
+  try {
+    const first = await generateToDirectory({ directory: path.join(root,'first') });
+    const second = await generateToDirectory({ directory: path.join(root,'rotation'), agentId: first.agentId });
+    assert.equal(second.agentId, first.agentId);
+    assert.notEqual(second.kid, first.kid);
+    assert.ok(!JSON.stringify(first).includes('PRIVATE KEY'));
+    const material = await generateKeyMaterial(first.agentId);
+    assert.equal(material.privateKey.type, 'private');
+    assert.equal(material.publicJwk.alg, 'RS256');
+    assert.equal(material.publicJwk.d, undefined);
+    assert.ok(verify('sha256', Buffer.from('plugin'), createPublicKey({key:material.publicJwk,format:'jwk'}),sign('sha256',Buffer.from('plugin'),material.privateKey)));
+    await assert.rejects(generateToDirectory({directory:path.join(root,'first')}));
+  } finally { await rm(root,{recursive:true,force:true}); }
+});
