@@ -29,6 +29,7 @@ from octop.infra.knowledge.external.types import (
     ExternalSourceError,
     ExternalSourceSpec,
     SourceProbeResult,
+    missing_ref,
 )
 
 ORIGIN = "akb-rest"
@@ -78,9 +79,7 @@ def _headers(spec: ExternalSourceSpec, creds: dict[str, Any]) -> dict[str, str]:
 
 def _ref_headers(spec: ExternalSourceSpec, creds: dict[str, Any]) -> dict[str, str]:
     if not spec.ref:
-        raise ExternalSourceError(
-            "INVALID_ARGUMENT", "an AKB knowledge base reference is required", origin=ORIGIN
-        )
+        raise missing_ref(ORIGIN)
     return {**_headers(spec, creds), "X-Knowledge-Base-Id": spec.ref}
 
 

@@ -15,6 +15,9 @@ export interface ExternalKnowledgeSource {
   selector_argument: string;
   forbidden_arguments: string[];
   read_tools: string[];
+  // Which advertised MCP tool this source calls, and what else it is sent.
+  tool_name: string;
+  tool_arguments: Record<string, string | number | boolean>;
   enabled: boolean;
   shared: boolean;
   owner_user_id: number;
@@ -42,6 +45,13 @@ export interface ExternalKnowledgeWarning {
   message: string;
 }
 
+/** One advertised MCP tool, carrying the arguments it declares. */
+export interface ExternalKnowledgeToolSchema {
+  name: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+}
+
 export interface ExternalKnowledgeProbe {
   ok: boolean;
   code: string;
@@ -53,6 +63,7 @@ export interface ExternalKnowledgeProbe {
   server_info?: Record<string, unknown>;
   capabilities?: Record<string, unknown>;
   instructions?: string;
+  tool_schemas?: ExternalKnowledgeToolSchema[];
 }
 
 export interface ExternalKnowledgeBinding {
@@ -77,6 +88,9 @@ export interface ExternalSourceCreateBody {
   selector_argument?: string;
   forbidden_arguments?: string[];
   read_tools?: string[];
+  // Pick a tool from the advertised list, then fill in what that tool needs.
+  tool_name?: string;
+  tool_arguments?: Record<string, string | number | boolean>;
   shared?: boolean;
 }
 

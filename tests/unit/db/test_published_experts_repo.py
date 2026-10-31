@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from octop.infra.db.migrate import run_migrations
+from octop.infra.db.migrate import run_migrations, schema_baseline_version
 from octop.infra.db.pool import SqlitePool
 from octop.infra.db.repos.published_experts import PublishedExpertRepo
 
@@ -27,7 +27,7 @@ def test_published_experts_table_exists(db: SqlitePool) -> None:
         v = conn.execute("SELECT version FROM _schema_version").fetchone()[0]
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(published_experts)").fetchall()}
     assert "published_experts" in names
-    assert v == 28
+    assert v == schema_baseline_version()
     assert "published_expert_id" in cols
 
 

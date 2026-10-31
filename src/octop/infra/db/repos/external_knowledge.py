@@ -28,6 +28,9 @@ class ExternalSourceRow:
     selector_argument: str
     forbidden_arguments: str
     read_tools: str
+    tool_name: str
+    # JSON map of the extra arguments the chosen tool is called with.
+    tool_arguments: str
     enabled: bool
     shared: bool
     credential_blob: bytes | None
@@ -53,6 +56,8 @@ class ExternalSourceRow:
             selector_argument=r["selector_argument"] or "",
             forbidden_arguments=r["forbidden_arguments"] or "",
             read_tools=r["read_tools"] or "",
+            tool_name=r["tool_name"] or "",
+            tool_arguments=r["tool_arguments"] or "",
             enabled=bool(r["enabled"]),
             shared=bool(r["shared"]),
             credential_blob=bytes(blob) if blob is not None else None,
@@ -149,6 +154,8 @@ class ExternalKnowledgeRepo:
         selector_argument: str = "",
         forbidden_arguments: str = "",
         read_tools: str = "",
+        tool_name: str = "",
+        tool_arguments: str = "",
         shared: bool = False,
         credential_blob: bytes | None = None,
     ) -> str:
@@ -158,9 +165,10 @@ class ExternalKnowledgeRepo:
                 "INSERT INTO external_knowledge_sources("
                 "source_id, owner_user_id, instance_id, kind, display_name, endpoint, ref, "
                 "top_k, min_score, timeout_ms, allow_insecure_http, selector_argument, "
-                "forbidden_arguments, read_tools, enabled, shared, credential_blob, "
+                "forbidden_arguments, read_tools, tool_name, tool_arguments, "
+                "enabled, shared, credential_blob, "
                 "created_at, updated_at"
-                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)",
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)",
                 (
                     source_id,
                     owner_user_id,
@@ -176,6 +184,8 @@ class ExternalKnowledgeRepo:
                     selector_argument,
                     forbidden_arguments,
                     read_tools,
+                    tool_name,
+                    tool_arguments,
                     bool_int(shared),
                     credential_blob,
                     ts,
@@ -220,6 +230,8 @@ class ExternalKnowledgeRepo:
         selector_argument: str | None = None,
         forbidden_arguments: str | None = None,
         read_tools: str | None = None,
+        tool_name: str | None = None,
+        tool_arguments: str | None = None,
         enabled: bool | None = None,
         shared: bool | None = None,
         credential_blob: bytes | None = None,
@@ -238,6 +250,8 @@ class ExternalKnowledgeRepo:
             "selector_argument": selector_argument,
             "forbidden_arguments": forbidden_arguments,
             "read_tools": read_tools,
+            "tool_name": tool_name,
+            "tool_arguments": tool_arguments,
         }
         for column, value in optional.items():
             if value is not None:

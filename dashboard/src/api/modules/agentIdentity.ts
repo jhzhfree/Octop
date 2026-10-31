@@ -54,6 +54,12 @@ export const agentIdentityApi = {
       { method: "DELETE" },
     ),
   state: (id: string) => request<SourceIdentityState>(root(id)),
+  /** Knowledge bases a bound Agent may read. Identity-bound sources reject the
+   *  legacy credential calls, so the picklist travels through the binding. */
+  bases: (id: string, agent: string) =>
+    request<{ refs: { ref: string; name: string }[] }>(
+      `${root(id)}/agents/${encodeURIComponent(agent)}/bases`,
+    ),
   search: (id: string, agent: string, query: string) =>
     post<{ chunks: ExternalKnowledgeChunk[] }>(
       `${root(id)}/agents/${encodeURIComponent(agent)}/search`,

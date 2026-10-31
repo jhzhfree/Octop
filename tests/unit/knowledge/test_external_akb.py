@@ -265,6 +265,88 @@ async def test_akb_mcp_probe_reports_the_handshake(monkeypatch: pytest.MonkeyPat
     assert result.capabilities == {"tools": {"listChanged": False}}
     assert result.instructions == "优先用 knowledge_query"
     assert result.tools == ["knowledge_query"]
+    assert result.tool_schemas == [
+        {"name": "knowledge_query", "description": "", "input_schema": {}}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_akb_mcp_probe_reports_each_tool_schema(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The edit form renders a tool's own arguments, so it needs the schema."""
+
+    async def fake_post_json(url: str, **kwargs: Any) -> Any:
+        if kwargs["payload"]["method"] == "initialize":
+            return {"result": {"protocolVersion": "2025-06-18"}}
+        return {
+            "result": {
+                "tools": [
+                    {
+                        "name": "knowledge_query",
+                        "description": "问答式检索",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "question": {"type": "string"},
+                                "permissionTags": {"type": "array"},
+                            },
+                            "required": ["question"],
+                        },
+                    }
+                ]
+            }
+        }
+
+    monkeypatch.setattr(akb_mcp, "post_json", fake_post_json)
+    result = await akb_mcp.probe(_spec(kind="akb-mcp"), {"api_key": "k"})
+    assert result.tool_schemas == [
+        {
+            "name": "knowledge_query",
+            "description": "问答式检索",
+            "input_schema": {
+                "type": "object",
+                "properties": {"question": {"type": "string"}, "permissionTags": {"type": "array"}},
+                "required": ["question"],
+            },
+        }
+    ]
+
+
+def test_tool_name_wins_over_the_built_in_pair() -> None:
+    assert akb_mcp._tool_name(_spec(kind="akb-mcp")) == "knowledge_search"
+    assert akb_mcp._tool_name(_spec(kind="akb-mcp", tool_name="kb_search_v2")) == "kb_search_v2"
+
+
+def test_configured_arguments_travel_but_never_override_the_call() -> None:
+    """Preset values are extras; the query and its target belong to the caller."""
+    spec = _spec(
+        kind="akb-mcp",
+        ref="12",
+        tool_arguments={
+            "permissionTags": "policy",
+            "topK": 99,
+            "query": "注入的查询",
+            "knowledgeBaseId": 7,
+        },
+    )
+    arguments = akb_mcp._arguments(spec, "真实问题", top_k=3)
+    assert arguments["permissionTags"] == "policy"
+    # Controlled values keep what the retrieval itself decided.
+    assert arguments["topK"] == 3
+    assert arguments["query"] == "真实问题"
+    assert arguments["knowledgeBaseId"] == 12
+
+
+def test_forbidden_arguments_still_apply_to_configured_values() -> None:
+    spec = _spec(
+        kind="akb-mcp",
+        forbidden_arguments=("knowledgeBaseId",),
+        tool_arguments={"knowledgeBaseId": 7, "mode": "strict"},
+    )
+    arguments = akb_mcp._arguments(spec, "q", top_k=2)
+    # A source that forbids a key keeps its say even over stored arguments.
+    assert "knowledgeBaseId" not in arguments
+    assert arguments["mode"] == "strict"
+    assert arguments["knowledgeBaseCode"] == "HR-POLICY"
 
 
 def test_akb_rest_accepts_a_pasted_retrieval_url() -> None:

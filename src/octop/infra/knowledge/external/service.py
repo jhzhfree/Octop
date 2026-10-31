@@ -7,6 +7,7 @@ multi-source retrieval. Callers never see raw credentials.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -35,6 +36,7 @@ from octop.infra.knowledge.external.types import (
     ExternalSourceError,
     ExternalSourceSpec,
     SourceWarning,
+    sanitize_tool_arguments,
 )
 from octop.infra.utils.ulid import new_ulid
 
@@ -55,6 +57,20 @@ def _normalize_api_key_header(value: str) -> str:
     """Keep only a known header scheme so an arbitrary string cannot leak in."""
     scheme = (value or "").strip().lower()
     return scheme if scheme in API_KEY_HEADERS else ""
+
+
+def _load_tool_arguments(raw: str) -> dict[str, Any]:
+    """Read stored tool arguments, tolerating a hand-edited or empty column."""
+    try:
+        parsed = json.loads(raw) if raw else None
+    except ValueError:
+        return {}
+    return sanitize_tool_arguments(parsed)
+
+
+def _dump_tool_arguments(values: Any) -> str:
+    clean = sanitize_tool_arguments(values)
+    return json.dumps(clean, ensure_ascii=False, sort_keys=True) if clean else ""
 
 
 class ExternalKnowledgeService:
@@ -88,6 +104,8 @@ class ExternalKnowledgeService:
             selector_argument=row.selector_argument,
             forbidden_arguments=_split_list(row.forbidden_arguments),
             read_tools=_split_list(row.read_tools),
+            tool_name=(row.tool_name or "").strip(),
+            tool_arguments=_load_tool_arguments(row.tool_arguments),
             enabled=row.enabled,
             instance_id=row.instance_id,
             owner_user_id=row.owner_user_id,
@@ -174,6 +192,8 @@ class ExternalKnowledgeService:
             "selector_argument": row.selector_argument,
             "forbidden_arguments": list(spec.forbidden_arguments),
             "read_tools": list(spec.read_tools),
+            "tool_name": spec.tool_name,
+            "tool_arguments": spec.tool_arguments,
             "enabled": row.enabled,
             "shared": row.shared,
             "owner_user_id": row.owner_user_id,
@@ -241,6 +261,8 @@ class ExternalKnowledgeService:
         selector_argument: str = "",
         forbidden_arguments: Any = None,
         read_tools: Any = None,
+        tool_name: str = "",
+        tool_arguments: Any = None,
         shared: bool = False,
     ) -> dict[str, Any]:
         if kind not in SOURCE_KINDS:
@@ -282,6 +304,8 @@ class ExternalKnowledgeService:
             selector_argument=selector_argument.strip(),
             forbidden_arguments=_join_list(forbidden_arguments),
             read_tools=_join_list(read_tools),
+            tool_name=(tool_name or "").strip(),
+            tool_arguments=_dump_tool_arguments(tool_arguments),
             shared=shared,
             credential_blob=blob,
         )
@@ -312,6 +336,8 @@ class ExternalKnowledgeService:
         kind = fields.pop("kind", None)
         forbidden = fields.pop("forbidden_arguments", None)
         read_tools = fields.pop("read_tools", None)
+        tool_name = fields.pop("tool_name", None)
+        tool_arguments = fields.pop("tool_arguments", None)
         shared = fields.pop("shared", None)
         enabled = fields.pop("enabled", None)
         allow_insecure = fields.pop("allow_insecure_http", None)
@@ -359,6 +385,8 @@ class ExternalKnowledgeService:
             selector_argument=fields.get("selector_argument"),
             forbidden_arguments=(None if forbidden is None else _join_list(forbidden)),
             read_tools=None if read_tools is None else _join_list(read_tools),
+            tool_name=None if tool_name is None else str(tool_name).strip(),
+            tool_arguments=None if tool_arguments is None else _dump_tool_arguments(tool_arguments),
             enabled=None if enabled is None else bool(enabled),
             shared=None if shared is None else bool(shared),
             credential_blob=blob,
@@ -472,6 +500,7 @@ class ExternalKnowledgeService:
             "code": "" if result.ok else "PROBE_FAILED",
             "message": result.message,
             "tools": result.tools,
+            "tool_schemas": result.tool_schemas,
             "refs": result.refs,
             "protocol_version": result.protocol_version,
             "server_info": result.server_info,

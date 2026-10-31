@@ -29,6 +29,7 @@ from octop.infra.knowledge.external.types import (
     ExternalSourceError,
     ExternalSourceSpec,
     SourceProbeResult,
+    base_argument,
 )
 
 ORIGIN = "akb-mcp"
@@ -131,6 +132,12 @@ def _collect_items(result: dict[str, Any]) -> list[Any]:
 
 
 def _tool_name(spec: ExternalSourceSpec) -> str:
+    # The source now names the tool it wants, discovered from the server's own
+    # list; the built-in pair stays as the answer for older bindings that never
+    # made that choice, so knowledge_search keeps working untouched.
+    picked = (spec.tool_name or "").strip()
+    if picked:
+        return picked
     for tool in spec.read_tools:
         if tool in _FALLBACK_TOOLS:
             return tool
@@ -138,11 +145,25 @@ def _tool_name(spec: ExternalSourceSpec) -> str:
 
 
 def _arguments(spec: ExternalSourceSpec, query: str, top_k: int) -> dict[str, Any]:
-    args: dict[str, Any] = {"question": query, "query": query, "topK": top_k}
-    # The knowledge base is fixed by the binding: never let a caller widen it.
-    if spec.ref:
-        args["knowledgeBaseCode"] = spec.ref
-    return args
+    # What the call itself decides: the base is fixed by the binding, never
+    # widened by the caller, and never missing — AKB turns a targetless
+    # knowledge_query into an authorization failure rather than an empty answer.
+    controlled = {
+        "question": query,
+        "query": query,
+        "topK": top_k,
+        **base_argument(spec),
+    }
+    # What the operator configured for the picked tool — extra filters a server
+    # may ask for. Controlled keys win, so a stored value cannot redirect the
+    # call to another base or another question, and the source's own forbidden
+    # list stays in force no matter where the value came from.
+    preset = {
+        key: value
+        for key, value in spec.tool_arguments.items()
+        if str(key) not in spec.forbidden_arguments
+    }
+    return {**preset, **controlled}
 
 
 async def search(
@@ -203,6 +224,20 @@ def _as_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _tool_schema(tool: dict[str, Any]) -> dict[str, Any]:
+    """One advertised tool, with the arguments it declares.
+
+    The edit form renders these rather than guessing: every MCP server invents
+    its own argument names, so the operator needs the server's own vocabulary.
+    """
+    schema = tool.get("inputSchema") or tool.get("input_schema")
+    return {
+        "name": str(tool.get("name") or "").strip(),
+        "description": str(tool.get("description") or "").strip(),
+        "input_schema": schema if isinstance(schema, dict) else {},
+    }
+
+
 async def list_refs(spec: ExternalSourceSpec, creds: dict[str, Any]) -> list[dict[str, str]]:
     """List the knowledge bases this credential may read (``list_knowledge_bases``)."""
     await _initialize(spec, creds)
@@ -241,17 +276,23 @@ async def probe(spec: ExternalSourceSpec, creds: dict[str, Any]) -> SourceProbeR
         url, spec, creds, "tools/list", {}, timeout=spec.timeout_seconds, request_id=2
     )
     tools_raw = listed.get("tools")
-    tools = [
-        str(tool.get("name"))
+    entries = [
+        tool
         for tool in (tools_raw if isinstance(tools_raw, list) else [])
-        if isinstance(tool, dict) and isinstance(tool.get("name"), str)
+        if isinstance(tool, dict)
     ]
-    usable = [tool for tool in tools if tool in _FALLBACK_TOOLS]
+    tools = [str(tool.get("name")) for tool in entries if isinstance(tool.get("name"), str)]
+    schemas = [_tool_schema(tool) for tool in entries]
+    picked = (spec.tool_name or "").strip()
+    # A custom tool counts once the source picked it; until then discovery only
+    # cares about the built-in pair, which is what an unbound source relies on.
+    usable = [tool for tool in tools if tool in _FALLBACK_TOOLS or tool == picked]
     if not usable:
         return SourceProbeResult(
             ok=False,
             message="AKB granted no search or query tool",
             tools=tools,
+            tool_schemas=schemas,
             protocol_version=negotiated,
             server_info=server_info,
             capabilities=capabilities,
@@ -268,6 +309,7 @@ async def probe(spec: ExternalSourceSpec, creds: dict[str, Any]) -> SourceProbeR
         ok=True,
         message=f"AKB reachable{suffix}",
         tools=tools,
+        tool_schemas=schemas,
         refs=refs,
         protocol_version=negotiated,
         server_info=server_info,

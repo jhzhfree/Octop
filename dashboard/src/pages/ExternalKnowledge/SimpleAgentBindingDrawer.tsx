@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
   App,
+  AutoComplete,
   Button,
   Card,
   Drawer,
@@ -61,6 +62,10 @@ export default function SimpleAgentBindingDrawer({
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const [ref, setRef] = useState(""),
+    [selector, setSelector] = useState("");
+  const [refs, setRefs] = useState<{ ref: string; name: string }[]>([]);
+  const [refsLoading, setRefsLoading] = useState(false);
   const [query, setQuery] = useState(""),
     [result, setResult] = useState<string | null>(null);
   const [generated, setGenerated] = useState<GeneratedAgentKey | null>(null);
@@ -81,6 +86,9 @@ export default function SimpleAgentBindingDrawer({
     setState(null);
     setError("");
     setApiKey("");
+    setRef(source?.ref ?? "");
+    setSelector(source?.selector_argument ?? "");
+    setRefs([]);
     setQuery("");
     setResult(null);
     setGenerated(null);
@@ -109,6 +117,38 @@ export default function SimpleAgentBindingDrawer({
         api_key: apiKey.trim(),
       });
       setApiKey("");
+      onSaved();
+      message.success(t(k + "saved"));
+    });
+  }
+  // A bound Agent can list the bases it may read, so the picklist works even
+  // though identity-managed sources refuse the legacy credential calls.
+  async function fetchRefs() {
+    if (!source) return;
+    setRefsLoading(true);
+    try {
+      const boundNow = active.find(
+        (a) => a.agentId === selected && !!a.activeKid,
+      );
+      const result = boundNow
+        ? await agentIdentityApi.bases(source.source_id, boundNow.agentId)
+        : await externalKnowledgeApi.refs(source.source_id);
+      setRefs(result.refs ?? []);
+      if ((result.refs ?? []).length === 0)
+        message.info(t("externalKnowledge.noRefs"));
+    } catch {
+      message.error(t("externalKnowledge.fetchRefsFailed"));
+    } finally {
+      setRefsLoading(false);
+    }
+  }
+  async function saveRef() {
+    if (!source) return;
+    await act(async () => {
+      await externalKnowledgeApi.update(source.source_id, {
+        ref: ref.trim(),
+        selector_argument: selector.trim(),
+      });
       onSaved();
       message.success(t(k + "saved"));
     });
@@ -245,6 +285,50 @@ export default function SimpleAgentBindingDrawer({
           >
             {t(k + "saveConnection")}
           </Button>
+        </Form>
+
+        <Typography.Title level={5}>{t(k + "knowledgeBase")}</Typography.Title>
+        <Form layout="vertical" disabled={busy || !source}>
+          <Form.Item
+            label={t("externalKnowledge.ref")}
+            extra={t(k + "refHint")}
+          >
+            <Space.Compact style={{ width: "100%" }}>
+              <AutoComplete
+                style={{ flex: 1 }}
+                filterOption
+                value={ref}
+                onChange={setRef}
+                placeholder="HR-POLICY"
+                options={refs.map((item) => ({
+                  value: item.ref,
+                  label: item.name ? `${item.name}（${item.ref}）` : item.ref,
+                }))}
+              />
+              <Button loading={refsLoading} onClick={() => void fetchRefs()}>
+                {t("externalKnowledge.fetchRefs")}
+              </Button>
+              <Button
+                type="primary"
+                disabled={
+                  busy || !ref.trim() || ref.trim() === (source?.ref ?? "")
+                }
+                onClick={() => void saveRef()}
+              >
+                {t(k + "saveRef")}
+              </Button>
+            </Space.Compact>
+          </Form.Item>
+          <Form.Item
+            label={t("externalKnowledge.selector")}
+            extra={t(k + "selectorHint")}
+          >
+            <Input
+              value={selector}
+              onChange={(e) => setSelector(e.target.value)}
+              placeholder="knowledgeBaseCode"
+            />
+          </Form.Item>
         </Form>
 
         <Typography.Title level={5}>{t(k + "agentIdentity")}</Typography.Title>

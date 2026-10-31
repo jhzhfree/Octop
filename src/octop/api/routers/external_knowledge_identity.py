@@ -182,3 +182,24 @@ async def search(
         )
     except ExternalSourceError as exc:
         raise _fail(exc) from exc
+
+
+@router.get(
+    "/agents/{agent_id}/bases",
+    summary="列出该 Agent 可读取的知识库",
+    description="身份绑定的来源拒绝遗留凭证调用，其可选知识库列表必须经绑定通道取得。",
+)
+async def list_bases(
+    source_id: str,
+    agent_id: str,
+    user: Any = Depends(current_user),
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    try:
+        return {
+            "refs": await _identity(server).list_bases(
+                source_id, agent_id, user.id, user.role == "admin"
+            )
+        }
+    except ExternalSourceError as exc:
+        raise _fail(exc) from exc

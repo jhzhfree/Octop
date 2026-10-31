@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from octop.infra.db.migrate import run_migrations
+from octop.infra.db.migrate import run_migrations, schema_baseline_version
 from octop.infra.db.pool import SqlitePool
 from octop.infra.db.repos.skill_packages import SkillPackageRepo
 
@@ -28,7 +28,7 @@ def test_skill_packages_table_exists(db: SqlitePool) -> None:
         v = conn.execute("SELECT version FROM _schema_version").fetchone()[0]
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(skill_packages)").fetchall()}
     assert "skill_packages" in names
-    assert v == 28
+    assert v == schema_baseline_version()
     assert "skill_package_id" in cols
 
 

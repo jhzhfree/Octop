@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from octop.infra.db.migrate import run_migrations
+from octop.infra.db.migrate import run_migrations, schema_baseline_version
 from octop.infra.db.pool import SqlitePool
 from octop.infra.db.repos.skill_packages import SkillPackageRepo
 
@@ -93,7 +93,7 @@ def test_migration_002_idempotent_when_icon_columns_already_present(tmp_path: Pa
                 "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='skill_packages'"
             )
         }
-    assert v == 28
+    assert v == schema_baseline_version()
     assert "icon_name" in cols
     assert "icon_url" in cols
     assert "skill_package_id" in cols
@@ -112,7 +112,7 @@ def test_repair_legacy_schema_adds_icon_columns_at_version_2(tmp_path: Path) -> 
     with pool.connect() as conn:
         v = conn.execute("SELECT version FROM _schema_version").fetchone()[0]
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(skill_packages)").fetchall()}
-    assert v == 28
+    assert v == schema_baseline_version()
     assert "icon_name" in cols
     assert "icon_url" in cols
     assert "skill_package_id" in cols

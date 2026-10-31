@@ -28,6 +28,8 @@ from octop.infra.knowledge.external.types import (
     ExternalSearchResult,
     ExternalSourceError,
     ExternalSourceSpec,
+    base_argument,
+    selector_argument,
 )
 from octop.infra.utils.paths import PathLayout
 
@@ -481,6 +483,19 @@ class AgentIdentityService:
             "trace_ids": result.trace_ids,
         }
 
+    async def list_bases(
+        self, source_id: str, agent_id: str, user_id: int, is_admin: bool
+    ) -> list[dict[str, str]]:
+        """Knowledge bases this binding may read, for the ref picklist."""
+        row, config = self.source(source_id, user_id, is_admin)
+        self.agent(agent_id, user_id, is_admin)
+        identity = OctopIdentity(
+            str(user_id), agent_id, f"management:{user_id}", workload_only=True
+        )
+        spec = replace(self.sources.to_spec(row), octop_identity=identity)
+        creds = {**self.sources.credentials_for(row), "agent_identity": config}
+        return await list_bases_as_agent(spec, creds)
+
     def _record_verification(
         self,
         source_id: str,
@@ -512,22 +527,26 @@ async def execute_as_agent(
         raise OctopError.localized(ErrorCode.AGENT_IDENTITY_NOT_READY)
     config = creds["agent_identity"]
     owner, binding = _binding(config, identity.agent_id)
-    request: dict[str, Any] = {"operation": "search", "query": query, "topK": top_k}
-    if spec.ref:
-        request["knowledgeBaseId" if spec.ref.isdecimal() else "knowledgeBaseCode"] = (
-            int(spec.ref) if spec.ref.isdecimal() else spec.ref
-        )
+    # A base is named here the same way plain retrieval names it, and travels in
+    # the shape AKB's tools accept rather than being relabelled into a code.
+    request: dict[str, Any] = {
+        "operation": "search",
+        "query": query,
+        "topK": top_k,
+        **base_argument(spec),
+    }
     return await sdk_call(
         {
             "op": "execute",
             "owner": owner,
             "binding": binding,
             "apiKey": str(creds.get("api_key") or ""),
-            "origin": spec.endpoint.rstrip("/"),
+            "origin": _sdk_origin(spec.endpoint),
             "transport": "mcp" if spec.kind == "akb-mcp" else "rest",
             "request": request,
             "timeoutMs": int(spec.timeout_seconds * 1000),
             "allowInsecureLoopback": spec.allow_insecure_http,
+            "allowPrivateHttp": spec.allow_insecure_http,
             "invocation": {
                 "sessionId": identity.trace_id or f"agent:{identity.agent_id}",
                 "invocationId": str(uuid.uuid4()),
@@ -537,18 +556,27 @@ async def execute_as_agent(
     )
 
 
+def _items(data: Any, kind: str) -> list[Any]:
+    """Unwrap whatever the SDK returned, whichever channel produced it."""
+    if kind == "akb-mcp":
+        from octop.infra.knowledge.external.adapters.akb_mcp import _collect_items
+
+        return _collect_items(data)
+    from octop.infra.knowledge.external.normalize import extract_items
+
+    return extract_items(data)
+
+
 async def search_as_agent(
     spec: ExternalSourceSpec, creds: dict[str, Any], query: str, *, top_k: int
 ) -> ExternalSearchResult:
-    from octop.infra.knowledge.external.adapters.akb_mcp import _collect_items
     from octop.infra.knowledge.external.normalize import (
-        extract_items,
         filter_chunks,
         normalize_chunks,
     )
 
     data = await execute_as_agent(spec, creds, query, top_k=top_k)
-    items = _collect_items(data) if spec.kind == "akb-mcp" else extract_items(data)
+    items = _items(data, spec.kind)
     return ExternalSearchResult(
         chunks=filter_chunks(
             normalize_chunks(items, origin=spec.kind, ref=spec.ref),
@@ -556,3 +584,51 @@ async def search_as_agent(
             limit=top_k,
         )
     )
+
+
+async def list_bases_as_agent(
+    spec: ExternalSourceSpec, creds: dict[str, Any]
+) -> list[dict[str, str]]:
+    """Knowledge bases the bound Agent may read, listed over its own channel.
+
+    A source managed by an Agent binding refuses the legacy credential calls,
+    so a picklist for it has to travel through the binding itself.
+    """
+    identity = spec.octop_identity
+    if not isinstance(identity, OctopIdentity) or not identity.agent_id:
+        raise OctopError.localized(ErrorCode.AGENT_IDENTITY_NOT_READY)
+    config = creds["agent_identity"]
+    owner, binding = _binding(config, identity.agent_id)
+    data = await sdk_call(
+        {
+            "op": "execute",
+            "owner": owner,
+            "binding": binding,
+            "apiKey": str(creds.get("api_key") or ""),
+            "origin": _sdk_origin(spec.endpoint),
+            "transport": "mcp" if spec.kind == "akb-mcp" else "rest",
+            "request": {"operation": "bases"},
+            "timeoutMs": int(spec.timeout_seconds * 1000),
+            "allowInsecureLoopback": spec.allow_insecure_http,
+            "allowPrivateHttp": spec.allow_insecure_http,
+            "invocation": {
+                "sessionId": identity.trace_id or f"agent:{identity.agent_id}",
+                "invocationId": str(uuid.uuid4()),
+            },
+        },
+        max(30, spec.timeout_seconds * 3 + 10),
+    )
+    refs: list[dict[str, str]] = []
+    for item in _items(data, spec.kind):
+        if not isinstance(item, dict):
+            continue
+        code = (
+            item.get(selector_argument(spec))
+            or item.get("baseCode")
+            or item.get("knowledgeBaseCode")
+            or item.get("id")
+        )
+        name = item.get("name") or item.get("displayName") or ""
+        if isinstance(code, (str, int)) and str(code).strip():
+            refs.append({"ref": str(code).strip(), "name": str(name)})
+    return refs

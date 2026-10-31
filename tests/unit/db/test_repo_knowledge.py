@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from octop.infra.db.migrate import run_migrations
+from octop.infra.db.migrate import run_migrations, schema_baseline_version
 from octop.infra.db.pool import SqlitePool
 from octop.infra.db.repos.knowledge import KnowledgeRepo
 from octop.infra.db.repos.users import UserRepo
@@ -50,7 +50,7 @@ def test_knowledge_tables_migrated(db: SqlitePool) -> None:
         "knowledge_bases",
         "knowledge_documents",
     }.issubset(names)
-    assert v == 28
+    assert v == schema_baseline_version()
     assert "knowledge_base_members" not in names
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(knowledge_bases)").fetchall()}
     assert "knowledge_base_id" in cols

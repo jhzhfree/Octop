@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from octop.infra.db.migrate import run_migrations
+from octop.infra.db.migrate import run_migrations, schema_baseline_version
 from octop.infra.db.pool import DatabasePool, SqlitePool
 from octop.infra.db.repos.connectors import ConnectorRepo
 from octop.infra.db.repos.external_knowledge import ExternalKnowledgeRepo
@@ -40,7 +40,7 @@ def test_migration_creates_tables(db: DatabasePool) -> None:
         }
         version = conn.execute("SELECT version FROM _schema_version").fetchone()[0]
     assert {"external_knowledge_sources", "external_knowledge_bindings"}.issubset(names)
-    assert version == 28
+    assert version == schema_baseline_version()
 
 
 def test_create_list_and_delete_source(service: ExternalKnowledgeService, owner_id: int) -> None:
@@ -61,6 +61,59 @@ def test_create_list_and_delete_source(service: ExternalKnowledgeService, owner_
 
     service.delete_source(created["source_id"], user_id=owner_id, is_admin=False)
     assert service.list_sources(user_id=owner_id, is_admin=False) == []
+
+
+def test_tool_choice_and_arguments_survive_the_round_trip(
+    service: ExternalKnowledgeService, owner_id: int
+) -> None:
+    """What the operator picked in the editor is what retrieval uses later."""
+    created = service.create_source(
+        user_id=owner_id,
+        kind="akb-mcp",
+        display_name="AKB custom tool",
+        endpoint="https://akb.example.com",
+        api_key="k",
+        ref="HR-POLICY",
+        tool_name="knowledge_query_v2",
+        tool_arguments={"mode": "strict", "topK": 99, "bad-name!": "x", "nested": {"a": 1}},
+    )
+    # Anything the schema would not carry is dropped rather than stored.
+    assert created["tool_name"] == "knowledge_query_v2"
+    assert created["tool_arguments"] == {"mode": "strict", "topK": 99}
+
+    updated = service.update_source(
+        created["source_id"],
+        user_id=owner_id,
+        is_admin=False,
+        tool_name="kb_search",
+        tool_arguments={},
+    )
+    assert updated["tool_name"] == "kb_search"
+    assert updated["tool_arguments"] == {}
+
+    spec = service.to_spec(ExternalKnowledgeRepo(service._repo._db).get(created["source_id"]))
+    assert spec.tool_name == "kb_search"
+
+
+def test_unparsable_tool_arguments_do_not_disable_the_source(
+    service: ExternalKnowledgeService, owner_id: int, db: DatabasePool
+) -> None:
+    """A hand-edited column fails to the empty map instead of breaking retrieval."""
+    created = service.create_source(
+        user_id=owner_id,
+        kind="akb-mcp",
+        display_name="AKB hand edited",
+        endpoint="https://akb.example.com",
+        api_key="k",
+        tool_name="knowledge_query",
+    )
+    with db.connect() as conn:
+        conn.execute(
+            "UPDATE external_knowledge_sources SET tool_arguments='{oops' WHERE source_id=?",
+            (created["source_id"],),
+        )
+    spec = service.to_spec(ExternalKnowledgeRepo(db).get(created["source_id"]))
+    assert spec.tool_arguments == {}
 
 
 def test_credentials_are_encrypted_at_rest(

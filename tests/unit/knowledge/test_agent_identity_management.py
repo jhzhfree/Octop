@@ -55,6 +55,7 @@ def setup(tmp_path: Path, monkeypatch):
         kind="akb-rest",
         display_name="AKB",
         endpoint="https://akb.example",
+        ref="HR-POLICY",
         api_key="shared-test-key",
     )
     records = {
@@ -137,8 +138,126 @@ async def test_execution_never_trusts_business_agent_arguments(setup):
     request = sdk.await_args.args[0]
     assert request["binding"]["runtimeAgentKey"] == ALPHA
     assert request["invocation"]["sessionId"] == "real-session"
-    assert request["request"] == {"operation": "search", "query": "agentId=beta", "topK": 3}
+    assert request["request"] == {
+        "operation": "search",
+        "query": "agentId=beta",
+        "topK": 3,
+        "knowledgeBaseCode": "HR-POLICY",
+    }
     assert request["apiKey"] == "shared-test-key"
+
+
+@pytest.mark.asyncio
+async def test_execution_forwards_the_bare_origin_and_source_opt_ins(setup):
+    """Retrieval must honour the same origin rules and opt-ins as binding.
+
+    The SDK rejects a pasted path and insists on HTTPS unless the source opted
+    into the loopback or private-network overrides, so a source that binds over
+    a LAN endpoint would still fail every search if those travelled with the
+    binding request only.
+    """
+    svc, sources, repo, source, user, _, sdk = setup
+    await _connect(svc, sdk, source, "alpha", user, ALPHA)
+    creds = sources.credentials_for(repo.get(source))
+    sdk.reset_mock()
+    sdk.return_value = {"candidates": []}
+    spec = replace(
+        sources.to_spec(repo.get(source)),
+        endpoint="http://192.168.24.201:8088/api/mcp",
+        allow_insecure_http=True,
+        octop_identity=OctopIdentity(str(user), "alpha", "session", workload_only=True),
+    )
+    await identity.execute_as_agent(spec, creds, "q", top_k=3)
+    request = sdk.await_args.args[0]
+    assert request["origin"] == "http://192.168.24.201:8088"
+    assert request["allowPrivateHttp"] is True
+    assert request["allowInsecureLoopback"] is True
+
+
+@pytest.mark.asyncio
+async def test_numeric_reference_travels_as_an_id(setup):
+    """A bare number has to reach AKB's MCP tools as the id they expect.
+
+    The SDK forwards MCP arguments verbatim and resolves codes only on its REST
+    path, so relabelling a numeric identifier into a code drops the target and
+    arrives at AKB as an unauthorized request against no base at all.
+    """
+    svc, sources, repo, source, user, _, sdk = setup
+    await _connect(svc, sdk, source, "alpha", user, ALPHA)
+    creds = sources.credentials_for(repo.get(source))
+    sdk.reset_mock()
+    sdk.return_value = {"candidates": []}
+    spec = replace(
+        sources.to_spec(repo.get(source)),
+        ref="12",
+        octop_identity=OctopIdentity(str(user), "alpha", "session", workload_only=True),
+    )
+    await identity.execute_as_agent(spec, creds, "q", top_k=3)
+    assert sdk.await_args.args[0]["request"] == {
+        "operation": "search",
+        "query": "q",
+        "topK": 3,
+        "knowledgeBaseId": 12,
+    }
+
+
+@pytest.mark.asyncio
+async def test_declared_selector_wins_over_the_guessed_shape(setup):
+    """A source that addresses its bases one way can say so and keep it."""
+    svc, sources, repo, source, user, _, sdk = setup
+    await _connect(svc, sdk, source, "alpha", user, ALPHA)
+    creds = sources.credentials_for(repo.get(source))
+    sdk.reset_mock()
+    sdk.return_value = {"candidates": []}
+    spec = replace(
+        sources.to_spec(repo.get(source)),
+        ref="12",
+        selector_argument="knowledgeBaseCode",
+        octop_identity=OctopIdentity(str(user), "alpha", "session", workload_only=True),
+    )
+    await identity.execute_as_agent(spec, creds, "q", top_k=3)
+    assert sdk.await_args.args[0]["request"] == {
+        "operation": "search",
+        "query": "q",
+        "topK": 3,
+        "knowledgeBaseCode": "12",
+    }
+
+
+@pytest.mark.asyncio
+async def test_declared_id_selector_rejects_a_non_numeric_reference(setup):
+    """Asking for an id while carrying a code fails here, not inside AKB."""
+    svc, sources, repo, source, user, _, sdk = setup
+    await _connect(svc, sdk, source, "alpha", user, ALPHA)
+    creds = sources.credentials_for(repo.get(source))
+    spec = replace(
+        sources.to_spec(repo.get(source)),
+        selector_argument="knowledgeBaseId",
+        octop_identity=OctopIdentity(str(user), "alpha", "session", workload_only=True),
+    )
+    with pytest.raises(ExternalSourceError) as err:
+        await identity.execute_as_agent(spec, creds, "q", top_k=3)
+    assert err.value.code == "INVALID_ARGUMENT"
+    assert "knowledgeBaseId" in str(err.value)
+
+
+@pytest.mark.asyncio
+async def test_retrieval_without_a_base_is_refused_before_calling_the_sdk(setup):
+    """Every channel reports the missing reference the same way, and early."""
+    svc, sources, repo, source, user, _, sdk = setup
+    await _connect(svc, sdk, source, "alpha", user, ALPHA)
+    creds = sources.credentials_for(repo.get(source))
+    sdk.reset_mock()
+    spec = replace(
+        sources.to_spec(repo.get(source)),
+        ref="",
+        octop_identity=OctopIdentity(str(user), "alpha", "session", workload_only=True),
+    )
+    with pytest.raises(ExternalSourceError) as err:
+        await identity.execute_as_agent(spec, creds, "q", top_k=3)
+    assert err.value.code == "INVALID_ARGUMENT"
+    assert "knowledge base reference" in str(err.value)
+    assert sdk.await_count == 0
 
 
 @pytest.mark.asyncio

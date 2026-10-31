@@ -62,6 +62,16 @@ def _discover(dialect: str = "sqlite") -> list[tuple[int, Path]]:
     return out
 
 
+def schema_baseline_version(dialect: str = "sqlite") -> int:
+    """Highest version the migration scripts carry.
+
+    Tests pin the booted watermark to this instead of a literal, so adding a
+    migration does not reopen every assertion that just means "fully migrated".
+    """
+    discovered = _discover(dialect)
+    return max((version for version, _ in discovered), default=0)
+
+
 def _current_version(db: DatabasePool) -> int:
     with db.connect() as conn:
         try:
@@ -235,6 +245,18 @@ def _ensure_enterprise_scenes_schema(db: DatabasePool) -> None:
             "(SELECT 1 FROM enterprise_scene_versions v WHERE v.scene_id = s.scene_id "
             "AND v.version = s.version)"
         )
+
+
+def _ensure_external_tool_config_schema(db: DatabasePool) -> None:
+    """Give external sources the columns naming the tool they call.
+
+    SQLite refuses a repeated ``ADD COLUMN`` and restores may already carry it,
+    so every boot checks rather than trusting the recorded version.
+    """
+    if not _table_exists(db, "external_knowledge_sources"):
+        return
+    _ensure_column(db, "external_knowledge_sources", "tool_name", "TEXT NOT NULL DEFAULT ''")
+    _ensure_column(db, "external_knowledge_sources", "tool_arguments", "TEXT NOT NULL DEFAULT ''")
 
 
 def _ensure_digital_workers_schema(db: DatabasePool) -> None:
@@ -2070,6 +2092,11 @@ def _apply_sqlite_migration(db: DatabasePool, version: int, path: Path) -> None:
         with db.connect() as conn:
             conn.execute("UPDATE _schema_version SET version = ?", (version,))
         return
+    if version == 29:
+        _ensure_external_tool_config_schema(db)
+        with db.connect() as conn:
+            conn.execute("UPDATE _schema_version SET version = ?", (version,))
+        return
     sql = path.read_text(encoding="utf-8")
     with db.connect() as conn:
         conn.executescript(sql)
@@ -2211,4 +2238,5 @@ def run_migrations(db: DatabasePool) -> None:
     _ensure_bridge_connections_schema(db)
     _ensure_enterprise_scenes_schema(db)
     _ensure_digital_workers_schema(db)
+    _ensure_external_tool_config_schema(db)
     _grant_default_nav_permissions(db)

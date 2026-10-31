@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Alert,
   App,
+  AutoComplete,
   Button,
   Drawer,
   Empty,
@@ -31,11 +32,13 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
+import { agentIdentityApi } from "@/api/modules/agentIdentity";
 import {
   externalKnowledgeApi,
   type ExternalKnowledgeChunk,
   type ExternalKnowledgeProbe,
   type ExternalKnowledgeSource,
+  type ExternalKnowledgeToolSchema,
   type ExternalSourceCreateBody,
 } from "@/api/modules/externalKnowledge";
 import { useIsMobile } from "../../hooks/useIsMobile";
@@ -69,7 +72,87 @@ interface SourceFormValues {
   timeout_ms: number;
   allow_insecure_http: boolean;
   selector_argument?: string;
+  tool_name?: string;
+  tool_arguments?: Record<string, string | number | boolean>;
   shared: boolean;
+}
+
+/** Arguments are edited as rows of text, typed back only when saved. */
+interface ToolArgumentRow {
+  key: string;
+  value: string;
+  required: boolean;
+}
+
+// Supplied by the caller on every retrieval: repeating them here could only
+// disagree with what the actual query asks for.
+const _CONTROLLED_ARGUMENTS = ["query", "question", "topK", "top_k"];
+
+function toArgumentRows(saved: Record<string, string | number | boolean> = {}) {
+  return Object.entries(saved).map(([key, value]) => ({
+    key,
+    value: String(value),
+    required: false,
+  }));
+}
+
+function toArgumentRecord(rows: ToolArgumentRow[]) {
+  const record: Record<string, string | number | boolean> = {};
+  for (const row of rows) {
+    const name = row.key.trim();
+    if (!name || _CONTROLLED_ARGUMENTS.includes(name)) continue;
+    const raw = row.value.trim();
+    if (!raw) continue;
+    // Numbers and flags reach the server in their own type; anything else is
+    // text, which is what most tool arguments declare anyway.
+    if (raw === "true" || raw === "false") record[name] = raw === "true";
+    else if (/^-?\d+$/.test(raw)) record[name] = Number(raw);
+    else if (/^-?\d+\.\d+$/.test(raw)) record[name] = Number(raw);
+    else record[name] = raw;
+  }
+  return record;
+}
+
+/** Build the editable rows a tool asks for, keeping anything already filled in. */
+function rowsForTool(
+  tool: ExternalKnowledgeToolSchema | undefined,
+  kept: ToolArgumentRow[],
+): ToolArgumentRow[] {
+  const properties = tool?.input_schema?.properties;
+  if (!properties || typeof properties !== "object") {
+    // No schema to go on: whatever was saved is all we can offer.
+    return kept.filter(
+      (row) =>
+        row.key &&
+        row.value !== undefined &&
+        !_CONTROLLED_ARGUMENTS.includes(row.key),
+    );
+  }
+  const required = new Set(
+    Array.isArray(tool.input_schema.required)
+      ? tool.input_schema.required.map((name) => String(name))
+      : [],
+  );
+  return Object.entries(properties as Record<string, Record<string, unknown>>)
+    .filter(([name]) => !_CONTROLLED_ARGUMENTS.includes(name))
+    .map(([name, spec]) => {
+      const existing = kept.find((row) => row.key === name);
+      if (existing) return existing;
+      const fallback = spec?.default;
+      const scalar =
+        typeof fallback === "string" ||
+        typeof fallback === "number" ||
+        typeof fallback === "boolean";
+      return {
+        key: name,
+        value: scalar ? String(fallback) : "",
+        required: required.has(name),
+      };
+    });
+}
+
+function toolLabel(tool: ExternalKnowledgeToolSchema) {
+  return tool.description ? `${tool.name} — ${tool.description}` : tool.name;
 }
 
 /** Bindings store raw ids; resolve an agent id back to a readable label. */
@@ -110,6 +193,26 @@ export default function ExternalKnowledgePage() {
   );
   const insecureHttp = Form.useWatch("allow_insecure_http", form);
   const formKind = Form.useWatch("kind", form);
+  const selectedTool = Form.useWatch("tool_name", form);
+  // The advertised tools and their argument schemas: what the operator picks
+  // from, dropped as soon as the drawer closes because it is upstream state.
+  const [toolSchemas, setToolSchemas] = useState<ExternalKnowledgeToolSchema[]>(
+    [],
+  );
+  const [toolArgs, setToolArgs] = useState<ToolArgumentRow[]>([]);
+  // A source saved against a tool stays selectable even before the list is
+  // fetched again, otherwise re-saving silently clears the operator's choice.
+  const toolOptions = useMemo(() => {
+    const options = [...toolSchemas];
+    if (selectedTool && !options.some((item) => item.name === selectedTool)) {
+      options.unshift({
+        name: selectedTool,
+        description: "",
+        input_schema: {},
+      });
+    }
+    return options;
+  }, [selectedTool, toolSchemas]);
 
   const [testing, setTesting] = useState<ExternalKnowledgeSource | null>(null);
   const [testQuery, setTestQuery] = useState("");
@@ -147,6 +250,8 @@ export default function ExternalKnowledgePage() {
     setEditing(null);
     setRefs([]);
     setProbeResult(null);
+    setToolSchemas([]);
+    setToolArgs([]);
     form.resetFields();
     form.setFieldsValue({
       kind: kinds[0] ?? "akb-mcp",
@@ -165,6 +270,9 @@ export default function ExternalKnowledgePage() {
       setEditing(row);
       setRefs([]);
       setProbeResult(null);
+      setToolSchemas([]);
+      const savedArgs = toArgumentRows(row.tool_arguments ?? {});
+      setToolArgs(savedArgs);
       form.resetFields();
       form.setFieldsValue({
         display_name: row.display_name,
@@ -177,6 +285,8 @@ export default function ExternalKnowledgePage() {
         timeout_ms: row.timeout_ms,
         allow_insecure_http: row.allow_insecure_http,
         selector_argument: row.selector_argument,
+        tool_name: row.tool_name || undefined,
+        tool_arguments: row.tool_arguments ?? {},
         shared: row.shared,
       });
       setFormOpen(true);
@@ -196,6 +306,8 @@ export default function ExternalKnowledgePage() {
       timeout_ms: values.timeout_ms,
       allow_insecure_http: values.allow_insecure_http,
       selector_argument: values.selector_argument ?? "",
+      tool_name: values.tool_name ?? "",
+      tool_arguments: toArgumentRecord(toolArgs),
       shared: values.shared,
     };
     if (values.api_key) body.api_key = values.api_key;
@@ -209,6 +321,12 @@ export default function ExternalKnowledgePage() {
         saved = await externalKnowledgeApi.create(body);
         setEditing(saved);
       }
+      setToolArgs(
+        rowsForTool(
+          toolSchemas.find((item) => item.name === saved.tool_name),
+          toolArgs,
+        ),
+      );
       message.success(t("externalKnowledge.updated"));
       if (
         ["akb-mcp", "akb-rest"].includes(values.kind) &&
@@ -220,7 +338,7 @@ export default function ExternalKnowledgePage() {
     } catch {
       message.error(t("externalKnowledge.saveFailed"));
     }
-  }, [editing, form, message, refresh, t]);
+  }, [editing, form, message, refresh, t, toolArgs, toolSchemas]);
 
   const runProbe = useCallback(async () => {
     if (!editing) {
@@ -229,13 +347,56 @@ export default function ExternalKnowledgePage() {
     }
     setProbing(true);
     try {
-      setProbeResult(await externalKnowledgeApi.probe(editing.source_id));
+      const result = await externalKnowledgeApi.probe(editing.source_id);
+      setProbeResult(result);
+      const schemas = result.tool_schemas ?? [];
+      setToolSchemas(schemas);
+      // Refreshing the list should also refresh what a picked tool offers,
+      // keeping already filled values and dropping ones the tool dropped.
+      setToolArgs((rows) =>
+        rowsForTool(
+          schemas.find((item) => item.name === selectedTool),
+          rows,
+        ),
+      );
     } catch {
       message.error(t("externalKnowledge.probeFailedHint"));
     } finally {
       setProbing(false);
     }
-  }, [editing, message, t]);
+  }, [editing, message, selectedTool, t]);
+
+  const changeTool = useCallback(
+    (name: string | undefined) => {
+      form.setFieldValue("tool_name", name);
+      setToolArgs((rows) =>
+        rowsForTool(
+          toolSchemas.find((item) => item.name === name),
+          rows,
+        ),
+      );
+    },
+    [form, toolSchemas],
+  );
+
+  const changeToolArgument = useCallback(
+    (index: number, patch: Partial<ToolArgumentRow>) => {
+      setToolArgs((rows) =>
+        rows.map((row, position) =>
+          position === index ? { ...row, ...patch } : row,
+        ),
+      );
+    },
+    [],
+  );
+
+  const addToolArgument = useCallback(() => {
+    setToolArgs((rows) => [...rows, { key: "", value: "", required: false }]);
+  }, []);
+
+  const removeToolArgument = useCallback((index: number) => {
+    setToolArgs((rows) => rows.filter((_, position) => position !== index));
+  }, []);
 
   const fetchRefs = useCallback(async () => {
     if (!editing) {
@@ -244,13 +405,31 @@ export default function ExternalKnowledgePage() {
     }
     setRefsLoading(true);
     try {
-      const result = await externalKnowledgeApi.refs(editing.source_id);
+      // A binding-managed source refuses the legacy credential calls, so its
+      // list has to be fetched through one of the bound Agents instead.
+      const viaIdentity = async () => {
+        const state = await agentIdentityApi.state(editing.source_id);
+        const bound = state.agents.find(
+          (a) => a.externalAgentId && a.activeKid,
+        );
+        if (!bound) throw new Error(t("externalKnowledge.noBoundAgent"));
+        return agentIdentityApi.bases(editing.source_id, bound.agentId);
+      };
+      const result = editing.identity_ready
+        ? await viaIdentity()
+        : await externalKnowledgeApi.refs(editing.source_id);
       setRefs(result.refs ?? []);
       if ((result.refs ?? []).length === 0) {
         message.info(t("externalKnowledge.noRefs"));
       }
-    } catch {
-      message.error(t("externalKnowledge.fetchRefsFailed"));
+    } catch (e) {
+      const unbound =
+        e instanceof Error && e.message === t("externalKnowledge.noBoundAgent");
+      message.error(
+        unbound
+          ? t("externalKnowledge.noBoundAgent")
+          : t("externalKnowledge.fetchRefsFailed"),
+      );
     } finally {
       setRefsLoading(false);
     }
@@ -841,47 +1020,52 @@ export default function ExternalKnowledgePage() {
               />
             </Form.Item>
           )}
-          {/* MCP calls tools instead of addressing a knowledge base, so the
-              knowledge base identifier is replaced by a tool listing. */}
-          {formKind !== "akb-mcp" ? (
-            <Form.Item
-              label={t("externalKnowledge.ref")}
-              extra={t("externalKnowledge.refHint")}
-            >
-              <Space.Compact style={{ width: "100%" }}>
-                {refs.length > 0 ? (
-                  <Form.Item name="ref" noStyle>
-                    <Select
-                      allowClear
-                      showSearch
-                      optionFilterProp="label"
-                      placeholder={t("externalKnowledge.refPickerPlaceholder")}
-                      options={refs.map((item) => ({
-                        value: item.ref,
-                        label: item.name
-                          ? `${item.name}（${item.ref}）`
-                          : item.ref,
-                      }))}
-                    />
-                  </Form.Item>
-                ) : (
-                  <Form.Item name="ref" noStyle>
-                    <Input placeholder="HR-POLICY" />
-                  </Form.Item>
-                )}
-                <Button
-                  loading={refsLoading}
-                  disabled={!editing || editing.identity_ready}
-                  onClick={() => void fetchRefs()}
-                  title={
-                    editing ? "" : t("externalKnowledge.fetchRefsAfterSave")
-                  }
-                >
-                  {t("externalKnowledge.fetchRefs")}
-                </Button>
-              </Space.Compact>
-            </Form.Item>
-          ) : (
+          {/* Every adapter addresses one knowledge base, MCP included: how the
+              call travels differs, what it selects does not — knowledge_query
+              without a base is rejected by AKB. */}
+          <Form.Item
+            label={t("externalKnowledge.ref")}
+            extra={
+              formKind === "akb-mcp"
+                ? t("externalKnowledge.refHintMcp")
+                : t("externalKnowledge.refHint")
+            }
+            rules={
+              formKind === "akb-mcp"
+                ? [
+                    {
+                      required: true,
+                      message: t("externalKnowledge.refRequired"),
+                    },
+                  ]
+                : undefined
+            }
+          >
+            <Space.Compact style={{ width: "100%" }}>
+              {/* Any value goes through: a stable code, a numeric id, whatever
+                  the selector argument names. The fetched list only suggests. */}
+              <Form.Item name="ref" noStyle>
+                <AutoComplete
+                  style={{ flex: 1 }}
+                  filterOption
+                  placeholder="HR-POLICY"
+                  options={refs.map((item) => ({
+                    value: item.ref,
+                    label: item.name ? `${item.name}（${item.ref}）` : item.ref,
+                  }))}
+                />
+              </Form.Item>
+              <Button
+                loading={refsLoading}
+                disabled={!editing}
+                onClick={() => void fetchRefs()}
+                title={editing ? "" : t("externalKnowledge.fetchRefsAfterSave")}
+              >
+                {t("externalKnowledge.fetchRefs")}
+              </Button>
+            </Space.Compact>
+          </Form.Item>
+          {formKind === "akb-mcp" && (
             <>
               <div className={styles.sectionTitle}>
                 {t("externalKnowledge.mcpSection")}
@@ -1000,6 +1184,97 @@ export default function ExternalKnowledgePage() {
                       )}
                     </>
                   )}
+                </Space>
+              </Form.Item>
+              {/* Pick the tool first: its own schema decides which arguments
+                  the operator can set, so nothing here invents argument names. */}
+              <Form.Item
+                label={t("externalKnowledge.toolName")}
+                extra={
+                  editing?.identity_ready
+                    ? t("externalKnowledge.probeIdentityManaged")
+                    : t("externalKnowledge.toolNameHint")
+                }
+              >
+                <Select
+                  allowClear
+                  showSearch
+                  disabled={!editing || !!editing.identity_ready}
+                  value={selectedTool}
+                  onChange={changeTool}
+                  placeholder={t("externalKnowledge.toolNamePlaceholder")}
+                  optionFilterProp="label"
+                  options={toolOptions.map((tool) => ({
+                    value: tool.name,
+                    label: toolLabel(tool),
+                  }))}
+                />
+              </Form.Item>
+              <Form.Item
+                label={t("externalKnowledge.toolArguments")}
+                extra={t("externalKnowledge.toolArgumentsHint")}
+              >
+                <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                  {toolArgs.map((row, index) => {
+                    const duplicated =
+                      row.key.trim() !== "" &&
+                      toolArgs.some(
+                        (other, position) =>
+                          position !== index &&
+                          other.key.trim() === row.key.trim(),
+                      );
+                    return (
+                      <Space.Compact
+                        // Edited rows carry the argument name, so the index is
+                        // the only stable identity while typing into them.
+                        key={`${row.key}-${index}`}
+                        style={{ width: "100%" }}
+                      >
+                        <Input
+                          style={{ flex: 1 }}
+                          disabled={row.required}
+                          status={duplicated ? "error" : undefined}
+                          placeholder={t("externalKnowledge.toolArgumentKey")}
+                          value={row.key}
+                          onChange={(event) =>
+                            changeToolArgument(index, {
+                              key: event.target.value,
+                            })
+                          }
+                        />
+                        <Input
+                          style={{ flex: 2 }}
+                          placeholder={t("externalKnowledge.toolArgumentValue")}
+                          value={row.value}
+                          onChange={(event) =>
+                            changeToolArgument(index, {
+                              value: event.target.value,
+                            })
+                          }
+                        />
+                        <Button
+                          danger
+                          aria-label={t("externalKnowledge.toolArgumentRemove")}
+                          title={t("externalKnowledge.toolArgumentRemove")}
+                          onClick={() => removeToolArgument(index)}
+                        >
+                          <Trash2 size={14} />
+                        </Button>
+                      </Space.Compact>
+                    );
+                  })}
+                  {toolArgs.length === 0 && (
+                    <Typography.Text type="secondary">
+                      {t("externalKnowledge.toolArgumentsEmpty")}
+                    </Typography.Text>
+                  )}
+                  <Button
+                    icon={<Plus size={14} />}
+                    disabled={!editing}
+                    onClick={addToolArgument}
+                  >
+                    {t("externalKnowledge.toolArgumentAdd")}
+                  </Button>
                 </Space>
               </Form.Item>
             </>

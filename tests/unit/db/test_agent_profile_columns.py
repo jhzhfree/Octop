@@ -10,7 +10,7 @@ from octop.infra.agents.settings.profile import (
     strip_profile_config,
     welcome_from_row,
 )
-from octop.infra.db.migrate import run_migrations
+from octop.infra.db.migrate import run_migrations, schema_baseline_version
 from octop.infra.db.pool import SqlitePool
 from octop.infra.db.repos.agents import AgentRow
 
@@ -119,7 +119,7 @@ def test_migration_007_backfills_profile_columns(tmp_path: Path) -> None:
     with pool.connect() as conn:
         version = conn.execute("SELECT version FROM _schema_version").fetchone()[0]
         row = conn.execute("SELECT * FROM agents WHERE agent_id = ?", ("ag1",)).fetchone()
-    assert version == 28
+    assert version == schema_baseline_version()
     assert row["template_name"] == "general-assistant"
     assert row["icon_name"] == "zap"
     assert row["icon_url"] == "https://cdn.example.com/a.png"

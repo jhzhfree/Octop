@@ -68,6 +68,9 @@ class SourceCreateBody(BaseModel):
     selector_argument: str = Field(default="", max_length=120)
     forbidden_arguments: list[str] = Field(default_factory=list)
     read_tools: list[str] = Field(default_factory=list)
+    # Which advertised MCP tool to call; its extra arguments are set per tool.
+    tool_name: str = Field(default="", max_length=120)
+    tool_arguments: dict[str, Any] = Field(default_factory=dict)
     shared: bool = Field(default=False)
 
 
@@ -87,6 +90,9 @@ class SourcePatchBody(BaseModel):
     selector_argument: str | None = Field(default=None, max_length=120)
     forbidden_arguments: list[str] | None = None
     read_tools: list[str] | None = None
+    # Which advertised MCP tool this source calls, and what else to send it.
+    tool_name: str | None = Field(default=None, max_length=120)
+    tool_arguments: dict[str, Any] | None = None
     enabled: bool | None = None
     shared: bool | None = None
 
@@ -154,6 +160,8 @@ async def create_source(
             selector_argument=body.selector_argument,
             forbidden_arguments=body.forbidden_arguments,
             read_tools=body.read_tools,
+            tool_name=body.tool_name,
+            tool_arguments=body.tool_arguments,
             shared=body.shared,
         )
     )
