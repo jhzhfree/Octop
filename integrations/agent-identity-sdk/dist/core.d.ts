@@ -20,6 +20,7 @@ export declare function canonicalOrigin(value: string, insecureLoopback?: boolea
 export declare function signJws(claims: Record<string, unknown>, signer: RsaSigner, type: string, signal: AbortSignal): Promise<string>;
 export interface Invocation {
     readonly sessionId: string;
+    readonly terminalAgentName?: string;
     readonly messageId?: string;
     readonly invocationId: string;
 }

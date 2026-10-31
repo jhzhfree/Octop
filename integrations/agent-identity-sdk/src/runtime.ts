@@ -26,7 +26,7 @@ export function createRuntime<NativeContext>(dependencies: RuntimeDependencies<N
       if (!binding || !traceId(context.sessionId) || (context.messageId !== undefined && !traceId(context.messageId))) throw new IdentityError("AGENT_UNREGISTERED", "Missing or unregistered runtime Agent identity");
       context.abortSignal.throwIfAborted();
       if (!await dependencies.validateWorkspace(context.workspaceRoot)) throw new IdentityError("WORKSPACE_UNAPPROVED", "Unapproved execution workspace");
-      const invocation = Object.freeze({ sessionId: context.sessionId, messageId: context.messageId, invocationId: crypto.randomUUID() });
+      const invocation = Object.freeze({ terminalAgentName: context.terminalAgentName ?? context.runtimeAgentKey, sessionId: context.sessionId, messageId: context.messageId, invocationId: crypto.randomUUID() });
       await captured.authorize(input.operation === "bases" ? { operation: "bases" } : { operation: input.operation,
         knowledgeBaseId: input.knowledgeBaseId, knowledgeBaseCode: input.knowledgeBaseCode });
       context.abortSignal.throwIfAborted();

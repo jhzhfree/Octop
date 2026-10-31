@@ -1,6 +1,6 @@
 {
   "name": "@akb/opencode-identity",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "license": "MIT",
   "private": true,
   "type": "module",
@@ -9,7 +9,8 @@
     "./client": "./dist/client.js"
   },
   "bin": {
-    "akb-identity": "./dist/cli.js"
+    "akb-identity": "./dist/cli.js",
+    "akb-plugin-builder": "./dist/builder-cli.js"
   },
   "files": [
     "dist",
@@ -19,27 +20,29 @@
     "config.bootstrap.example.json",
     "LICENSE",
     "LEGACY-V1.md",
-    "config.simple.example.json"
+    "config.simple.example.json",
+    "builder.example.json",
+    "WINDOWS.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test test/*.test.mjs",
     "test:live": "npm run build && node test/live.mjs",
-    "prepack": "npm run build"
+    "prepack": "npm run build && node scripts/prepare-package.mjs"
   },
   "engines": {
     "node": ">=22"
   },
   "dependencies": {
+    "@akb/agent-identity-sdk": "file:../agent-identity-sdk",
     "@opencode-ai/plugin": "1.14.30",
-    "effect": "4.0.0-beta.57",
-    "@akb/agent-identity-sdk": "file:../agent-identity-sdk"
+    "effect": "4.0.0-beta.57"
   },
   "bundleDependencies": [
     "@akb/agent-identity-sdk"
   ],
   "devDependencies": {
-    "typescript": "5.8.3",
-    "@types/node": "^22.0.0"
+    "@types/node": "^22.0.0",
+    "typescript": "5.8.3"
   }
 }

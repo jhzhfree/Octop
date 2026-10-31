@@ -16,6 +16,7 @@ export interface HostExecution {
     readonly platformId: string;
     readonly runtimeAgentKey: string;
     readonly sessionId: string;
+    readonly terminalAgentName?: string;
     readonly messageId?: string;
     readonly workspaceRoot: string;
     readonly abortSignal: AbortSignal;

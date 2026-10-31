@@ -1,6 +1,6 @@
 {
   "name": "@akb/agent-identity-sdk",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "license": "MIT",
   "description": "Platform independent Agent identity, protected per-Agent keys and AKB request proofs",
   "type": "module",
@@ -32,6 +32,10 @@
     "./node": {
       "types": "./dist/node.d.ts",
       "default": "./dist/node.js"
+    },
+    "./terminal": {
+      "types": "./dist/terminal.d.ts",
+      "default": "./dist/terminal.js"
     }
   },
   "bin": {
@@ -55,13 +59,16 @@
     "node": ">=22"
   },
   "devDependencies": {
-    "typescript": "5.8.3",
-    "@types/node": "^22.0.0"
+    "@types/node": "^22.0.0",
+    "typescript": "5.8.3"
   },
   "dependencies": {
     "@akb/agent-keygen": "file:../../tools/agent-keygen"
   },
   "bundledDependencies": [
+    "@akb/agent-keygen"
+  ],
+  "bundleDependencies": [
     "@akb/agent-keygen"
   ]
 }

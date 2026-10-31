@@ -1,6 +1,8 @@
-# OpenCode Agent 身份插件 0.3.0
+> 0.4.0 新增 Windows 插件制作 CLI、受保护审计路径及终端名称签名。安装、生成、远端 REST/MCP 验签见 [Windows 使用说明](WINDOWS.md)。管理命令不注册为模型工具。
 
-适用于 **OpenCode 1.14.30、Node.js 22+**，配套通用 SDK **0.4.0** 和支持 AKB V76 的服务端。其他 OpenCode 版本尚未核验。文件密钥 Provider 在 POSIX 使用权限位、在 Windows 使用 ACL 收紧为仅当前账户，因此宿主需使用 NTFS 等支持 ACL 的卷。
+# OpenCode Agent 身份插件 0.4.0
+
+适用于 **OpenCode 1.14.30、Node.js 22+**，配套通用 SDK **0.5.0** 和支持 AKB V76 的服务端。其他 OpenCode 版本尚未核验。文件密钥 Provider 在 POSIX 使用权限位、在 Windows 使用 ACL 收紧为仅当前账户，因此宿主需使用 NTFS 等支持 ACL 的卷。
 
 两个 Agent 共用一个 AKB Service Key，分别使用自己的私钥和稳定 UUID。模型只填写检索问题等业务参数，插件从 OpenCode 的真实工具执行上下文获取运行 Agent，并通过通用 SDK 调用 AKB 的 MCP / REST。
 
@@ -13,7 +15,7 @@
 1. 使用独立 [agent-keygen 工具](../../tools/agent-keygen/README.md)，为每个 Agent 生成一份密钥对。该工具无 SDK / 平台依赖。
 2. AKB「Agent 接入」新建服务接入，填写调用方访问的 AKB 根地址，选择可读知识库，保存一次性共享服务 Key。同一接入下 Agent 继承相同可读范围，默认仅未设置权限标签的内容。
 3. AKB「添加 Agent」填写名称、identity.json 中的 agentId，导入 public.jwk。私钥不能上传 AKB。
-4. 按下文构建并安装 SDK 0.4.0 / 插件 0.3.0，复制随包的 `config.simple.example.json` 为受保护配置文件。只需修改真实路径、AKB 地址、运行 Agent 名称、UUID 和私钥文件路径。所有文件放在工作区外，并收紧权限。
+4. 按下文构建并安装 SDK 0.5.0 / 插件 0.4.0，复制随包的 `config.simple.example.json` 为受保护配置文件。只需修改真实路径、AKB 地址、运行 Agent 名称、UUID 和私钥文件路径。所有文件放在工作区外，并收紧权限。
 5. 在 OpenCode 全局插件配置中一次加载本插件，`configFile` 指向上述配置。插件在启动时自动发现公开认证配置、验证公钥登记、导入并选中私钥，无需额外 CLI 激活。
 6. 分别让两个 OpenCode Agent 使用 `akb_search` / `akb_query`。真实身份来自 OpenCode 工具上下文，业务参数不能选择 Agent 身份。
 
@@ -59,8 +61,8 @@ npm pack
 
 得到两个文件：
 
-- `integrations/agent-identity-sdk/akb-agent-identity-sdk-0.4.0.tgz`：通用 SDK 和管理 CLI。
-- `integrations/opencode-identity/akb-opencode-identity-0.3.0.tgz`：OpenCode 适配器，已捆绑相同 SDK 的运行代码。
+- `integrations/agent-identity-sdk/akb-agent-identity-sdk-0.5.0.tgz`：通用 SDK 和管理 CLI。
+- `integrations/opencode-identity/akb-opencode-identity-0.4.0.tgz`：OpenCode 适配器，已捆绑相同 SDK 的运行代码。
 
 CI 会构建、测试并上传这两个包。它们尚未发布到 npm registry；不要直接用未经发布的包名在线安装。V1 老部署的初始化步骤独立存放于 [LEGACY-V1.md](./LEGACY-V1.md)，新接入不要生成 V1 安装私钥或配置 JWKS 服务。
 
@@ -70,7 +72,7 @@ CI 会构建、测试并上传这两个包。它们尚未发布到 npm registry�
 
 ```sh
 cd /opt/akb-opencode
-npm install /path/to/akb-agent-identity-sdk-0.4.0.tgz /path/to/akb-opencode-identity-0.3.0.tgz
+npm install /path/to/akb-agent-identity-sdk-0.5.0.tgz /path/to/akb-opencode-identity-0.4.0.tgz
 ```
 
 部署机器只需要这两个 TGZ，不需要克隆 Octop、启动 Octop 服务或保留相邻源码目录。安装结果必须保留完整 `node_modules`，不要只复制 `dist/index.js`。

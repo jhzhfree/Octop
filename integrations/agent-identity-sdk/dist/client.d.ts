@@ -10,6 +10,8 @@ export declare class AkbKnowledgeClient {
     private request;
     configuration(agentId: string, signal: AbortSignal): Promise<AgentBinding>;
     status(binding: AgentBinding, invocation: Invocation, signer: RsaSigner, signal: AbortSignal): Promise<any>;
+    /** A signed MCP call, proving that tool dispatch receives the same verified identity. */
+    identity(binding: AgentBinding, invocation: Invocation, signer: RsaSigner, signal: AbortSignal): Promise<any>;
     execute(request: KnowledgeRequest, binding: AgentBinding, invocation: Invocation, signer: RsaSigner, signal: AbortSignal): Promise<JsonValue>;
     private restResult;
 }

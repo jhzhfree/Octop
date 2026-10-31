@@ -1,0 +1,13 @@
+{
+  "workspaceRoot": "C:\\work\\engineering",
+  "origin": "https://akb.example.com",
+  "serviceKeyFile": "C:\\Users\\Alice\\akb-secure\\service.key",
+  "assertionHeader": "X-AKB-Workload-Assertion",
+  "authenticationPath": "/api/v1/external/identity/status",
+  "mcpPath": "/api/mcp",
+  "auditFile": "C:\\Users\\Alice\\akb-secure\\opencode-bundle\\audit.jsonl",
+  "agents": [
+    { "name": "build" },
+    { "name": "review" }
+  ]
+}

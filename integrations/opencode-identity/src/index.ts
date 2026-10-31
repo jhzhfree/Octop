@@ -4,6 +4,7 @@ import { Effect, Fiber } from "effect";
 import { WorkloadClient, readIdentityConfiguration, type Operation } from "./client.js";
 import type { ToolContext } from "@opencode-ai/plugin/tool";
 import type { PlatformAdapter } from "@akb/agent-identity-sdk/types";
+import { appendTerminalAudit } from "@akb/agent-identity-sdk/terminal";
 import { loadNodeRuntime, loadSimpleNodeRuntime } from "@akb/agent-identity-sdk/node";
 
 export const openCodeAdapter: PlatformAdapter<ToolContext> = {
@@ -25,7 +26,15 @@ const plugin: Plugin = async (input, options) => {
   if (config.configVersion !== undefined && ![2,3].includes(config.configVersion)) throw new Error("Unsupported identity configuration version");
   if (config.proofProfile && config.proofProfile !== "AGENT_KEY_RS256_V2") throw new Error("Unsupported explicit identity profile");
   if (config.proofProfile && ![2,3].includes(config.configVersion)) throw new Error("V2 profile requires V2 configuration");
-  const runtime = config.configVersion === 3 ? await loadSimpleNodeRuntime(options.configFile,input.directory,openCodeAdapter) : config.configVersion === 2 ? await loadNodeRuntime(options.configFile, input.directory, openCodeAdapter) : undefined;
+  const adapter: PlatformAdapter<ToolContext> = { capture(context) {
+    const captured = openCodeAdapter.capture(context);
+    return { ...captured, async authorize(summary) {
+      if (config.auditFile) await appendTerminalAudit(config.auditFile, input.directory,
+        { agentName: captured.context.runtimeAgentKey, operation: summary.operation, phase: "started" });
+      await captured.authorize(summary);
+    } };
+  } };
+  const runtime = config.configVersion === 3 ? await loadSimpleNodeRuntime(options.configFile,input.directory,adapter) : config.configVersion === 2 ? await loadNodeRuntime(options.configFile, input.directory, adapter) : undefined;
   const client = runtime ? undefined : await WorkloadClient.load(options.configFile, input.directory);
   const filters = {
     query: tool.schema.string().min(1).max(4000),
@@ -38,10 +47,19 @@ const plugin: Plugin = async (input, options) => {
     args: operation === "bases" ? {} : filters,
     async execute(args, context) {
       if (runtime) {
-        const result = await runtime.invoke(context, operation === "bases" ? { operation: "bases" } : {
-          operation, query: args.query!, topK: args.topK, knowledgeBaseId: args.knowledgeBaseId, knowledgeBaseCode: args.knowledgeBaseCode,
-        });
-        return { output: JSON.stringify(result.data), metadata: result.metadata };
+        const agentName = context.agent;
+        const audit = async (phase: "started" | "completed" | "failed", metadata?: { invocationId: string; externalAgentId: string }) => {
+          if (config.auditFile) await appendTerminalAudit(config.auditFile, input.directory, {
+            agentName, operation, phase, invocationId: metadata?.invocationId, agentId: metadata?.externalAgentId,
+          });
+        };
+        try {
+          const result = await runtime.invoke(context, operation === "bases" ? { operation: "bases" } : {
+            operation, query: args.query!, topK: args.topK, knowledgeBaseId: args.knowledgeBaseId, knowledgeBaseCode: args.knowledgeBaseCode,
+          });
+          await audit("completed", result.metadata);
+          return { output: JSON.stringify(result.data), metadata: result.metadata };
+        } catch (e) { await audit("failed"); throw e; }
       }
       // Capture the host fiber before any await: ctx.ask is an Effect in 1.14.30.
       const fiber = Fiber.getCurrent();

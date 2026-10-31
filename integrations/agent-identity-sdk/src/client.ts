@@ -91,6 +91,28 @@ export class AkbKnowledgeClient {
     }
     return result.data;
   }
+  /** A signed MCP call, proving that tool dispatch receives the same verified identity. */
+  async identity(binding: AgentBinding, invocation: Invocation, signer: RsaSigner, signal: AbortSignal) {
+    if (binding.resource !== this.origin) throw new IdentityError("PROTOCOL_UNSUPPORTED", "Binding resource does not match AKB origin");
+    const proofs = createProofIssuer(binding, invocation, signer), initId = crypto.randomUUID();
+    const initialized = await this.request(proofs, "POST", "/api/mcp", { jsonrpc: "2.0", id: initId, method: "initialize",
+      params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "akb-terminal-verifier", version: "0.5.0" } } }, signal);
+    if (initialized.jsonrpc !== "2.0" || initialized.id !== initId || initialized.error || initialized.result?.protocolVersion !== "2025-06-18") {
+      throw new IdentityError("PROTOCOL_UNSUPPORTED", "Unsupported AKB MCP identity protocol");
+    }
+    const id = crypto.randomUUID();
+    const result = await this.request(proofs, "POST", "/api/mcp",
+      { jsonrpc: "2.0", id, method: "tools/call", params: { name: "get_agent_identity", arguments: {} } }, signal);
+    const data = result.result?.structuredContent;
+    if (result.jsonrpc !== "2.0" || result.id !== id || result.error || result.result?.isError
+      || data?.agentId !== binding.externalAgentId || data?.kid !== signer.kid || data?.keyStatus !== "ACTIVE"
+      || String(data?.policyId) !== binding.policyId || data?.proofProfile !== "AGENT_KEY_RS256_V2"
+      || data?.runtimeAgentKey !== binding.runtimeAgentKey
+      || (invocation.terminalAgentName !== undefined && data?.terminalAgentName !== invocation.terminalAgentName)) {
+      throw new IdentityError("AUTHENTICATION_FAILED", "MCP tool did not confirm the expected terminal identity");
+    }
+    return data;
+  }
   async execute(request: KnowledgeRequest, binding: AgentBinding, invocation: Invocation, signer: RsaSigner, signal: AbortSignal): Promise<JsonValue> {
     const input = validateRequest(request);
     if (binding.resource !== this.origin) throw new IdentityError("PROTOCOL_UNSUPPORTED", "Binding resource does not match AKB origin");

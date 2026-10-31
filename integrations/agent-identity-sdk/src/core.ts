@@ -61,6 +61,7 @@ export async function signJws(claims: Record<string, unknown>, signer: RsaSigner
 }
 export interface Invocation {
   readonly sessionId: string;
+  readonly terminalAgentName?: string;
   readonly messageId?: string;
   readonly invocationId: string;
 }
@@ -72,12 +73,13 @@ export function createProofIssuer(binding: AgentBinding, invocation: Invocation,
         || request.target.length > 2048 || request.body.length > 1048576 || !["GET", "POST"].includes(request.method)) {
         throw new IdentityError("PROTOCOL_UNSUPPORTED", "Invalid request proof input");
       }
+      if (context.terminalAgentName !== undefined && !identifier(context.terminalAgentName)) throw new IdentityError("AGENT_UNREGISTERED", "Invalid terminal Agent name");
       const now = Math.floor(Date.now() / 1000), jti = crypto.randomUUID();
       const claims = {
         ver: 2, iss: approved.issuer, aud: approved.audience, resource: approved.resource, policy_id: approved.policyId,
         azp: approved.applicationPrincipalId, sub: `agent:${approved.externalAgentId}`, platform_id: approved.platformId,
         installation_id: approved.installationId, workspace_id: approved.workspaceId, runtime_agent: approved.runtimeAgentKey,
-        session_id: context.sessionId, message_id: context.messageId, invocation_id: context.invocationId,
+        terminal_agent: context.terminalAgentName, session_id: context.sessionId, message_id: context.messageId, invocation_id: context.invocationId,
         iat: now, exp: now + 60, jti, credential_sha256: credentialSha256,
         request_binding: { method: request.method, target: request.target, body_sha256: await sha256(request.body) },
       };

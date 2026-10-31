@@ -18,6 +18,8 @@ export interface HostExecution {
   readonly platformId: string;
   readonly runtimeAgentKey: string;
   readonly sessionId: string;
+  /** Signed host name for diagnostics; registered binding remains authoritative. */
+  readonly terminalAgentName?: string;
   readonly messageId?: string;
   readonly workspaceRoot: string;
   readonly abortSignal: AbortSignal;

@@ -71,7 +71,7 @@ export async function loadSimpleNodeRuntime<NativeContext>(filename: string, wor
     // Capture the true host identity and approval fiber synchronously before any await.
     const captured=adapter.capture(native),binding=mapping.get(captured.context.runtimeAgentKey);
     if(!binding)throw new IdentityError("AGENT_UNREGISTERED","Executing host Agent is not bound");
-    return {...captured,context:{...captured.context,platformId:binding.platformId,runtimeAgentKey:binding.runtimeAgentKey}};
+    return {...captured,context:{...captured.context,terminalAgentName:captured.context.runtimeAgentKey,platformId:binding.platformId,runtimeAgentKey:binding.runtimeAgentKey}};
   }};
   return createRuntime({adapter:translated,bindings,keyStore:store,credentials,origin:config.origin,transport:config.transport,
     timeoutMs:config.timeoutMs,allowInsecureLoopback:config.allowInsecureLoopback,

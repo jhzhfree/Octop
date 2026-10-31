@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, rm, chmod } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, rm, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createServer } from "node:http";
@@ -59,6 +59,7 @@ async function fixture(transport = "mcp", version = 1) {
       issuer:config.issuer,audience:"akb",resource:config.origin })) });
   await writeFile(config.serviceKeyFile, "shared-test-key", { mode: 0o600 });
   await writeFile(config.privateKeyFile, pair.privateKey.export({ format: "pem", type: "pkcs8" }), { mode: 0o600 });
+  if (version === 2) { config.auditFile = path.join(root, "audit.jsonl"); await writeFile(config.auditFile, "", { mode: 0o600 }); }
   await writeFile(configFile, JSON.stringify(config), { mode: 0o600 });
   const context = (agent, ask = () => Effect.void) => ({ agent, sessionID: "ses_test", messageID: "msg_test", worktree: workspace,
     directory: workspace, abort: new AbortController().signal, ask, metadata() {} });
@@ -96,7 +97,20 @@ test("two Agents share one key; concurrent MCP handshakes and tool calls carry t
     assert.notEqual(a.metadata.externalAgentId, b.metadata.externalAgentId);
     assert.equal(new Set(f.calls.map(c => c.claims.sub)).size, 2);
     assert.equal(new Set(f.calls.map(c => c.claims.jti)).size, 4);
-    for (const call of f.calls.filter(c => c.body.method === "tools/call")) assert.equal(call.body.params.arguments.agentId, undefined);
+    for (const call of f.calls.filter(c => c.body.method === "tools/call")) {
+      assert.equal(call.body.params.arguments.agentId, undefined);
+      assert.equal(call.claims.terminal_agent, call.claims.runtime_agent);
+    }
+    const audit = (await readFile(f.config.auditFile, "utf8")).trim().split("\n").map(JSON.parse);
+    assert.equal(audit.filter(e => e.phase === "started").length, 3);
+    assert.equal(audit.filter(e => e.phase === "failed").length, 1);
+    assert.deepEqual(audit.filter(e => e.phase === "completed").map(e => e.agentName).sort(), ["build", "review"]);
+    assert.ok(audit.filter(e => e.phase === "completed").every(e => e.invocationId && e.agentId));
+    assert.ok(!JSON.stringify(audit).includes("shared-test-key"));
+    await rm(f.config.auditFile);
+    const requests = f.calls.length;
+    await assert.rejects(hooks.tool.akb_search.execute({ query: "audit unavailable" }, f.context("build")));
+    assert.equal(f.calls.length, requests, "audit failure prevents upstream requests");
   } finally { await f.close(); }
 });
 test("permission Effect is executed; denial prevents every upstream request", async () => {

@@ -1,8 +1,10 @@
+> 0.5.0 新增 `@akb/agent-identity-sdk/terminal`：`generateTrustUUID()`、`generateKeyPair(directory, agentId?)`、`verifyTerminal(options)`，支持 Windows ACL 保护。验证分别检查 REST 状态与 MCP `get_agent_identity`，不将公开配置发现当作验签成功。终端名称通过可选的 `terminal_agent` 签名声明携带；授权仍依据已登记 UUID/公钥/绑定。见 [Windows 终端指南](../opencode-identity/WINDOWS.md)。
+
 > 简化第一版：SDK 0.4.0 新增受保护 PEM 导入与简化连接发现，仍使用现有 V2 逐请求签名。独立密钥生成工具位于 `tools/agent-keygen`，可完全脱离 SDK 使用。新的 OpenCode 配置使用 configVersion 3，见适配器 README；旧 configVersion 2 与挑战登记流程保留兼容。
 >
 > `GET /api/v1/external/identity/configuration?agentId=<UUID>` 只返回公开认证坐标，携带共享 Key，不携带私钥，不能读取知识。真正身份必须由后续签名状态测试验证。配置发现禁止重定向，并校验返回 resource 与配置地址一致。
 
-# Agent Identity SDK 0.3.2
+# Agent Identity SDK 0.5.0
 
 平台无关的身份 SDK。每安装共享一个 AKB Service Key，每个 Agent 使用独立 RSA 密钥，AKB 按 Agent 绑定公钥。支持 AKB Agent Proof V2、MCP 和 REST，不需要插件托管 JWKS，也不要求每 Agent 配置独立 MCP 服务。
 
