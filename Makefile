@@ -79,7 +79,9 @@ help:
 	@echo "  check-all        alias for all"
 	@echo ""
 	@echo "Utility targets:"
-	@echo "  install-hooks    Point git to .githooks (pre-commit: scoped checks + dashboard build)"
+	@echo "  install-hooks    Install .githooks (pre-commit checks default to off)"
+	@echo "  enable-precommit Enable local pre-commit checks and dashboard build"
+	@echo "  disable-precommit Disable local pre-commit checks"
 	@echo "  install          Install Python dev dependencies (alias: install-dev)"
 	@echo "  install-dev      uv sync / pip install -e \".[dev]\""
 	@echo "  install-tools    Install build + twine for publishing"
@@ -296,8 +298,17 @@ install-hooks:
 	@echo "[install-hooks] Setting core.hooksPath=.githooks"
 	git config core.hooksPath .githooks
 	@chmod +x "$(REPO_ROOT)/.githooks/"* 2>/dev/null || true
-	@echo "[install-hooks] Done. Pre-commit will run: make precommit (format-all + lint + typecheck + testmon-scoped tests), dashboard build"
+	@echo "[install-hooks] Done. Checks default to off; enable: make enable-precommit; disable: make disable-precommit"
 	@echo "[install-hooks] Bypass: SKIP_PRECOMMIT=1 git commit …   or   git commit --no-verify"
+
+.PHONY: enable-precommit disable-precommit
+enable-precommit: install-hooks
+	git config --local octop.precommitEnabled true
+	@echo "[pre-commit] Enabled: make precommit + dashboard build"
+
+disable-precommit:
+	git config --local octop.precommitEnabled false
+	@echo "[pre-commit] Disabled; enable again with: make enable-precommit"
 
 .PHONY: install install-dev
 install install-dev:

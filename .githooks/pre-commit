@@ -2,8 +2,9 @@
 # Pre-commit gate: make precommit (format BE+FE + lint + typecheck + testmon-scoped
 # tests) + dashboard build. The full suite still runs in CI (`make all`); this is a
 # fast, change-aware local gate so commits don't wait on the whole test matrix.
-# Enable once per clone:  make install-hooks
-# Bypass (emergency only): SKIP_PRECOMMIT=1 git commit ...
+# Install once per clone: make install-hooks (checks default to off)
+# Switch checks on/off: make enable-precommit / make disable-precommit
+# Bypass an enabled gate once: SKIP_PRECOMMIT=1 git commit ...
 # Or: git commit --no-verify
 set -euo pipefail
 
@@ -14,6 +15,21 @@ fi
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
+
+# Repository-local opt-in. Unset means off; invalid boolean values must fail.
+if PRECOMMIT_ENABLED="$(git config --bool --get octop.precommitEnabled)"; then
+  :
+else
+  config_status=$?
+  if [[ "$config_status" != "1" ]]; then
+    exit "$config_status"
+  fi
+  PRECOMMIT_ENABLED=false
+fi
+if [[ "$PRECOMMIT_ENABLED" != "true" ]]; then
+  echo "[pre-commit] Checks disabled (enable with: make enable-precommit)"
+  exit 0
+fi
 
 # Documentation-only commits do not need code checks or a dashboard build.
 # Include deletions and both sides of renames when deciding what changed.
