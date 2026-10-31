@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
 from typing import Any
 
 import jwt
@@ -140,7 +139,7 @@ async def test_akb_rest_maps_upstream_error_codes(monkeypatch: pytest.MonkeyPatc
         await akb_rest.search(_spec(), {"api_key": "k"}, "q", top_k=3)
     assert excinfo.value.code == "FORBIDDEN"
     assert calls[0]["url"].endswith("/api/v1/external/kb/retrievals")
-    assert calls[0]["payload"] == {"question": "q", "topK": 3}
+    assert calls[0]["payload"] == {"question": "q", "topK": 3, "knowledgeBaseId": _spec().ref}
 
 
 @pytest.mark.asyncio
@@ -313,7 +312,8 @@ async def test_akb_mcp_probe_reports_each_tool_schema(monkeypatch: pytest.Monkey
 
 def test_tool_name_wins_over_the_built_in_pair() -> None:
     assert akb_mcp._tool_name(_spec(kind="akb-mcp")) == "knowledge_search"
-    assert akb_mcp._tool_name(_spec(kind="akb-mcp", tool_name="kb_search_v2")) == "kb_search_v2"
+    with pytest.raises(ExternalSourceError):
+        akb_mcp._tool_name(_spec(kind="akb-mcp", tool_name="kb_search_v2"))
 
 
 def test_configured_arguments_travel_but_never_override_the_call() -> None:
@@ -435,23 +435,24 @@ async def test_akb_rest_probe_keeps_a_search_only_404(monkeypatch: pytest.Monkey
 async def test_http_rejection_names_the_requested_target(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    class _FakeResponse:
-        status_code = 404
-        content = b"{}"
+    from contextlib import asynccontextmanager
+
+    import httpx
 
     class _FakeClient:
         def __init__(self, *args: Any, **kwargs: Any) -> None: ...
-
-        async def __aenter__(self) -> _FakeClient:
+        async def __aenter__(self):
             return self
 
-        async def __aexit__(self, *args: Any) -> bool:
+        async def __aexit__(self, *args):
             return False
 
-        async def request(self, method: str, url: str, **kwargs: Any) -> _FakeResponse:
-            return _FakeResponse()
+        @asynccontextmanager
+        async def stream(self, method: str, url: str, **kwargs: Any):
+            response = httpx.Response(404, content=b"{}")
+            yield response
 
-    monkeypatch.setattr(http, "httpx", SimpleNamespace(AsyncClient=_FakeClient))
+    monkeypatch.setattr(http.httpx, "AsyncClient", _FakeClient)
     with pytest.raises(ExternalSourceError) as excinfo:
         await http.post_json(
             "https://akb.example.com/api/v1/external/api/v1/external/kb/retrievals",

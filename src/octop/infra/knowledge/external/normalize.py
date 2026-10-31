@@ -107,11 +107,16 @@ def chunk_from_mapping(
     if not content:
         return None
     clipped = content[:max_chars]
-    metadata: dict[str, Any] = {
-        key: value
-        for key, value in raw.items()
-        if isinstance(key, str) and key not in _CONTENT_KEYS
-    }
+    nested = raw.get("metadata")
+    merged = {**(nested if isinstance(nested, Mapping) else {}), **raw}
+    metadata: dict[str, Any] = {}
+    for key, value in list(merged.items())[:64]:
+        if not isinstance(key, str) or key in _CONTENT_KEYS:
+            continue
+        if isinstance(value, (bool, int, float)) or value is None:
+            metadata[key] = value
+        elif isinstance(value, str):
+            metadata[key] = value[:2048]
     if len(content) > len(clipped):
         metadata["truncated"] = True
     return ExternalChunk(

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
+import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Any
 
 from octop.infra.db.pool import DatabasePool
 from octop.infra.db.repos._base import DbRow, bool_int, map_rows, now_ts
@@ -36,23 +39,30 @@ class ExternalSourceRow:
     credential_blob: bytes | None
     created_at: int
     updated_at: int
+    connection_id: str = ""
+    auth_type: str = "legacy"
+    revision: int = 1
+    resource_revision: int = 1
+    connection_owner_user_id: int = 0
+    connection_shared: bool = False
+    connection_enabled: bool = True
 
     @classmethod
     def from_row(cls, r: DbRow) -> ExternalSourceRow:
-        blob = r["credential_blob"]
+        blob = r["connection_credential_blob"]
         return cls(
             id=r["id"],
             source_id=r["source_id"],
             owner_user_id=r["owner_user_id"],
-            instance_id=r["instance_id"] or "",
-            kind=r["kind"],
+            instance_id=r["connection_instance_id"] or "",
+            kind=r["connection_kind"],
             display_name=r["display_name"],
-            endpoint=r["endpoint"],
+            endpoint=r["connection_endpoint"],
             ref=r["ref"] or "",
             top_k=int(r["top_k"] or 8),
             min_score=float(r["min_score"] or 0),
             timeout_ms=int(r["timeout_ms"] or 10000),
-            allow_insecure_http=bool(r["allow_insecure_http"]),
+            allow_insecure_http=bool(r["connection_allow_insecure_http"]),
             selector_argument=r["selector_argument"] or "",
             forbidden_arguments=r["forbidden_arguments"] or "",
             read_tools=r["read_tools"] or "",
@@ -63,6 +73,13 @@ class ExternalSourceRow:
             credential_blob=bytes(blob) if blob is not None else None,
             created_at=r["created_at"],
             updated_at=r["updated_at"],
+            connection_id=r["connection_id"] or r["source_id"],
+            auth_type=r["auth_type"],
+            resource_revision=int(r["resource_revision"]),
+            revision=int(r["revision"]),
+            connection_owner_user_id=int(r["connection_owner_user_id"]),
+            connection_shared=bool(r["connection_shared"]),
+            connection_enabled=bool(r["connection_enabled"]),
         )
 
     @property
@@ -89,53 +106,335 @@ class ExternalBindingRow:
         )
 
 
+def is_reference_conflict(exc: Exception) -> bool:
+    return isinstance(exc, sqlite3.IntegrityError) or getattr(exc, "sqlstate", None) == "23503"
+
+
 class ExternalKnowledgeRepo:
     def __init__(self, db: DatabasePool) -> None:
         self._db = db
 
-    def compare_replace_credentials(self, source_id: str, old: bytes | None, new: bytes) -> bool:
-        with self._db.connect() as conn:
-            if old is None:
-                result = conn.execute(
-                    "UPDATE external_knowledge_sources SET credential_blob=?,updated_at=? WHERE source_id=? AND credential_blob IS NULL",
-                    (new, now_ts(), source_id),
-                )
-            else:
-                result = conn.execute(
-                    "UPDATE external_knowledge_sources SET credential_blob=?,updated_at=? WHERE source_id=? AND credential_blob=?",
-                    (new, now_ts(), source_id, old),
-                )
-            return bool(result.rowcount == 1)
+    @staticmethod
+    def _projection() -> str:
+        return (
+            "SELECT c.kind AS connection_kind,c.endpoint AS connection_endpoint,c.instance_id AS connection_instance_id,"
+            "c.credential_blob AS connection_credential_blob,c.allow_insecure_http AS connection_allow_insecure_http,"
+            "c.auth_type,c.revision,c.owner_user_id AS connection_owner_user_id,"
+            "c.shared AS connection_shared,c.enabled AS connection_enabled,s.* "
+            "FROM external_knowledge_sources s JOIN external_knowledge_connections c ON c.connection_id=s.connection_id "
+        )
 
-    def compare_replace_identity_binding(
-        self, source_id: str, old: bytes | None, new: bytes, agent_id: str, *, bound: bool
-    ) -> bool:
-        """Commit encrypted identity and its retrieval mount together, with CAS protection."""
+    def list_connections(self, user_id: int, *, is_admin: bool = False) -> list[dict[str, Any]]:
+        with self._db.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM external_knowledge_connections"
+                + ("" if is_admin else " WHERE owner_user_id=? OR shared=1")
+                + " ORDER BY display_name",
+                () if is_admin else (user_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def create_connection(self, values: dict[str, Any]) -> None:
+        fields = (
+            "connection_id",
+            "owner_user_id",
+            "kind",
+            "display_name",
+            "endpoint",
+            "instance_id",
+            "auth_type",
+            "allow_insecure_http",
+            "shared",
+            "credential_blob",
+            "created_at",
+            "updated_at",
+        )
         with self._db.transaction() as conn:
-            predicate = "credential_blob IS NULL" if old is None else "credential_blob=?"
-            values: tuple[object, ...] = (new, now_ts(), source_id)
-            if old is not None:
-                values += (old,)
+            conn.execute(
+                "INSERT INTO external_knowledge_connections("
+                + ",".join(fields)
+                + ") VALUES ("
+                + ",".join("?" for _ in fields)
+                + ")",
+                tuple(values[k] for k in fields),
+            )
+
+    def update_connection(self, connection_id: str, revision: int, values: dict[str, Any]) -> bool:
+        allowed = {
+            "kind",
+            "display_name",
+            "endpoint",
+            "auth_type",
+            "allow_insecure_http",
+            "shared",
+            "enabled",
+            "credential_blob",
+        }
+        if set(values) - allowed:
+            raise ValueError("invalid connection fields")
+        with self._db.transaction() as conn:
             result = conn.execute(
-                "UPDATE external_knowledge_sources SET credential_blob=?,updated_at=? "
-                f"WHERE source_id=? AND {predicate}",
-                values,
+                "UPDATE external_knowledge_connections SET "
+                + ",".join(k + "=?" for k in values)
+                + ",revision=revision+1,updated_at=? WHERE connection_id=? AND revision=?",
+                (*values.values(), now_ts(), connection_id, revision),
+            )
+        return bool(result.rowcount == 1)
+
+    def connection_resources(self, connection_id: str) -> list[str]:
+        with self._db.connect() as conn:
+            rows = conn.execute(
+                "SELECT source_id FROM external_knowledge_sources WHERE connection_id=?",
+                (connection_id,),
+            ).fetchall()
+        return [r["source_id"] for r in rows]
+
+    def delete_connection(self, connection_id: str) -> bool:
+        with self._db.transaction() as conn:
+            result = conn.execute(
+                "DELETE FROM external_knowledge_connections WHERE connection_id=? AND NOT EXISTS (SELECT 1 FROM external_knowledge_sources WHERE connection_id=?)",
+                (connection_id, connection_id),
+            )
+        return bool(result.rowcount == 1)
+
+    def connection(self, connection_id: str) -> dict[str, Any] | None:
+        with self._db.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM external_knowledge_connections WHERE connection_id=?",
+                (connection_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def identity(self, row: ExternalSourceRow) -> dict[str, Any]:
+        return self.identity_for_connection(row.connection_id)
+
+    def identity_for_connection(self, connection_id: str) -> dict[str, Any]:
+        with self._db.connect() as conn:
+            connection = conn.execute(
+                "SELECT identity_json FROM external_knowledge_connections WHERE connection_id=?",
+                (connection_id,),
+            ).fetchone()
+            agents = conn.execute(
+                "SELECT * FROM external_agent_bindings WHERE connection_id=?", (connection_id,)
+            ).fetchall()
+        result = json.loads(connection["identity_json"]) if connection else {}
+        result["agents"] = {
+            a["agent_id"]: {
+                **json.loads(a["binding_json"]),
+                "lastVerifiedAt": a["last_verified_at"],
+                "lastVerificationStatus": a["last_verification_status"],
+            }
+            for a in agents
+        }
+        return result
+
+    def import_identity(
+        self, row: ExternalSourceRow, auth_type: str, credentials: bytes, config: dict[str, Any]
+    ) -> None:
+        with self._db.transaction() as conn:
+            result = conn.execute(
+                "UPDATE external_knowledge_connections SET auth_type=?,credential_blob=?,identity_json=?,revision=revision+1 WHERE connection_id=? AND auth_type='legacy'",
+                (
+                    auth_type,
+                    credentials,
+                    json.dumps({k: v for k, v in config.items() if k != "agents"}),
+                    row.connection_id,
+                ),
+            )
+            if result.rowcount:
+                for agent_id, data in dict(config.get("agents", {})).items():
+                    conn.execute(
+                        "INSERT INTO external_agent_bindings(connection_id,agent_id,binding_json,last_verified_at,last_verification_status) VALUES(?,?,?,?,?) ON CONFLICT(connection_id,agent_id) DO NOTHING",
+                        (
+                            row.connection_id,
+                            agent_id,
+                            json.dumps(data),
+                            data.get("lastVerifiedAt"),
+                            data.get("lastVerificationStatus"),
+                        ),
+                    )
+                conn.execute(
+                    "UPDATE external_knowledge_sources SET credential_blob=NULL WHERE connection_id=?",
+                    (row.connection_id,),
+                )
+
+    def save_identity(
+        self,
+        row: ExternalSourceRow,
+        config: dict[str, Any],
+        agent_id: str | None = None,
+        *,
+        bound: bool = True,
+    ) -> bool:
+        with self._db.transaction() as conn:
+            result = conn.execute(
+                "UPDATE external_knowledge_connections SET identity_json=?,revision=revision+1 WHERE connection_id=? AND revision=?",
+                (
+                    json.dumps({k: v for k, v in config.items() if k != "agents"}),
+                    row.connection_id,
+                    row.revision,
+                ),
             )
             if result.rowcount != 1:
                 return False
-            if bound:
-                conn.execute(
-                    "INSERT INTO external_knowledge_bindings(source_id,target_type,target_id,enabled,created_at) "
-                    "VALUES (?,'agent',?,1,?) ON CONFLICT(source_id,target_type,target_id) "
-                    "DO UPDATE SET enabled=1",
-                    (source_id, agent_id, now_ts()),
-                )
+            if agent_id is not None:
+                if bound:
+                    data = dict(config["agents"])[agent_id]
+                    conn.execute(
+                        "INSERT INTO external_agent_bindings(connection_id,agent_id,binding_json,last_verified_at,last_verification_status,key_ref) VALUES(?,?,?,?,?,?) ON CONFLICT(connection_id,agent_id) DO UPDATE SET binding_json=excluded.binding_json,last_verified_at=excluded.last_verified_at,last_verification_status=excluded.last_verification_status,key_ref=excluded.key_ref",
+                        (
+                            row.connection_id,
+                            agent_id,
+                            json.dumps(data),
+                            data.get("lastVerifiedAt"),
+                            data.get("lastVerificationStatus"),
+                            "agent_identity:" + data["keyReference"]
+                            if data.get("keyReference")
+                            else None,
+                        ),
+                    )
+                    conn.execute(
+                        "INSERT INTO external_knowledge_bindings(source_id,target_type,target_id,enabled,created_at) VALUES(?,'agent',?,1,?) ON CONFLICT(source_id,target_type,target_id) DO UPDATE SET enabled=1",
+                        (row.source_id, agent_id, now_ts()),
+                    )
+                else:
+                    conn.execute(
+                        "DELETE FROM external_agent_bindings WHERE connection_id=? AND agent_id=?",
+                        (row.connection_id, agent_id),
+                    )
+                    conn.execute(
+                        "DELETE FROM external_knowledge_bindings WHERE source_id IN (SELECT source_id FROM external_knowledge_sources WHERE connection_id=?) AND target_type='agent' AND target_id=?",
+                        (row.connection_id, agent_id),
+                    )
             else:
+                for native, data in dict(config.get("agents", {})).items():
+                    conn.execute(
+                        "UPDATE external_agent_bindings SET last_verified_at=?,last_verification_status=? WHERE connection_id=? AND agent_id=?",
+                        (
+                            data.get("lastVerifiedAt"),
+                            data.get("lastVerificationStatus"),
+                            row.connection_id,
+                            native,
+                        ),
+                    )
+        return True
+
+    def record_verification(
+        self, connection_id: str, agent_id: str, expected: str, status: str, at: str
+    ) -> None:
+        with self._db.transaction() as conn:
+            row = conn.execute(
+                "SELECT binding_json FROM external_agent_bindings WHERE connection_id=? AND agent_id=?",
+                (connection_id, agent_id),
+            ).fetchone()
+            if row and json.loads(row["binding_json"]).get("externalAgentId") == expected:
                 conn.execute(
-                    "DELETE FROM external_knowledge_bindings WHERE source_id=? AND target_type='agent' AND target_id=?",
-                    (source_id, agent_id),
+                    "UPDATE external_agent_bindings SET last_verified_at=?,last_verification_status=? WHERE connection_id=? AND agent_id=?",
+                    (at, status, connection_id, agent_id),
                 )
-            return True
+
+    def record_check(
+        self,
+        connection_id: str,
+        resource_id: str,
+        agent_id: str,
+        stage: str,
+        status: str,
+        code: str = "",
+        *,
+        expected_revision: int | None = None,
+    ) -> None:
+        with self._db.transaction() as conn:
+            row = conn.execute(
+                "SELECT revision FROM external_knowledge_connections WHERE connection_id=?",
+                (connection_id,),
+            ).fetchone()
+            if row is None or (
+                expected_revision is not None and row["revision"] != expected_revision
+            ):
+                return
+            conn.execute(
+                "INSERT INTO external_connection_checks(connection_id,resource_id,agent_id,revision,stage,status,code,checked_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(connection_id,resource_id,agent_id,stage) DO UPDATE SET revision=excluded.revision,status=excluded.status,code=excluded.code,checked_at=excluded.checked_at",
+                (
+                    connection_id,
+                    resource_id,
+                    agent_id,
+                    row["revision"],
+                    stage,
+                    status,
+                    code,
+                    now_ts(),
+                ),
+            )
+
+    def checks(self, connection_id: str, resource_id: str) -> list[dict[str, object]]:
+        with self._db.connect() as conn:
+            rows = conn.execute(
+                "SELECT x.agent_id,x.stage,x.status,x.code,x.checked_at FROM external_connection_checks x JOIN external_knowledge_connections c ON x.connection_id=c.connection_id AND x.revision=c.revision WHERE x.connection_id=? AND x.resource_id=?",
+                (connection_id, resource_id),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def key_reference_used(self, reference: str) -> bool:
+        with self._db.connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM external_agent_bindings WHERE key_ref=? LIMIT 1",
+                ("agent_identity:" + reference,),
+            ).fetchone()
+        return row is not None
+
+    def retire_key(self, reference: str) -> bool:
+        name = "agent_identity:" + reference
+        try:
+            with self._db.transaction() as conn:
+                result = conn.execute(
+                    "DELETE FROM secrets WHERE k=? AND NOT EXISTS (SELECT 1 FROM external_agent_bindings WHERE key_ref=?)",
+                    (name, name),
+                )
+            return bool(result.rowcount == 1)
+        except Exception as exc:
+            if is_reference_conflict(exc):
+                return False
+            raise
+
+    def adopt_legacy_key(
+        self, connection_id: str, agent_id: str, external_id: str, reference: str
+    ) -> None:
+        with self._db.transaction() as conn:
+            row = conn.execute(
+                "SELECT binding_json FROM external_agent_bindings WHERE connection_id=? AND agent_id=? AND key_ref IS NULL",
+                (connection_id, agent_id),
+            ).fetchone()
+            if row is None:
+                return
+            data = json.loads(row["binding_json"])
+            if data.get("externalAgentId") != external_id:
+                return
+            data["keyReference"] = reference
+            conn.execute(
+                "UPDATE external_agent_bindings SET binding_json=?,key_ref=? WHERE connection_id=? AND agent_id=? AND binding_json=? AND key_ref IS NULL",
+                (
+                    json.dumps(data),
+                    "agent_identity:" + reference,
+                    connection_id,
+                    agent_id,
+                    row["binding_json"],
+                ),
+            )
+
+    def target_owner(self, target_type: str, target_id: str) -> int | None:
+        tables = {
+            "agent": ("agents", "agent_id", "user_id"),
+            "knowledge_base": ("knowledge_bases", "knowledge_base_id", "owner_user_id"),
+        }
+        if target_type not in tables:
+            return None
+        table, identifier, owner = tables[target_type]
+        with self._db.connect() as conn:
+            row = conn.execute(
+                f"SELECT {owner} AS owner FROM {table} WHERE {identifier}=?", (target_id,)
+            ).fetchone()
+        return int(row["owner"]) if row and row["owner"] is not None else None
 
     def create(
         self,
@@ -158,9 +457,30 @@ class ExternalKnowledgeRepo:
         tool_arguments: str = "",
         shared: bool = False,
         credential_blob: bytes | None = None,
+        connection_id: str = "",
+        auth_type: str = "legacy",
     ) -> str:
         ts = now_ts()
         with self._db.transaction() as conn:
+            if not connection_id:
+                connection_id = source_id
+                conn.execute(
+                    "INSERT INTO external_knowledge_connections(connection_id,owner_user_id,kind,display_name,endpoint,instance_id,auth_type,allow_insecure_http,shared,credential_blob,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        connection_id,
+                        owner_user_id,
+                        kind,
+                        display_name,
+                        endpoint,
+                        instance_id,
+                        auth_type,
+                        bool_int(allow_insecure_http),
+                        bool_int(shared),
+                        credential_blob,
+                        ts,
+                        ts,
+                    ),
+                )
             conn.execute(
                 "INSERT INTO external_knowledge_sources("
                 "source_id, owner_user_id, instance_id, kind, display_name, endpoint, ref, "
@@ -192,25 +512,25 @@ class ExternalKnowledgeRepo:
                     ts,
                 ),
             )
+            conn.execute(
+                "UPDATE external_knowledge_sources SET connection_id=?,credential_blob=NULL WHERE source_id=?",
+                (connection_id, source_id),
+            )
         return source_id
 
     def get(self, source_id: str) -> ExternalSourceRow | None:
         with self._db.connect() as conn:
-            r = conn.execute(
-                "SELECT * FROM external_knowledge_sources WHERE source_id = ?", (source_id,)
-            ).fetchone()
+            r = conn.execute(self._projection() + "WHERE s.source_id = ?", (source_id,)).fetchone()
         return ExternalSourceRow.from_row(r) if r else None
 
     def list_visible(self, user_id: int, *, is_admin: bool = False) -> list[ExternalSourceRow]:
         with self._db.connect() as conn:
             if is_admin:
-                rows = conn.execute(
-                    "SELECT * FROM external_knowledge_sources ORDER BY display_name"
-                ).fetchall()
+                rows = conn.execute(self._projection() + "ORDER BY s.display_name").fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT * FROM external_knowledge_sources "
-                    "WHERE owner_user_id = ? OR shared = 1 ORDER BY display_name",
+                    self._projection()
+                    + "WHERE s.owner_user_id = ? OR s.shared = 1 ORDER BY s.display_name",
                     (user_id,),
                 ).fetchall()
         return map_rows(rows, ExternalSourceRow)
@@ -236,6 +556,9 @@ class ExternalKnowledgeRepo:
         shared: bool | None = None,
         credential_blob: bytes | None = None,
         replace_credentials: bool = False,
+        auth_type: str | None = None,
+        expected_revision: int | None = None,
+        expected_resource_revision: int | None = None,
     ) -> None:
         assignments: list[str] = []
         values: list[object] = []
@@ -266,24 +589,62 @@ class ExternalKnowledgeRepo:
             if value is not None:
                 assignments.append(f"{column} = ?")
                 values.append(bool_int(value))
-        if replace_credentials:
-            assignments.append("credential_blob = ?")
-            values.append(credential_blob)
-        if not assignments:
+        if not assignments and not replace_credentials and auth_type is None:
             return
+        assignments.append("resource_revision = resource_revision + 1")
         assignments.append("updated_at = ?")
         values.append(now_ts())
         values.append(source_id)
         with self._db.transaction() as conn:
-            conn.execute(
-                f"UPDATE external_knowledge_sources SET {', '.join(assignments)} "
-                "WHERE source_id = ?",
-                tuple(values),
+            target = conn.execute(
+                "SELECT connection_id FROM external_knowledge_sources WHERE source_id=?",
+                (source_id,),
+            ).fetchone()
+            if target is None:
+                raise ValueError("source no longer exists")
+            changes: dict[str, Any] = {
+                k: v
+                for k, v in {
+                    "kind": kind,
+                    "endpoint": endpoint,
+                    "instance_id": None,
+                    "allow_insecure_http": None
+                    if allow_insecure_http is None
+                    else bool_int(allow_insecure_http),
+                    "shared": None if shared is None else bool_int(shared),
+                    "auth_type": auth_type,
+                }.items()
+                if v is not None
+            }
+            if replace_credentials:
+                changes["credential_blob"] = credential_blob
+            if changes:
+                sets = ",".join(k + "=?" for k in changes)
+                query = (
+                    "UPDATE external_knowledge_connections SET "
+                    + sets
+                    + ",revision=revision+1 WHERE connection_id=?"
+                )
+                args = [*changes.values(), target["connection_id"]]
+                if expected_revision is not None:
+                    query += " AND revision=?"
+                    args.append(expected_revision)
+                result = conn.execute(query, tuple(args))
+                if result.rowcount != 1:
+                    raise ValueError("connection revision conflict")
+            query = (
+                f"UPDATE external_knowledge_sources SET {', '.join(assignments)} WHERE source_id=?"
             )
+            if expected_resource_revision is not None:
+                query += " AND resource_revision=?"
+                values.append(expected_resource_revision)
+            result = conn.execute(query, tuple(values))
+            if result.rowcount != 1:
+                raise ValueError("resource revision conflict")
 
     def delete(self, source_id: str) -> None:
         with self._db.transaction() as conn:
-            conn.execute("DELETE FROM external_knowledge_sources WHERE source_id = ?", (source_id,))
+            conn.execute("DELETE FROM external_knowledge_sources WHERE source_id=?", (source_id,))
 
     def list_bindings(self, source_id: str | None = None) -> list[ExternalBindingRow]:
         with self._db.connect() as conn:

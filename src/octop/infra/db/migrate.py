@@ -247,6 +247,40 @@ def _ensure_enterprise_scenes_schema(db: DatabasePool) -> None:
         )
 
 
+def _ensure_external_connection_schema(db: DatabasePool) -> None:
+    if not _table_exists(db, "external_knowledge_sources"):
+        return
+    filename = (
+        "030_external_connections.pg.sql"
+        if db.dialect == "postgresql"
+        else "030_external_connections.sql"
+    )
+    path = Path(__file__).parent / "migrations" / filename
+    sql = "\n".join(
+        line
+        for line in path.read_text().splitlines()
+        if not line.startswith("ALTER TABLE") and not line.startswith("UPDATE _schema_version")
+    )
+    _ensure_column(
+        db, "external_knowledge_sources", "resource_revision", "INTEGER NOT NULL DEFAULT 1"
+    )
+    # Create the parent before adding the resource FK, then apply idempotent backfill.
+    first, rest = sql.split(";", 1)
+    with db.connect() as conn:
+        conn.executescript(first + ";")
+    _ensure_column(
+        db,
+        "external_knowledge_sources",
+        "connection_id",
+        "TEXT REFERENCES external_knowledge_connections(connection_id)",
+    )
+    if _table_exists(db, "external_agent_bindings"):
+        _ensure_column(db, "external_agent_bindings", "key_ref", "TEXT REFERENCES secrets(k)")
+    with db.connect() as conn:
+        conn.executescript(rest)
+    _ensure_column(db, "external_connection_checks", "revision", "INTEGER NOT NULL DEFAULT 1")
+
+
 def _ensure_external_tool_config_schema(db: DatabasePool) -> None:
     """Give external sources the columns naming the tool they call.
 
@@ -2089,6 +2123,11 @@ def _apply_sqlite_migration(db: DatabasePool, version: int, path: Path) -> None:
     if version == 26:
         _ensure_enterprise_scenes_schema(db)
         _ensure_digital_workers_schema(db)
+        with db.connect() as conn:
+            conn.execute("UPDATE _schema_version SET version = ?", (version,))
+        return
+    if version == 30:
+        _ensure_external_connection_schema(db)
         with db.connect() as conn:
             conn.execute("UPDATE _schema_version SET version = ?", (version,))
         return

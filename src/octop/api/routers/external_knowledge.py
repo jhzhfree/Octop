@@ -26,6 +26,14 @@ router = APIRouter()
 _TARGET_TYPES = Literal["agent", "knowledge_base"]
 
 _ERROR_CODES: dict[str, ErrorCode] = {
+    "TIMEOUT": ErrorCode.EXTERNAL_KNOWLEDGE_TIMEOUT,
+    "RATE_LIMITED": ErrorCode.RATE_LIMITED,
+    "UPSTREAM_UNAVAILABLE": ErrorCode.EXTERNAL_KNOWLEDGE_UNAVAILABLE,
+    "TRANSPORT_ERROR": ErrorCode.EXTERNAL_KNOWLEDGE_UNAVAILABLE,
+    "UPSTREAM_ERROR": ErrorCode.EXTERNAL_KNOWLEDGE_UNAVAILABLE,
+    "INVALID_JSON": ErrorCode.EXTERNAL_KNOWLEDGE_PROTOCOL,
+    "RESPONSE_TOO_LARGE": ErrorCode.EXTERNAL_KNOWLEDGE_PROTOCOL,
+    "INVALID_ARGUMENT": ErrorCode.EXTERNAL_KNOWLEDGE_INVALID_CONFIG,
     "NOT_FOUND": ErrorCode.KNOWLEDGE_NOT_FOUND,
     "FORBIDDEN": ErrorCode.KNOWLEDGE_FORBIDDEN,
     "INVALID_CREDENTIALS": ErrorCode.CONNECTOR_INVALID_CREDENTIALS,
@@ -42,7 +50,10 @@ def _service(server: Any) -> ExternalKnowledgeService:
 
 
 def _fail(exc: ExternalSourceError) -> OctopError:
-    return OctopError(_ERROR_CODES.get(exc.code, ErrorCode.KNOWLEDGE_UNSUPPORTED_TYPE), str(exc))
+    return OctopError.localized(
+        _ERROR_CODES.get(exc.code, ErrorCode.EXTERNAL_KNOWLEDGE_PROTOCOL),
+        details={"stage": "external-knowledge", "upstreamCode": exc.code},
+    )
 
 
 def _run[T](fn: Callable[[], T]) -> T:
@@ -50,6 +61,52 @@ def _run[T](fn: Callable[[], T]) -> T:
         return fn()
     except ExternalSourceError as exc:
         raise _fail(exc) from exc
+
+
+class ConnectionView(BaseModel):
+    connection_id: str
+    owner_user_id: int
+    kind: str
+    display_name: str
+    endpoint: str
+    instance_id: str
+    auth_type: Literal["service", "agent", "legacy"]
+    allow_insecure_http: bool
+    enabled: bool
+    shared: bool
+    revision: int
+    has_credentials: bool
+    can_manage: bool
+    needs_attention: bool
+    resource_count: int
+    agent_count: int
+    created_at: int
+    updated_at: int
+
+
+class ConnectionCreateBody(BaseModel):
+    kind: str
+    display_name: str = Field(min_length=1, max_length=120)
+    endpoint: str = Field(min_length=1, max_length=2048)
+    auth_type: Literal["service", "agent"] = "service"
+    api_key: str = Field(default="", max_length=2048)
+    api_key_header: str = Field(default="", max_length=32)
+    instance_id: str = Field(default="", max_length=120)
+    allow_insecure_http: bool = False
+    shared: bool = False
+
+
+class ConnectionPatchBody(BaseModel):
+    revision: int = Field(ge=1)
+    display_name: str | None = Field(default=None, min_length=1, max_length=120)
+    endpoint: str | None = Field(default=None, min_length=1, max_length=2048)
+    kind: str | None = None
+    auth_type: Literal["service", "agent"] | None = None
+    api_key: str | None = Field(default=None, max_length=2048)
+    api_key_header: str | None = Field(default=None, max_length=32)
+    allow_insecure_http: bool | None = None
+    shared: bool | None = None
+    enabled: bool | None = None
 
 
 class SourceCreateBody(BaseModel):
@@ -63,6 +120,11 @@ class SourceCreateBody(BaseModel):
     )
     # How the key is sent: "x-api-key" (default) or "authorization" (Bearer).
     api_key_header: str = Field(default="", max_length=32)
+    connection_id: str = Field(
+        default="",
+        max_length=120,
+        description="Reuse an existing service connection for another knowledge base",
+    )
     instance_id: str = Field(default="", max_length=120)
     ref: str = Field(default="", max_length=255)
     top_k: int = Field(default=DEFAULT_TOP_K, ge=1, le=MAX_TOP_K)
@@ -79,6 +141,12 @@ class SourceCreateBody(BaseModel):
 
 
 class SourcePatchBody(BaseModel):
+    resource_revision: int | None = Field(
+        default=None, ge=1, description="Expected resource revision"
+    )
+    revision: int | None = Field(
+        default=None, ge=1, description="Expected connection revision; stale edits are rejected"
+    )
     # Changing the adapter re-points the source at another upstream protocol,
     # so it is patchable like every other setting — validated server-side.
     kind: str | None = Field(default=None, description="Adapter kind, e.g. akb-mcp")
@@ -161,6 +229,7 @@ async def create_source(
             api_key_header=body.api_key_header,
             auth_type=body.auth_type,
             instance_id=body.instance_id,
+            connection_id=body.connection_id,
             ref=body.ref,
             top_k=body.top_k,
             min_score=body.min_score,
@@ -217,7 +286,12 @@ async def probe_source(
     server: Any = Depends(get_server),
 ) -> dict[str, Any]:
     """Check reachability and list the tools the credential can use."""
-    return await _service(server).probe(source_id, user_id=user.id, is_admin=user.role == "admin")
+    try:
+        return await _service(server).probe(
+            source_id, user_id=user.id, is_admin=user.role == "admin"
+        )
+    except ExternalSourceError as exc:
+        raise _fail(exc) from exc
 
 
 @router.get("/external-knowledge/sources/{source_id}/refs", summary="List knowledge bases")
@@ -227,11 +301,13 @@ async def list_source_refs(
     server: Any = Depends(get_server),
 ) -> dict[str, Any]:
     """List the knowledge bases the stored credential is allowed to read."""
-    return {
-        "refs": await _service(server).list_refs(
+    try:
+        refs = await _service(server).list_refs(
             source_id, user_id=user.id, is_admin=user.role == "admin"
         )
-    }
+        return {"refs": refs}
+    except ExternalSourceError as exc:
+        raise _fail(exc) from exc
 
 
 @router.post("/external-knowledge/sources/{source_id}/search", summary="Search one source")
@@ -316,10 +392,122 @@ async def retrieve(
 ) -> dict[str, Any]:
     """Fuse results from every source bound to the given targets."""
     svc = _service(server)
+    for target in body.target_ids:
+        svc._assert_target(body.target_type, target, user_id=user.id, is_admin=user.role == "admin")
     specs = svc.specs_for_targets(body.target_type, list(body.target_ids))
     visible = {
         item["source_id"]
         for item in svc.list_sources(user_id=user.id, is_admin=user.role == "admin")
     }
     specs = [spec for spec in specs if spec.binding_id in visible]
-    return await svc.retrieve(query=body.query, specs=specs, limit=body.limit)
+    from octop.infra.knowledge.akb_identity import OctopIdentity
+
+    identity = OctopIdentity(
+        str(user.id),
+        body.target_ids[0] if body.target_type == "agent" and len(body.target_ids) == 1 else "",
+        "management",
+        workload_only=True,
+        is_admin=user.role == "admin",
+    )
+    return await svc.retrieve(
+        query=body.query, specs=specs, limit=body.limit, octop_identity=identity
+    )
+
+
+@router.get(
+    "/external-knowledge/connections",
+    summary="List service connections",
+    response_model=list[ConnectionView],
+)
+async def list_connections(
+    user: Any = Depends(current_user), server: Any = Depends(get_server)
+) -> list[dict[str, Any]]:
+    from octop.infra.knowledge.external.connections import Connections
+
+    return _run(lambda: Connections(_service(server)).list(user.id, user.role == "admin"))
+
+
+@router.post(
+    "/external-knowledge/connections",
+    status_code=201,
+    summary="Create a service connection",
+    response_model=ConnectionView,
+)
+async def create_connection(
+    body: ConnectionCreateBody, user: Any = Depends(current_user), server: Any = Depends(get_server)
+) -> dict[str, Any]:
+    from octop.infra.knowledge.external.connections import Connections
+
+    return _run(lambda: Connections(_service(server)).create(user.id, **body.model_dump()))
+
+
+@router.patch(
+    "/external-knowledge/connections/{connection_id}",
+    summary="Update a service connection",
+    response_model=ConnectionView,
+)
+async def update_connection(
+    connection_id: str,
+    body: ConnectionPatchBody,
+    user: Any = Depends(current_user),
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    from octop.infra.knowledge.external.connections import Connections
+
+    return _run(
+        lambda: Connections(_service(server)).update(
+            connection_id, user.id, user.role == "admin", body.model_dump(exclude_none=True)
+        )
+    )
+
+
+@router.delete(
+    "/external-knowledge/connections/{connection_id}",
+    status_code=204,
+    summary="Delete an unused service connection",
+)
+async def delete_connection(
+    connection_id: str, user: Any = Depends(current_user), server: Any = Depends(get_server)
+) -> None:
+    from octop.infra.knowledge.external.connections import Connections
+
+    _run(lambda: Connections(_service(server)).delete(connection_id, user.id, user.role == "admin"))
+
+
+class ResourceCreateBody(BaseModel):
+    connection_id: str = Field(min_length=1, max_length=120)
+    display_name: str = Field(min_length=1, max_length=120)
+    ref: str = Field(
+        min_length=1,
+        max_length=255,
+        description="External knowledge-base identifier, stored as a string",
+    )
+    top_k: int = Field(default=DEFAULT_TOP_K, ge=1, le=MAX_TOP_K)
+    min_score: float = Field(default=0, ge=0, le=1)
+    timeout_ms: int = Field(default=10000, ge=1, le=60000)
+    tool_name: Literal["", "knowledge_search", "knowledge_query"] = ""
+    tool_arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+@router.get("/external-knowledge/resources", summary="List external knowledge resources")
+async def list_resources(
+    user: Any = Depends(current_user), server: Any = Depends(get_server)
+) -> list[dict[str, Any]]:
+    return _run(
+        lambda: _service(server).list_sources(user_id=user.id, is_admin=user.role == "admin")
+    )
+
+
+@router.post(
+    "/external-knowledge/resources",
+    status_code=201,
+    summary="Add a knowledge base to a service connection",
+)
+async def create_resource(
+    body: ResourceCreateBody, user: Any = Depends(current_user), server: Any = Depends(get_server)
+) -> dict[str, Any]:
+    return _run(
+        lambda: _service(server).create_source(
+            user_id=user.id, kind="", endpoint="", **body.model_dump()
+        )
+    )

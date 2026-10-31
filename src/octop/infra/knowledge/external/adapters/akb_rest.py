@@ -94,7 +94,7 @@ async def search(
     payload = await post_json(
         _url(spec),
         headers=_ref_headers(spec, creds),
-        payload={"question": query, "topK": capped},
+        payload={"question": query, "topK": capped, "knowledgeBaseId": spec.ref},
         timeout_seconds=spec.timeout_seconds,
         origin=ORIGIN,
         status_map=_STATUS_MAP,

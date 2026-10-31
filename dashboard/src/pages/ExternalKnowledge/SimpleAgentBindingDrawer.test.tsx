@@ -58,7 +58,11 @@ it("binds a host-generated reference without requiring or returning a browser pr
       screen.getByText("externalKnowledge.simple.generate").closest("button"),
     ).not.toBeDisabled(),
   );
-  fireEvent.mouseDown(screen.getByRole("combobox"));
+  fireEvent.mouseDown(
+    screen.getByRole("combobox", {
+      name: "externalKnowledge.simple.systemAgent",
+    }),
+  );
   fireEvent.click(await screen.findByText("Alpha · alpha"));
   fireEvent.click(screen.getByText("externalKnowledge.simple.generate"));
   await screen.findByText("public-kid");

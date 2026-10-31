@@ -3,6 +3,20 @@ import { knowledgePathParent, normalizeKnowledgePath } from "./knowledgePath";
 
 /** Deep-link into Knowledge Bases for a citation. */
 export function knowledgeCitationHref(citation: KnowledgeCitation): string {
+  if (citation.sourceId) {
+    try {
+      const url = new URL(citation.url || "");
+      if (
+        ["https:", "http:"].includes(url.protocol) &&
+        !url.username &&
+        !url.password
+      )
+        return url.href;
+    } catch {
+      /* A source may not provide a document URL. */
+    }
+    return "/external-knowledge";
+  }
   const params = new URLSearchParams();
   if (citation.kbId) params.set("kb", citation.kbId);
   if (citation.docId) params.set("doc", citation.docId);

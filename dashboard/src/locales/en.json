@@ -82,6 +82,10 @@
     "notImplemented": "This page is under construction."
   },
   "apiErrors": {
+    "EXTERNAL_KNOWLEDGE_TIMEOUT": "External knowledge retrieval timed out. Retry or check the connection.",
+    "EXTERNAL_KNOWLEDGE_UNAVAILABLE": "External knowledge service is unavailable. Check the connection and service status.",
+    "EXTERNAL_KNOWLEDGE_PROTOCOL": "The external knowledge response is invalid or exceeds the response limit.",
+    "EXTERNAL_KNOWLEDGE_INVALID_CONFIG": "External knowledge configuration is invalid. Check the endpoint, resource identifier and retrieval tool.",
     "AUTH_FAILED": "Authentication failed.",
     "TOKEN_EXPIRED": "Session expired. Please sign in again.",
     "SETUP_REQUIRED": "Initial setup is required.",
@@ -6847,6 +6851,14 @@
     }
   },
   "externalKnowledge": {
+    "needsAttention": "Configuration needs attention",
+    "resourceCount": "Knowledge bases",
+    "connection": "Service connection",
+    "connectionHelp": "Reuse one connection across knowledge bases; credentials and Agent identities belong to the connection.",
+    "newConnection": "Create a connection",
+    "catalogAgent": "Select Agent for catalog",
+    "checkStatus": "Checks by Agent",
+    "notVerified": "Retrieval not verified",
     "title": "External knowledge sources",
     "description": "Connect third-party knowledge bases (AKB, RAGFlow, WeKnora, or any standard retrieval endpoint) and fuse their passages into Octop retrieval.",
     "new": "New source",
@@ -6965,6 +6977,7 @@
       "bindingHelp": "Select the Octop Agent or local knowledge base that can use this source. This configures source availability; service credentials do not require an Agent identity binding or private key."
     },
     "simple": {
+      "runtimeMissingNative": "Identity service is unavailable. Check backend logs and the key store.",
       "title": "Bind Agent · {{name}}",
       "stepGenerate": "Generate a key pair",
       "stepGenerateHelp": "Generate an independent key on the host, download the public key and copy its Agent ID. Private keys never return to the browser.",

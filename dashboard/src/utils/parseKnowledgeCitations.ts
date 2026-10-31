@@ -9,6 +9,8 @@ export type KnowledgeCitation = {
   filename: string;
   /** Workspace-relative path inside the KB when present (new markers). */
   path?: string;
+  sourceId?: string;
+  url?: string;
 };
 
 const CITATIONS_MARKER_RE =
@@ -26,6 +28,9 @@ function asCitation(raw: unknown): KnowledgeCitation | null {
     docId,
     filename: String(row.filename ?? "").trim() || docId,
     ...(path ? { path } : {}),
+    ...(row.source_id
+      ? { sourceId: String(row.source_id), url: String(row.url ?? "") }
+      : {}),
   };
 }
 

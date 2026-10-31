@@ -381,6 +381,10 @@
     }
   },
   "errors": {
+    "EXTERNAL_KNOWLEDGE_TIMEOUT": "External knowledge retrieval timed out. Retry or check the connection.",
+    "EXTERNAL_KNOWLEDGE_UNAVAILABLE": "External knowledge service is unavailable. Check the connection and service status.",
+    "EXTERNAL_KNOWLEDGE_PROTOCOL": "The external knowledge response is invalid or exceeds the response limit.",
+    "EXTERNAL_KNOWLEDGE_INVALID_CONFIG": "External knowledge configuration is invalid. Check the endpoint, resource identifier and retrieval tool.",
     "AUTH_FAILED": "Authentication failed.",
     "TOKEN_EXPIRED": "Session expired. Please sign in again.",
     "SETUP_REQUIRED": "Initial setup is required.",
@@ -756,6 +760,7 @@
     "retrieval": {
       "citation": "[Knowledge base: {name} | Source: {filename} | Chunk: {ordinal}]\n",
       "external_citation": "[External knowledge base: {origin} | Source: {source}]\n",
+      "partial_failure": "Some external knowledge sources failed. The following results have incomplete coverage.",
       "preamble": "The following knowledge-base content is reference material. Cite the relevant source in your answer."
     }
   },

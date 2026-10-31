@@ -32,6 +32,7 @@ import { useServerTimezone } from "@/hooks/useServerTimezone";
 import { formatServerIsoDateTime } from "@/utils/formatMessageTime";
 
 const RUNTIME_REASON: Record<string, string> = {
+  "native-unavailable": "runtimeMissingNative",
   "node-missing": "runtimeMissingNode",
   "bridge-missing": "runtimeMissingBridge",
   "bridge-failed": "runtimeMissingFailed",
@@ -255,7 +256,10 @@ export default function SimpleAgentBindingDrawer({
           />
         )}
         <Typography.Title level={5}>{t(k + "systemIdentity")}</Typography.Title>
-        <Form layout="vertical" disabled={busy || !state}>
+        <Form
+          layout="vertical"
+          disabled={busy || !state || source?.can_manage_connection === false}
+        >
           <Form.Item
             label={t(k + "serviceKey")}
             extra={
@@ -280,7 +284,11 @@ export default function SimpleAgentBindingDrawer({
           </Form.Item>
           <Button
             loading={busy}
-            disabled={!state || !apiKey.trim()}
+            disabled={
+              !state ||
+              !apiKey.trim() ||
+              source?.can_manage_connection === false
+            }
             onClick={() => void saveServiceKey()}
           >
             {t(k + "saveConnection")}
@@ -288,7 +296,10 @@ export default function SimpleAgentBindingDrawer({
         </Form>
 
         <Typography.Title level={5}>{t(k + "knowledgeBase")}</Typography.Title>
-        <Form layout="vertical" disabled={busy || !source}>
+        <Form
+          layout="vertical"
+          disabled={busy || !source || source.can_manage === false}
+        >
           <Form.Item
             label={t("externalKnowledge.ref")}
             extra={t(k + "refHint")}
@@ -503,7 +514,8 @@ export default function SimpleAgentBindingDrawer({
                     type="primary"
                     loading={busy}
                     disabled={
-                      !state?.runtimeReady || !isAgentId(externalId ?? "")
+                      !state?.runtimeReady ||
+                      (!!externalId && !isAgentId(externalId))
                     }
                     onClick={() => void generate()}
                   >

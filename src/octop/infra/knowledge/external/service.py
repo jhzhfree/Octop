@@ -13,6 +13,8 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
+from cryptography.fernet import InvalidToken
+
 from octop.infra.connectors.crypto import decrypt_credentials, encrypt_credentials
 from octop.infra.db.repos._base import now_ts
 from octop.infra.db.repos.connectors import ConnectorRepo
@@ -20,6 +22,7 @@ from octop.infra.db.repos.external_knowledge import (
     TARGET_TYPES,
     ExternalKnowledgeRepo,
     ExternalSourceRow,
+    is_reference_conflict,
 )
 from octop.infra.db.repos.secrets import SecretRepo
 from octop.infra.knowledge.akb_identity import OctopIdentity
@@ -116,11 +119,19 @@ class ExternalKnowledgeService:
 
     def credentials_for(self, row: ExternalSourceRow) -> dict[str, Any]:
         """Decrypt credentials, preferring a linked connector instance."""
+        row = self._migrate_row(row)
         blob = row.credential_blob
         if row.instance_id:
             instance = self._connector_repo.get(row.instance_id)
-            if instance is not None and instance.credential_blob:
-                blob = instance.credential_blob
+            if (
+                instance is None
+                or instance.status != "active"
+                or (instance.user_id != row.connection_owner_user_id and not instance.shared)
+            ):
+                raise ExternalSourceError(
+                    "FORBIDDEN", "connector is not available", origin=row.kind
+                )
+            blob = instance.credential_blob
         if not blob:
             raise ExternalSourceError(
                 "INVALID_ARGUMENT", "credentials are missing", origin=row.kind
@@ -132,7 +143,9 @@ class ExternalKnowledgeService:
                 for field in ("agent_identity", "auth_type"):
                     if field in own:
                         result[field] = own[field]
+            result["agent_identity"] = self.identity_config(row)
             result["auth_type"] = self.auth_type(row)
+            result["_secret_repo"] = self._secret_repo
             return result
         except Exception as exc:  # noqa: BLE001 - never leak key material
             logger.warning("external knowledge credentials unreadable for source=%s", row.source_id)
@@ -140,16 +153,29 @@ class ExternalKnowledgeService:
                 "INVALID_CREDENTIALS", "stored credentials could not be read", origin=row.kind
             ) from exc
 
-    def auth_type(self, row: ExternalSourceRow) -> str:
+    def _migrate_row(self, row: ExternalSourceRow) -> ExternalSourceRow:
+        if row.auth_type != "legacy":
+            return row
         own = (
             decrypt_credentials(self._secret_repo, row.credential_blob)
             if row.credential_blob
             else {}
         )
-        mode = own.get("auth_type")
-        if mode is None:
-            mode = "agent" if own.get("agent_identity", {}).get("simple") else "service"
-        return self._validate_auth_type(str(mode), row.kind)
+        config = own.pop("agent_identity", {})
+        explicit_mode = own.pop("auth_type", None)
+        if explicit_mode is None and config and not config.get("simple"):
+            raise ExternalSourceError(
+                "INVALID_CREDENTIALS",
+                "legacy identity configuration requires an explicit authentication choice",
+            )
+        mode = explicit_mode or ("agent" if config.get("simple") else "service")
+        self._validate_auth_type(mode, row.kind)
+        self._repo.import_identity(row, mode, encrypt_credentials(self._secret_repo, own), config)
+        return self._repo.get(row.source_id) or row
+
+    def auth_type(self, row: ExternalSourceRow) -> str:
+        row = self._migrate_row(row)
+        return self._validate_auth_type(row.auth_type, row.kind)
 
     @staticmethod
     def _validate_auth_type(mode: str, kind: str) -> str:
@@ -170,28 +196,37 @@ class ExternalKnowledgeService:
                 {"target_type": binding.target_type, "target_id": binding.target_id}
             )
         for row in rows:
-            spec = self.to_spec(row)
+            try:
+                row = self._migrate_row(row)
+                public = self._public_source(row, self.to_spec(row))
+            except (ExternalSourceError, InvalidToken, ValueError):
+                public = self._public_source(row, self.to_spec(row), unavailable=True)
             result.append(
                 {
-                    **self._public_source(row, spec),
+                    **public,
                     "can_manage": is_admin or row.owner_user_id == user_id,
+                    "can_manage_connection": is_admin or row.connection_owner_user_id == user_id,
                     "bindings": bindings.get(row.source_id, []),
                 }
             )
         return result
 
-    def _public_source(self, row: ExternalSourceRow, spec: ExternalSourceSpec) -> dict[str, Any]:
+    def _public_source(
+        self, row: ExternalSourceRow, spec: ExternalSourceSpec, *, unavailable: bool = False
+    ) -> dict[str, Any]:
         """Public projection: no credentials, no key material."""
         identity_ready = False
         api_key_header = API_KEY_HEADERS[0]
+        config: dict[str, Any] = {}
         try:
+            if unavailable:
+                raise ExternalSourceError("INVALID_CREDENTIALS", "configuration requires attention")
             credentials = self.credentials_for(row)
             has_credentials = bool(credentials.get("api_key"))
             config = credentials.get("agent_identity", {})
-            identity_ready = (
-                self.auth_type(row) == "agent"
-                and bool(config.get("simple"))
-                and bool(config.get("agents"))
+            identity_ready = self.auth_type(row) == "agent" and any(
+                check["agent_id"] and check["status"] == "success" and check["stage"] == "identity"
+                for check in self._repo.checks(row.connection_id, row.source_id)
             )
             stored = str(credentials.get("api_key_header") or "")
             if stored in API_KEY_HEADERS:
@@ -199,8 +234,21 @@ class ExternalKnowledgeService:
         except ExternalSourceError:
             has_credentials = False
         return {
-            "auth_type": self.auth_type(row),
+            "auth_type": self.auth_type(row) if not unavailable else None,
+            "needs_attention": unavailable
+            or (
+                row.kind == "akb-mcp"
+                and bool(row.tool_name)
+                and row.tool_name not in {"knowledge_search", "knowledge_query"}
+            ),
+            "connection_enabled": row.connection_enabled,
+            "connection_id": row.connection_id,
+            "revision": row.revision,
+            "resource_revision": row.resource_revision,
+            "checks": self._repo.checks(row.connection_id, row.source_id),
             "identity_ready": identity_ready,
+            "identity_configured": bool(config.get("agents")) if has_credentials else False,
+            "runtime_ready": True,
             "api_key_header": api_key_header,
             "source_id": row.source_id,
             "display_name": row.display_name,
@@ -226,17 +274,8 @@ class ExternalKnowledgeService:
         }
 
     def identity_config(self, row: ExternalSourceRow) -> dict[str, Any]:
-        if not row.credential_blob:
-            return {}
-        try:
-            config = decrypt_credentials(self._secret_repo, row.credential_blob).get(
-                "agent_identity", {}
-            )
-            return config if isinstance(config, dict) else {}
-        except Exception as exc:
-            raise ExternalSourceError(
-                "INVALID_CREDENTIALS", "stored identity configuration could not be read"
-            ) from exc
+        row = self._migrate_row(row)
+        return self._repo.identity(row)
 
     def save_identity_config(
         self,
@@ -246,20 +285,13 @@ class ExternalKnowledgeService:
         agent_id: str | None = None,
         bound: bool = True,
     ) -> None:
-        own = (
-            decrypt_credentials(self._secret_repo, row.credential_blob)
-            if row.credential_blob
-            else {}
-        )
-        own["agent_identity"] = config
-        blob = encrypt_credentials(self._secret_repo, own)
-        saved = (
-            self._repo.compare_replace_identity_binding(
-                row.source_id, row.credential_blob, blob, agent_id, bound=bound
-            )
-            if agent_id is not None
-            else self._repo.compare_replace_credentials(row.source_id, row.credential_blob, blob)
-        )
+        row = self._migrate_row(row)
+        try:
+            saved = self._repo.save_identity(row, config, agent_id, bound=bound)
+        except Exception as exc:
+            if not is_reference_conflict(exc):
+                raise
+            saved = False
         if not saved:
             from octop.infra.errors import ErrorCode, OctopError
 
@@ -275,6 +307,7 @@ class ExternalKnowledgeService:
         api_key: str = "",
         api_key_header: str = "",
         auth_type: str = "service",
+        connection_id: str = "",
         instance_id: str = "",
         ref: str = "",
         top_k: int = DEFAULT_TOP_K,
@@ -288,11 +321,38 @@ class ExternalKnowledgeService:
         tool_arguments: Any = None,
         shared: bool = False,
     ) -> dict[str, Any]:
+        if connection_id:
+            connection = self._repo.connection(connection_id)
+            if (
+                connection is None
+                or not connection["enabled"]
+                or (connection["owner_user_id"] != user_id and not connection["shared"])
+            ):
+                raise ExternalSourceError("FORBIDDEN", "connection is not available")
+            kind = str(connection["kind"])
+            endpoint = str(connection["endpoint"])
+            instance_id = str(connection["instance_id"])
+            auth_type = str(connection["auth_type"])
+            allow_insecure_http = bool(connection["allow_insecure_http"])
+            if api_key:
+                raise ExternalSourceError(
+                    "INVALID_ARGUMENT",
+                    "reused connection credentials must be managed on the connection",
+                )
         if kind not in SOURCE_KINDS:
             raise ExternalSourceError("INVALID_ARGUMENT", f"unsupported kind: {kind}")
+        if (
+            kind == "akb-mcp"
+            and tool_name
+            and tool_name not in {"knowledge_search", "knowledge_query"}
+        ):
+            raise ExternalSourceError("INVALID_ARGUMENT", "unsupported AKB retrieval tool")
         name = (display_name or "").strip()
         if not name:
             raise ExternalSourceError("INVALID_ARGUMENT", "display_name is required")
+        from octop.infra.knowledge.external.http import validate_endpoint
+
+        endpoint = validate_endpoint(endpoint, allow_insecure_http=allow_insecure_http)
         if not (endpoint or "").strip():
             raise ExternalSourceError("INVALID_ARGUMENT", "endpoint is required")
         if timeout_ms <= 0 or timeout_ms > int(MAX_TIMEOUT_SECONDS * 1000):
@@ -302,11 +362,16 @@ class ExternalKnowledgeService:
         if not 0.0 <= min_score <= 1.0:
             raise ExternalSourceError("INVALID_ARGUMENT", "min_score must be within [0, 1]")
         self._validate_auth_type(auth_type, kind)
-        payload: dict[str, Any] = {"auth_type": auth_type}
+        payload: dict[str, Any] = {}
         blob: bytes | None = None
-        if instance_id:
-            if self._connector_repo.get(instance_id) is None:
-                raise ExternalSourceError("INVALID_ARGUMENT", "connector instance does not exist")
+        if instance_id and not connection_id:
+            instance = self._connector_repo.get(instance_id)
+            if (
+                instance is None
+                or instance.status != "active"
+                or (instance.user_id != user_id and not instance.shared)
+            ):
+                raise ExternalSourceError("FORBIDDEN", "connector is not available")
         elif api_key.strip():
             payload["api_key"] = api_key.strip()
             scheme = _normalize_api_key_header(api_key_header)
@@ -333,9 +398,15 @@ class ExternalKnowledgeService:
             tool_arguments=_dump_tool_arguments(tool_arguments),
             shared=shared,
             credential_blob=blob,
+            auth_type=auth_type,
+            connection_id=connection_id,
         )
         row = self._require_get(source_id)
-        return self._public_source(row, self.to_spec(row))
+        return {
+            **self._public_source(row, self.to_spec(row)),
+            "can_manage": True,
+            "can_manage_connection": row.connection_owner_user_id == user_id,
+        }
 
     def update_source(
         self,
@@ -346,7 +417,34 @@ class ExternalKnowledgeService:
         **fields: Any,
     ) -> dict[str, Any]:
         row = self._require_manage(source_id, user_id=user_id, is_admin=is_admin)
-        if self.identity_config(row).get("simple") and (
+        resource_revision = fields.pop("resource_revision", None)
+        if resource_revision is not None and resource_revision != row.resource_revision:
+            from octop.infra.errors import ErrorCode, OctopError
+
+            raise OctopError.localized(ErrorCode.AGENT_IDENTITY_CONFLICT)
+        revision = fields.pop("revision", None)
+        if revision is not None and revision != row.revision:
+            from octop.infra.errors import ErrorCode, OctopError
+
+            raise OctopError.localized(ErrorCode.AGENT_IDENTITY_CONFLICT)
+        if (
+            not is_admin
+            and row.connection_owner_user_id != user_id
+            and any(
+                k in fields
+                for k in (
+                    "kind",
+                    "endpoint",
+                    "api_key",
+                    "api_key_header",
+                    "auth_type",
+                    "allow_insecure_http",
+                    "shared",
+                )
+            )
+        ):
+            raise ExternalSourceError("FORBIDDEN", "connection management permission is required")
+        if self.identity_config(row).get("agents") and (
             (fields.get("kind") is not None and fields["kind"] != row.kind)
             or (
                 fields.get("endpoint") is not None
@@ -371,6 +469,12 @@ class ExternalKnowledgeService:
         forbidden = fields.pop("forbidden_arguments", None)
         read_tools = fields.pop("read_tools", None)
         tool_name = fields.pop("tool_name", None)
+        if (
+            (kind or row.kind) == "akb-mcp"
+            and tool_name
+            and tool_name not in {"knowledge_search", "knowledge_query"}
+        ):
+            raise ExternalSourceError("INVALID_ARGUMENT", "unsupported AKB retrieval tool")
         tool_arguments = fields.pop("tool_arguments", None)
         shared = fields.pop("shared", None)
         enabled = fields.pop("enabled", None)
@@ -392,44 +496,49 @@ class ExternalKnowledgeService:
                 if row.credential_blob
                 else {}
             )
-            merged = {**previous, "auth_type": mode}
-            if mode == "service":
-                merged.pop("agent_identity", None)
+            merged = {**previous}
             if new_key and not row.instance_id:
                 merged["api_key"] = new_key
             if scheme is not None:
                 merged["api_key_header"] = scheme
             blob = encrypt_credentials(self._secret_repo, merged)
             replace_credentials = True
-            if "agent_identity" in previous or auth_type is not None:
-                if not self._repo.compare_replace_credentials(source_id, row.credential_blob, blob):
-                    from octop.infra.errors import ErrorCode, OctopError
+        try:
+            self._repo.update(
+                source_id,
+                kind=kind,
+                display_name=fields.get("display_name"),
+                endpoint=fields.get("endpoint"),
+                ref=fields.get("ref"),
+                top_k=fields.get("top_k"),
+                min_score=fields.get("min_score"),
+                timeout_ms=fields.get("timeout_ms"),
+                allow_insecure_http=(None if allow_insecure is None else bool(allow_insecure)),
+                selector_argument=fields.get("selector_argument"),
+                forbidden_arguments=(None if forbidden is None else _join_list(forbidden)),
+                read_tools=None if read_tools is None else _join_list(read_tools),
+                tool_name=None if tool_name is None else str(tool_name).strip(),
+                tool_arguments=None
+                if tool_arguments is None
+                else _dump_tool_arguments(tool_arguments),
+                enabled=None if enabled is None else bool(enabled),
+                shared=None if shared is None else bool(shared),
+                credential_blob=blob,
+                replace_credentials=replace_credentials,
+                auth_type=mode if auth_type is not None else None,
+                expected_revision=row.revision,
+                expected_resource_revision=row.resource_revision,
+            )
+        except ValueError as exc:
+            from octop.infra.errors import ErrorCode, OctopError
 
-                    raise OctopError.localized(ErrorCode.AGENT_IDENTITY_CONFLICT)
-                replace_credentials = False
-                blob = None
-        self._repo.update(
-            source_id,
-            kind=kind,
-            display_name=fields.get("display_name"),
-            endpoint=fields.get("endpoint"),
-            ref=fields.get("ref"),
-            top_k=fields.get("top_k"),
-            min_score=fields.get("min_score"),
-            timeout_ms=fields.get("timeout_ms"),
-            allow_insecure_http=(None if allow_insecure is None else bool(allow_insecure)),
-            selector_argument=fields.get("selector_argument"),
-            forbidden_arguments=(None if forbidden is None else _join_list(forbidden)),
-            read_tools=None if read_tools is None else _join_list(read_tools),
-            tool_name=None if tool_name is None else str(tool_name).strip(),
-            tool_arguments=None if tool_arguments is None else _dump_tool_arguments(tool_arguments),
-            enabled=None if enabled is None else bool(enabled),
-            shared=None if shared is None else bool(shared),
-            credential_blob=blob,
-            replace_credentials=replace_credentials,
-        )
+            raise OctopError.localized(ErrorCode.AGENT_IDENTITY_CONFLICT) from exc
         updated = self._require_get(source_id)
-        return self._public_source(updated, self.to_spec(updated))
+        return {
+            **self._public_source(updated, self.to_spec(updated)),
+            "can_manage": True,
+            "can_manage_connection": is_admin or updated.connection_owner_user_id == user_id,
+        }
 
     def delete_source(self, source_id: str, *, user_id: int, is_admin: bool) -> None:
         self._require_manage(source_id, user_id=user_id, is_admin=is_admin)
@@ -447,12 +556,13 @@ class ExternalKnowledgeService:
         target_id: str,
         enabled: bool = True,
     ) -> dict[str, Any]:
-        self._require_manage(source_id, user_id=user_id, is_admin=is_admin)
+        self._require_use(source_id, user_id=user_id, is_admin=is_admin)
         if target_type not in TARGET_TYPES:
             raise ExternalSourceError("INVALID_ARGUMENT", f"unsupported target type: {target_type}")
         target = (target_id or "").strip()
         if not target:
             raise ExternalSourceError("INVALID_ARGUMENT", "target_id is required")
+        self._assert_target(target_type, target, user_id=user_id, is_admin=is_admin)
         self._repo.set_binding(
             source_id=source_id,
             target_type=target_type,
@@ -475,7 +585,8 @@ class ExternalKnowledgeService:
         target_type: str,
         target_id: str,
     ) -> None:
-        self._require_manage(source_id, user_id=user_id, is_admin=is_admin)
+        self._require_use(source_id, user_id=user_id, is_admin=is_admin)
+        self._assert_target(target_type, target_id, user_id=user_id, is_admin=is_admin)
         self._repo.delete_binding(source_id=source_id, target_type=target_type, target_id=target_id)
 
     def list_bindings(self, source_id: str) -> list[dict[str, Any]]:
@@ -526,12 +637,24 @@ class ExternalKnowledgeService:
         spec = self.to_spec(row)
         creds = self.credentials_for(row)
         try:
-            result = await adapter.probe(spec, creds)
+            async with asyncio.timeout(spec.timeout_seconds):
+                result = await adapter.probe(spec, creds)
+        except TimeoutError:
+            self._repo.record_check(
+                row.connection_id, row.source_id, "", "connection", "failed", "TIMEOUT"
+            )
+            return {"ok": False, "code": "TIMEOUT", "message": "connection deadline exceeded"}
         except ExternalSourceError as exc:
+            self._repo.record_check(
+                row.connection_id, row.source_id, "", "connection", "failed", exc.code
+            )
             return {"ok": False, "code": exc.code, "message": str(exc)}
         except Exception:  # noqa: BLE001 - upstreams are untrusted
             logger.warning("external knowledge probe failed source=%s", source_id, exc_info=True)
             return {"ok": False, "code": "UNEXPECTED", "message": "probe failed"}
+        self._repo.record_check(
+            row.connection_id, row.source_id, "", "connection", "success" if result.ok else "failed"
+        )
         return {
             "auth_type": self.auth_type(row),
             "agent_identity_required": self.auth_type(row) == "agent",
@@ -578,7 +701,13 @@ class ExternalKnowledgeService:
     ) -> dict[str, Any]:
         row = self._require_manage(source_id, user_id=user_id, is_admin=is_admin)
         spec = self.to_spec(row)
-        result = await self._search_spec(spec, query, top_k=top_k or spec.top_k)
+        try:
+            async with asyncio.timeout(spec.timeout_seconds):
+                result = await self._search_spec(spec, query, top_k=top_k or spec.top_k)
+        except TimeoutError as exc:
+            raise ExternalSourceError(
+                "TIMEOUT", "retrieval deadline exceeded", origin=row.kind
+            ) from exc
         return {
             "source_id": source_id,
             "chunks": [self._chunk_public(chunk) for chunk in result.chunks],
@@ -590,6 +719,8 @@ class ExternalKnowledgeService:
         self, spec: ExternalSourceSpec, query: str, *, top_k: int
     ) -> ExternalSearchResult:
         row = self._repo.get(spec.binding_id)
+        if row is not None:
+            row = self._migrate_row(row)
         if row is None:
             raise ExternalSourceError(
                 "NOT_FOUND", "external knowledge source does not exist", origin=spec.kind
@@ -598,6 +729,14 @@ class ExternalKnowledgeService:
         if adapter is None:
             raise ExternalSourceError(
                 "INVALID_ARGUMENT", f"unsupported kind: {spec.kind}", origin=spec.kind
+            )
+        if not row.enabled or not row.connection_enabled:
+            raise ExternalSourceError("FORBIDDEN", "source is disabled", origin=row.kind)
+        if isinstance(spec.octop_identity, OctopIdentity):
+            self._require_use(
+                row.source_id,
+                user_id=int(spec.octop_identity.user_id),
+                is_admin=spec.octop_identity.is_admin,
             )
         creds = self.credentials_for(row)
         if self.auth_type(row) == "agent":
@@ -612,22 +751,49 @@ class ExternalKnowledgeService:
 
             try:
                 result = await search_as_agent(spec, creds, query, top_k=top_k)
-            except (OctopError, ExternalSourceError):
-                self._record_runtime_verification(row, spec, creds["agent_identity"], "failure")
+            except (OctopError, ExternalSourceError) as exc:
+                self._record_runtime_verification(
+                    row, spec, creds["agent_identity"], "failure", str(exc.code)
+                )
                 raise
             self._record_runtime_verification(row, spec, creds["agent_identity"], "success")
             return result
-        return await adapter.search(
-            replace(spec, octop_identity=None),
-            creds,
-            query,
-            top_k=top_k,
+        try:
+            result = await adapter.search(
+                replace(spec, octop_identity=None),
+                creds,
+                query,
+                top_k=top_k,
+            )
+        except ExternalSourceError as exc:
+            self._repo.record_check(
+                row.connection_id,
+                row.source_id,
+                "",
+                "retrieval",
+                "failed",
+                exc.code,
+                expected_revision=row.revision,
+            )
+            raise
+        self._repo.record_check(
+            row.connection_id,
+            row.source_id,
+            "",
+            "retrieval",
+            "success",
+            expected_revision=row.revision,
         )
+        return result
 
     def _record_runtime_verification(
-        self, row: ExternalSourceRow, spec: ExternalSourceSpec, config: dict[str, Any], status: str
+        self,
+        row: ExternalSourceRow,
+        spec: ExternalSourceSpec,
+        config: dict[str, Any],
+        status: str,
+        code: str = "",
     ) -> None:
-        from octop.infra.errors import OctopError
 
         identity = spec.octop_identity
         if not isinstance(identity, OctopIdentity):
@@ -635,13 +801,29 @@ class ExternalKnowledgeService:
         agent = config.get("agents", {}).get(identity.agent_id)
         if not agent:
             return
-        agent["lastVerifiedAt"] = datetime.now(UTC).isoformat()
-        agent["lastVerificationStatus"] = status
-        try:
-            # CAS prevents an in-flight search from restoring a removed or rotated binding.
-            self.save_identity_config(row, config)
-        except OctopError:
-            logger.info("Identity state changed during retrieval for source=%s", row.source_id)
+        if agent.get("keyReference"):
+            self._repo.adopt_legacy_key(
+                row.connection_id,
+                identity.agent_id,
+                agent["externalAgentId"],
+                agent["keyReference"],
+            )
+        self._repo.record_check(
+            row.connection_id,
+            row.source_id,
+            identity.agent_id,
+            "retrieval",
+            status,
+            code,
+            expected_revision=row.revision,
+        )
+        self._repo.record_verification(
+            row.connection_id,
+            identity.agent_id,
+            agent["externalAgentId"],
+            status,
+            datetime.now(UTC).isoformat(),
+        )
 
     async def retrieve(
         self,
@@ -654,16 +836,27 @@ class ExternalKnowledgeService:
         """Search every enabled source and fuse the results by rank."""
         if not query.strip() or not specs or limit <= 0:
             return {"chunks": [], "warnings": []}
-        runtime_specs = [
-            replace(spec, octop_identity=octop_identity)
-            if spec.kind in {"akb-rest", "akb-mcp"}
-            else spec
-            for spec in specs
-        ]
-        outcomes = await asyncio.gather(
-            *[self._search_spec(spec, query, top_k=spec.top_k) for spec in runtime_specs],
-            return_exceptions=True,
-        )
+        runtime_specs = [replace(spec, octop_identity=octop_identity) for spec in specs]
+        semaphore = asyncio.Semaphore(4)
+
+        async def search_one(spec: ExternalSourceSpec) -> ExternalSearchResult:
+            try:
+                async with asyncio.timeout(min(spec.timeout_seconds, MAX_TIMEOUT_SECONDS)):
+                    async with semaphore:
+                        return await self._search_spec(spec, query, top_k=spec.top_k)
+            except TimeoutError as exc:
+                raise ExternalSourceError(
+                    "TIMEOUT", "retrieval deadline exceeded", origin=spec.kind
+                ) from exc
+
+        if len(runtime_specs) > 16:
+            raise ExternalSourceError("INVALID_ARGUMENT", "at most 16 sources may be queried")
+        from octop.infra.knowledge.external.http import pooled_requests
+
+        async with pooled_requests():
+            outcomes = await asyncio.gather(
+                *[search_one(spec) for spec in runtime_specs], return_exceptions=True
+            )
         groups: list[list[ExternalChunk]] = []
         warnings: list[SourceWarning] = []
         for spec, outcome in zip(runtime_specs, outcomes, strict=True):
@@ -674,17 +867,32 @@ class ExternalKnowledgeService:
                     code = outcome.code
                     message = str(outcome)
                 else:
-                    logger.warning(
-                        "external retrieval failed source=%s", spec.binding_id, exc_info=outcome
+                    from octop.infra.errors import OctopError
+
+                    if isinstance(outcome, OctopError):
+                        code = str(outcome.code.value)
+                        message = "Agent identity is not ready"
+                warnings.append(
+                    SourceWarning(
+                        origin=spec.kind, code=code, message=message, source_id=spec.binding_id
                     )
-                warnings.append(SourceWarning(origin=spec.kind, code=code, message=message))
+                )
                 continue
-            groups.append(outcome.chunks)
+            groups.append([replace(chunk, source_id=spec.binding_id) for chunk in outcome.chunks])
             warnings.extend(outcome.warnings)
         fused = rrf_fuse(
-            groups, limit=limit, key=lambda chunk: f"{chunk.origin}:{chunk.dedupe_key()}"
+            groups,
+            limit=limit,
+            key=lambda chunk: f"{chunk.source_id}:{chunk.ref}:{chunk.dedupe_key()}",
         )
         return {
+            "status": "partial"
+            if warnings and fused
+            else "failed"
+            if warnings and len(warnings) == len(runtime_specs)
+            else "ok"
+            if fused
+            else "empty",
             "chunks": [self._chunk_public(chunk) for chunk in fused],
             "warnings": [vars(warning) for warning in warnings],
         }
@@ -695,6 +903,7 @@ class ExternalKnowledgeService:
     def _chunk_public(chunk: ExternalChunk) -> dict[str, Any]:
         return {
             "id": chunk.id,
+            "source_id": chunk.source_id,
             "content": chunk.content,
             "score": chunk.score,
             "source": chunk.source,
@@ -707,7 +916,31 @@ class ExternalKnowledgeService:
         row = self._repo.get(source_id)
         if row is None:
             raise ExternalSourceError("NOT_FOUND", "external knowledge source does not exist")
+        try:
+            return self._migrate_row(row)
+        except (InvalidToken, ValueError) as exc:
+            raise ExternalSourceError(
+                "INVALID_CREDENTIALS", "stored configuration requires repair"
+            ) from exc
+
+    def _require_use(self, source_id: str, *, user_id: int, is_admin: bool) -> ExternalSourceRow:
+        row = self._require_get(source_id)
+        if not row.connection_enabled or (
+            not is_admin
+            and (
+                (row.owner_user_id != user_id and not row.shared)
+                or (row.connection_owner_user_id != user_id and not row.connection_shared)
+            )
+        ):
+            raise ExternalSourceError("FORBIDDEN", "source is not available")
         return row
+
+    def _assert_target(
+        self, target_type: str, target_id: str, *, user_id: int, is_admin: bool
+    ) -> None:
+        owner = self._repo.target_owner(target_type, target_id)
+        if owner is None or (not is_admin and owner != user_id):
+            raise ExternalSourceError("FORBIDDEN", "target is not available")
 
     def _require_manage(self, source_id: str, *, user_id: int, is_admin: bool) -> ExternalSourceRow:
         row = self._require_get(source_id)

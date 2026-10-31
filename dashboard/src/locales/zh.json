@@ -82,6 +82,10 @@
     "notImplemented": "页面建设中。"
   },
   "apiErrors": {
+    "EXTERNAL_KNOWLEDGE_TIMEOUT": "外部知识库检索超时，请稍后重试或检查连接。",
+    "EXTERNAL_KNOWLEDGE_UNAVAILABLE": "外部知识库暂不可用，请检查连接与服务状态。",
+    "EXTERNAL_KNOWLEDGE_PROTOCOL": "外部知识库返回的协议数据无效或超过限制。",
+    "EXTERNAL_KNOWLEDGE_INVALID_CONFIG": "外部知识库配置无效，请检查地址、知识库编码和检索工具。",
     "AUTH_FAILED": "认证失败。",
     "TOKEN_EXPIRED": "登录已过期，请重新登录。",
     "SETUP_REQUIRED": "需要完成初始设置。",
@@ -6847,6 +6851,14 @@
     }
   },
   "externalKnowledge": {
+    "needsAttention": "待处理：请修复配置",
+    "resourceCount": "知识库数量",
+    "connection": "服务连接",
+    "connectionHelp": "同一连接可供多个外部知识库复用，服务 Key 和 Agent 身份随连接管理。",
+    "newConnection": "创建新连接",
+    "catalogAgent": "选择用于选库的 Agent",
+    "checkStatus": "检查结果（按 Agent）",
+    "notVerified": "尚未验证检索",
     "title": "外部知识库",
     "description": "对接第三方知识库（AKB、RAGFlow、WeKnora 或任意标准检索接口），并把检索结果与本地知识库融合。",
     "new": "新建来源",
@@ -6964,6 +6976,7 @@
       "bindingHelp": "选择可使用此来源的 Octop Agent 或本地知识库。这是来源的使用范围配置，服务凭证无需绑定 Agent 身份或导入私钥。"
     },
     "simple": {
+      "runtimeMissingNative": "身份服务暂不可用，请检查后端日志和密钥存储。",
       "title": "绑定 Agent · {{name}}",
       "stepGenerate": "生成密钥对",
       "stepGenerateHelp": "在宿主生成独立密钥，下载公钥并复制 Agent ID。私钥不会返回浏览器。",

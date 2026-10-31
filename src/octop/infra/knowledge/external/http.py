@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
@@ -39,6 +42,10 @@ def validate_endpoint(url: str, *, allow_insecure_http: bool = False) -> str:
         )
     if not (parsed.hostname or "").strip():
         raise ExternalSourceError("INVALID_ARGUMENT", "endpoint missing hostname")
+    try:
+        _ = parsed.port
+    except ValueError as exc:
+        raise ExternalSourceError("INVALID_ARGUMENT", "endpoint port is invalid") from exc
     return text.rstrip("/")
 
 
@@ -89,6 +96,9 @@ def drop_api_prefix(url: str, prefix: str) -> str:
     """
     parts = urlsplit(url)
     path = parts.path.rstrip("/")
+    position = path.find(prefix)
+    if position > 0 and (path[position:] == prefix or path[position:].startswith(prefix + "/")):
+        return urlunsplit((parts.scheme, parts.netloc, path[:position], "", ""))
     if path == prefix or path.startswith(prefix + "/"):
         return urlunsplit((parts.scheme, parts.netloc, "", "", ""))
     return url.rstrip("/")
@@ -106,7 +116,22 @@ def _public_target(url: str) -> str:
     return f"{parts.scheme}://{parts.netloc}{parts.path or '/'}"
 
 
-async def _request(
+_CLIENT: ContextVar[httpx.AsyncClient | None] = ContextVar("external_http_client", default=None)
+
+
+@asynccontextmanager
+async def pooled_requests() -> AsyncIterator[None]:
+    async with httpx.AsyncClient(
+        follow_redirects=False, limits=httpx.Limits(max_connections=8, max_keepalive_connections=4)
+    ) as client:
+        token = _CLIENT.set(client)
+        try:
+            yield
+        finally:
+            _CLIENT.reset(token)
+
+
+async def _request_once(
     method: str,
     url: str,
     *,
@@ -122,29 +147,118 @@ async def _request(
         raise ExternalSourceError(
             "INVALID_ARGUMENT", "timeout must be between 0 and 60 seconds", origin=origin
         )
+    from octop.infra.knowledge.external.request_auth import request_headers
+
+    raw_body = (
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode()
+        if method == "POST"
+        else b""
+    )
+    wire_url = str(httpx.URL(url))
+    proof_headers = request_headers(method, wire_url, raw_body)
+    final_headers = {**headers, **proof_headers}
+    if proof_headers:
+        final_headers = {
+            name: value
+            for name, value in final_headers.items()
+            if name.lower() not in {"authorization", "x-octop-identity"}
+        }
+
+    async def read(client: httpx.AsyncClient) -> tuple[int, bytes]:
+        async with client.stream(
+            method,
+            wire_url,
+            headers=final_headers,
+            content=raw_body if method == "POST" else None,
+            timeout=timeout_seconds,
+        ) as response:
+            raw = bytearray()
+            async for chunk in response.aiter_bytes():
+                if len(raw) + len(chunk) > max_bytes:
+                    raise ExternalSourceError(
+                        "RESPONSE_TOO_LARGE", "upstream response exceeds size limit", origin=origin
+                    )
+                raw.extend(chunk)
+            return response.status_code, bytes(raw)
+
     try:
-        async with httpx.AsyncClient(timeout=timeout_seconds, follow_redirects=False) as client:
-            response = await client.request(
-                method, url, headers=headers, json=payload if method == "POST" else None
-            )
+        client = _CLIENT.get()
+        if client is None:
+            async with httpx.AsyncClient(
+                timeout=timeout_seconds, follow_redirects=False
+            ) as temporary:
+                status, raw = await read(temporary)
+        else:
+            status, raw = await read(client)
     except httpx.TimeoutException as exc:
         raise ExternalSourceError("TIMEOUT", "upstream request timed out", origin=origin) from exc
     except httpx.HTTPError as exc:
         raise ExternalSourceError(
             "TRANSPORT_ERROR", "upstream request failed", origin=origin
         ) from exc
-    raw = response.content[: max_bytes + 1]
     body = _decode(raw, max_bytes=max_bytes, origin=origin)
-    if response.status_code >= 400:
+    if status >= 400:
         # The status is safe to surface; upstream messages are not.
         raise ExternalSourceError(
-            _error_code(body, response.status_code, status_map=status_map, code_map=code_map),
-            f"upstream returned HTTP {response.status_code} at {_public_target(url)}",
+            _error_code(body, status, status_map=status_map, code_map=code_map),
+            f"upstream returned HTTP {status} at {_public_target(url)}",
             origin=origin,
         )
     if body is None:
         raise ExternalSourceError("INVALID_JSON", "upstream returned invalid JSON", origin=origin)
     return body
+
+
+async def _request(
+    method: str,
+    url: str,
+    *,
+    headers: dict[str, str],
+    payload: dict[str, Any] | None,
+    timeout_seconds: float,
+    origin: str,
+    max_bytes: int,
+    status_map: Mapping[int, str] | None,
+    code_map: Mapping[str, str] | None,
+) -> Any:
+    rpc = (payload or {}).get("method")
+    read_tool = ((payload or {}).get("params") or {}).get("name") if rpc == "tools/call" else None
+    readonly = (
+        method == "GET"
+        or (rpc in {"initialize", "tools/list"})
+        or (
+            rpc == "tools/call"
+            and read_tool in {"knowledge_search", "knowledge_query", "list_knowledge_bases"}
+        )
+        or (not rpc and origin in {"akb-rest", "ragflow", "weknora", "standard-retrieval"})
+    )
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    for attempt in range(2):
+        try:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                raise ExternalSourceError("TIMEOUT", "retrieval deadline exceeded", origin=origin)
+            async with asyncio.timeout(remaining):
+                return await _request_once(
+                    method,
+                    url,
+                    headers=headers,
+                    payload=payload,
+                    timeout_seconds=min(timeout_seconds, remaining),
+                    origin=origin,
+                    max_bytes=max_bytes,
+                    status_map=status_map,
+                    code_map=code_map,
+                )
+        except TimeoutError as exc:
+            raise ExternalSourceError(
+                "TIMEOUT", "retrieval deadline exceeded", origin=origin
+            ) from exc
+        except ExternalSourceError as exc:
+            if attempt or not readonly or exc.code not in {"RATE_LIMITED", "UPSTREAM_ERROR"}:
+                raise
+            await asyncio.sleep(min(0.1, max(0, deadline - asyncio.get_running_loop().time())))
+    raise AssertionError("unreachable")
 
 
 async def post_json(

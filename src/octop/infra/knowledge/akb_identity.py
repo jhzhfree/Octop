@@ -29,6 +29,7 @@ class OctopIdentity:
     agent_id: str
     trace_id: str = ""
     workload_only: bool = False
+    is_admin: bool = False
 
 
 def delegated_identity_enabled() -> bool:

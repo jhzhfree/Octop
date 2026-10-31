@@ -381,6 +381,10 @@
     }
   },
   "errors": {
+    "EXTERNAL_KNOWLEDGE_TIMEOUT": "外部知识库检索超时，请稍后重试或检查连接。",
+    "EXTERNAL_KNOWLEDGE_UNAVAILABLE": "外部知识库暂不可用，请检查连接与服务状态。",
+    "EXTERNAL_KNOWLEDGE_PROTOCOL": "外部知识库返回的协议数据无效或超过限制。",
+    "EXTERNAL_KNOWLEDGE_INVALID_CONFIG": "外部知识库配置无效，请检查地址、知识库编码和检索工具。",
     "AUTH_FAILED": "认证失败。",
     "TOKEN_EXPIRED": "登录已过期，请重新登录。",
     "SETUP_REQUIRED": "需要完成初始设置。",
@@ -756,6 +760,7 @@
     "retrieval": {
       "citation": "[知识库：{name}｜来源：{filename}｜片段：{ordinal}]\n",
       "external_citation": "[外部知识库：{origin}｜来源：{source}]\n",
+      "partial_failure": "部分外部知识库检索失败，以下结果覆盖不完整。",
       "preamble": "以下知识库内容仅供参考；回答时请引用对应来源。"
     }
   },

@@ -39,3 +39,18 @@ class SecretRepo:
                 "UPDATE secrets SET v = ?, rotated_at = ? WHERE k = ?",
                 (new_value, now_ts(), k),
             )
+
+    def delete(self, k: str) -> None:
+        with self._db.transaction() as conn:
+            conn.execute("DELETE FROM secrets WHERE k=?", (k,))
+
+    def names(self, prefix: str) -> list[str]:
+        with self._db.connect() as conn:
+            rows = conn.execute(
+                "SELECT k FROM secrets WHERE substr(k,1,?)=?", (len(prefix), prefix)
+            ).fetchall()
+        return [str(r["k"]) for r in rows]
+
+    def delete_if_value(self, k: str, expected: bytes) -> None:
+        with self._db.transaction() as conn:
+            conn.execute("DELETE FROM secrets WHERE k=? AND v=?", (k, expected))

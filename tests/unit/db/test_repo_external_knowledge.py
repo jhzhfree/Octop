@@ -8,8 +8,10 @@ import pytest
 
 from octop.infra.db.migrate import run_migrations, schema_baseline_version
 from octop.infra.db.pool import DatabasePool, SqlitePool
+from octop.infra.db.repos.agents import AgentRepo
 from octop.infra.db.repos.connectors import ConnectorRepo
 from octop.infra.db.repos.external_knowledge import ExternalKnowledgeRepo
+from octop.infra.db.repos.knowledge import KnowledgeRepo
 from octop.infra.db.repos.secrets import SecretRepo
 from octop.infra.db.repos.users import UserRepo
 from octop.infra.knowledge.external.service import ExternalKnowledgeService
@@ -74,25 +76,25 @@ def test_tool_choice_and_arguments_survive_the_round_trip(
         endpoint="https://akb.example.com",
         api_key="k",
         ref="HR-POLICY",
-        tool_name="knowledge_query_v2",
+        tool_name="knowledge_query",
         tool_arguments={"mode": "strict", "topK": 99, "bad-name!": "x", "nested": {"a": 1}},
     )
     # Anything the schema would not carry is dropped rather than stored.
-    assert created["tool_name"] == "knowledge_query_v2"
+    assert created["tool_name"] == "knowledge_query"
     assert created["tool_arguments"] == {"mode": "strict", "topK": 99}
 
     updated = service.update_source(
         created["source_id"],
         user_id=owner_id,
         is_admin=False,
-        tool_name="kb_search",
+        tool_name="knowledge_search",
         tool_arguments={},
     )
-    assert updated["tool_name"] == "kb_search"
+    assert updated["tool_name"] == "knowledge_search"
     assert updated["tool_arguments"] == {}
 
     spec = service.to_spec(ExternalKnowledgeRepo(service._repo._db).get(created["source_id"]))
-    assert spec.tool_name == "kb_search"
+    assert spec.tool_name == "knowledge_search"
 
 
 def test_unparsable_tool_arguments_do_not_disable_the_source(
@@ -164,6 +166,10 @@ def test_bindings_round_trip(service: ExternalKnowledgeService, owner_id: int) -
         ref="kb-1",
     )
     source_id = created["source_id"]
+    AgentRepo(service._repo._db).create(agent_id="agent-1", user_id=owner_id, name="Owned Agent")
+    kb = KnowledgeRepo(service._repo._db).create_base(
+        owner_user_id=owner_id, name="Owned Knowledge"
+    )
     service.set_binding(
         source_id,
         user_id=owner_id,
@@ -176,7 +182,7 @@ def test_bindings_round_trip(service: ExternalKnowledgeService, owner_id: int) -
         user_id=owner_id,
         is_admin=False,
         target_type="knowledge_base",
-        target_id="kb-abc",
+        target_id=kb.id,
     )
     assert len(service.list_bindings(source_id)) == 2
 
@@ -315,29 +321,29 @@ def test_identity_and_mount_roll_back_together(db: SqlitePool, owner_id: int) ->
         endpoint="https://akb.example",
         credential_blob=b"old",
     )
+    before = repo.get("atomic")
+    config = {"simple": True, "agents": {"alpha": {"externalAgentId": "external-alpha"}}}
     with db.connect() as conn:
         conn.execute(
             "CREATE TRIGGER reject_identity_mount BEFORE INSERT ON external_knowledge_bindings BEGIN SELECT RAISE(ABORT, 'mount failed'); END"
         )
     with pytest.raises(sqlite3.IntegrityError):
-        repo.compare_replace_identity_binding("atomic", b"old", b"new", "alpha", bound=True)
-    assert repo.get("atomic").credential_blob == b"old"
+        repo.save_identity(before, config, "alpha", bound=True)
+    assert repo.get("atomic").revision == before.revision
     assert repo.list_bindings("atomic") == []
+    assert repo.identity(repo.get("atomic"))["agents"] == {}
     with db.connect() as conn:
         conn.execute("DROP TRIGGER reject_identity_mount")
-    assert repo.compare_replace_identity_binding(
-        "atomic", b"old", b"connected", "alpha", bound=True
-    )
-    # A concurrent caller holding an old snapshot cannot overwrite the map or mount another Agent.
-    assert not repo.compare_replace_identity_binding("atomic", b"old", b"stale", "beta", bound=True)
+    assert repo.save_identity(before, config, "alpha", bound=True)
+    assert not repo.save_identity(before, {"agents": {}}, "beta", bound=True)
     assert [b.target_id for b in repo.list_bindings("atomic")] == ["alpha"]
+    current = repo.get("atomic")
     with db.connect() as conn:
         conn.execute(
             "CREATE TRIGGER reject_identity_unmount BEFORE DELETE ON external_knowledge_bindings BEGIN SELECT RAISE(ABORT, 'unmount failed'); END"
         )
     with pytest.raises(sqlite3.IntegrityError):
-        repo.compare_replace_identity_binding(
-            "atomic", b"connected", b"disconnected", "alpha", bound=False
-        )
-    assert repo.get("atomic").credential_blob == b"connected"
+        repo.save_identity(current, {"agents": {}}, "alpha", bound=False)
+    assert repo.get("atomic").revision == current.revision
+    assert "alpha" in repo.identity(repo.get("atomic"))["agents"]
     assert len(repo.list_bindings("atomic")) == 1

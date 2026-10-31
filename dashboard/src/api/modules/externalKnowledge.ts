@@ -1,6 +1,38 @@
 import { request } from "../request";
 
+export interface ExternalKnowledgeConnection {
+  needs_attention?: boolean;
+  connection_id: string;
+  display_name: string;
+  endpoint: string;
+  kind: string;
+  auth_type: "service" | "agent";
+  allow_insecure_http: boolean;
+  shared: boolean;
+  enabled: boolean;
+  revision: number;
+  resource_count: number;
+  agent_count: number;
+  has_credentials: boolean;
+  can_manage: boolean;
+}
+
 export interface ExternalKnowledgeSource {
+  needs_attention?: boolean;
+  connection_enabled?: boolean;
+  connection_id?: string;
+  revision?: number;
+  resource_revision?: number;
+  can_manage_connection?: boolean;
+  identity_configured?: boolean;
+  runtime_ready?: boolean;
+  checks?: {
+    agent_id: string;
+    stage: string;
+    status: string;
+    code: string;
+    checked_at: number;
+  }[];
   identity_ready?: boolean;
   auth_type?: "service" | "agent";
   api_key_header?: string;
@@ -75,6 +107,7 @@ export interface ExternalKnowledgeBinding {
 }
 
 export interface ExternalSourceCreateBody {
+  connection_id?: string;
   kind: string;
   display_name: string;
   endpoint: string;
@@ -98,9 +131,27 @@ export interface ExternalSourceCreateBody {
 
 export type ExternalSourcePatchBody = Partial<ExternalSourceCreateBody> & {
   enabled?: boolean;
+  revision?: number;
+  resource_revision?: number;
 };
 
 export const externalKnowledgeApi = {
+  connections: () =>
+    request<ExternalKnowledgeConnection[]>("/external-knowledge/connections"),
+  createConnection: (body: Record<string, unknown>) =>
+    request<ExternalKnowledgeConnection>("/external-knowledge/connections", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateConnection: (id: string, body: Record<string, unknown>) =>
+    request<ExternalKnowledgeConnection>(
+      `/external-knowledge/connections/${encodeURIComponent(id)}`,
+      { method: "PATCH", body: JSON.stringify(body) },
+    ),
+  deleteConnection: (id: string) =>
+    request<void>(`/external-knowledge/connections/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
   kinds: () => request<{ kinds: string[] }>("/external-knowledge/kinds"),
 
   list: () => request<ExternalKnowledgeSource[]>("/external-knowledge/sources"),

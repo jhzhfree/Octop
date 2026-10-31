@@ -8,14 +8,10 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
-import json
 import logging
-import os
-import shutil
 import uuid
 from dataclasses import asdict, replace
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -38,39 +34,8 @@ def _invalid() -> OctopError:
     return OctopError.localized(ErrorCode.AGENT_IDENTITY_INVALID)
 
 
-def _bridge_script() -> str | None:
-    """Locates the bundled host bridge, falling back to a global install.
-
-    The checkout depth differs between a source run and an installed layout, so
-    every plausible ancestor is searched instead of one fixed level.
-    """
-    configured = os.environ.get("OCTOP_AGENT_IDENTITY_SDK_BRIDGE", "").strip()
-    if configured:
-        return configured if Path(configured).is_file() else None
-    for parent in list(Path(__file__).resolve().parents)[:8]:
-        candidate = parent / "integrations" / "agent-identity-sdk" / "dist" / "bridge.js"
-        if candidate.is_file():
-            return str(candidate)
-    return shutil.which("akb-agent-identity-bridge")
-
-
-def _sdk_path() -> tuple[str, str] | None:
-    node = shutil.which("node")
-    script = _bridge_script()
-    return (node, script) if node and script else None
-
-
 def _sdk_problem() -> str | None:
-    """Why the host bridge cannot run, for the UI to explain to the operator."""
-    if shutil.which("node") is None:
-        return "node-missing"
-    if _bridge_script() is None:
-        return "bridge-missing"
     return None
-
-
-def _stderr_hint(stderr: bytes, limit: int = 200) -> str:
-    return stderr.decode("utf-8", "replace").strip().replace("\n", " ")[:limit]
 
 
 _PRIVATE_IPV4 = (
@@ -101,14 +66,12 @@ def _sdk_origin(endpoint: str) -> str:
     pasted MCP endpoint has to be stripped. Plain retrieval already tolerates
     that form, and a source should not bind one way and fail the other.
     """
-    parts = urlsplit((endpoint or "").strip())
-    host = parts.hostname or ""
-    if not parts.scheme or not host:
-        return (endpoint or "").strip().rstrip("/")
-    authority = f"[{host}]" if ":" in host else host
-    if parts.port:
-        authority = f"{authority}:{parts.port}"
-    return f"{parts.scheme}://{authority}"
+    from octop.infra.knowledge.external.http import drop_api_prefix
+
+    base = (endpoint or "").strip().rstrip("/")
+    for prefix in ("/api/mcp", "/api/v1/external"):
+        base = drop_api_prefix(base, prefix)
+    return base
 
 
 def _require_origin(row: ExternalSourceRow) -> None:
@@ -140,94 +103,21 @@ def _require_origin(row: ExternalSourceRow) -> None:
     )
 
 
-def _log_bridge_failure(stderr: bytes, reason: str) -> None:
-    """Surface why the bridge failed; the UI only reports it as unavailable.
+async def sdk_call(
+    payload: dict[str, Any], timeout: float = 30, *, secret_repo: Any = None
+) -> dict[str, Any]:
+    from octop.infra.knowledge.external.native_identity import call
 
-    A bridge that cannot even start (a missing dependency, a wrong Node
-    version) writes the real cause to stderr, which the caller never sees.
-    """
-    detail = _stderr_hint(stderr, 500)
-    logging.getLogger(__name__).warning(
-        "agent identity bridge failed (%s)%s",
-        reason,
-        f": {detail}" if detail else "",
-    )
-
-
-async def sdk_call(payload: dict[str, Any], timeout: float = 30) -> dict[str, Any]:
-    command = _sdk_path()
-    if command is None:
-        raise OctopError.localized(
-            ErrorCode.AGENT_IDENTITY_UNAVAILABLE,
-            details={"reason": _sdk_problem() or "sdk-missing"},
-        )
     root = str(PathLayout.from_env().root.resolve() / "agent-identity-keys")
     try:
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-    except OSError as exc:
-        _log_bridge_failure(b"", f"cannot execute bridge: {exc}")
+        async with asyncio.timeout(timeout):
+            return await call({**payload, "root": root}, secret_repo)
+    except TimeoutError as exc:
         raise OctopError.localized(
-            ErrorCode.AGENT_IDENTITY_UNAVAILABLE,
-            details={"reason": "bridge-launch-failed", "detail": str(exc)},
+            ErrorCode.AGENT_IDENTITY_UNAVAILABLE, details={"reason": "identity-timeout"}
         ) from exc
-    try:
-        stdout, stderr = await asyncio.wait_for(
-            process.communicate(json.dumps({**payload, "root": root}, ensure_ascii=False).encode()),
-            timeout=timeout,
-        )
-    except (TimeoutError, asyncio.CancelledError) as exc:
-        if process.returncode is None:
-            process.kill()
-        await process.wait()
-        if isinstance(exc, asyncio.CancelledError):
-            raise
-        raise OctopError.localized(
-            ErrorCode.AGENT_IDENTITY_UNAVAILABLE,
-            details={"reason": "bridge-timeout", "timeoutSeconds": timeout},
-        ) from exc
-    try:
-        if len(stdout) > 3_000_000:
-            raise ValueError()
-        result = json.loads(stdout)
-        if not isinstance(result, dict):
-            raise ValueError()
-        if process.returncode != 0 or result.get("ok") is not True:
-            _log_bridge_failure(stderr, f"exit={process.returncode}")
-            code = result.get("code")
-            message = result.get("message")
-            failure = {
-                "reason": "bridge-error",
-                "bridgeCode": str(code or ""),
-                "bridgeMessage": str(message or "")[:400],
-                "detail": _stderr_hint(stderr),
-            }
-            if code in {
-                "AUTHENTICATION_FAILED",
-                "AUTHORIZATION_DENIED",
-                "KEY_NOT_REGISTERED",
-                "KEY_UNAVAILABLE",
-            }:
-                raise OctopError.localized(ErrorCode.AGENT_IDENTITY_NOT_READY, details=failure)
-            raise OctopError.localized(ErrorCode.AGENT_IDENTITY_UNAVAILABLE, details=failure)
-        data = result["data"]
-        if not isinstance(data, dict):
-            raise ValueError()
-        return data
     except (ValueError, KeyError, TypeError) as exc:
-        _log_bridge_failure(stderr, f"unreadable bridge response (exit={process.returncode})")
-        raise OctopError.localized(
-            ErrorCode.AGENT_IDENTITY_UNAVAILABLE,
-            details={
-                "reason": "bridge-unreadable",
-                "exit": process.returncode,
-                "detail": _stderr_hint(stderr),
-            },
-        ) from exc
+        raise OctopError.localized(ErrorCode.AGENT_IDENTITY_INVALID) from exc
 
 
 def _default(row: ExternalSourceRow, config: dict[str, Any]) -> dict[str, Any]:
@@ -254,6 +144,7 @@ def _binding(config: dict[str, Any], native_id: str) -> tuple[dict[str, str], di
     binding = {
         **owner,
         "runtimeAgentKey": str(agent.get("runtimeAgentKey") or native_id),
+        "keyReference": str(agent.get("keyReference") or ""),
         "bindingId": str(agent.get("bindingId") or "1"),
         **{
             key: str(config[key])
@@ -286,10 +177,13 @@ class AgentIdentityService:
         self.sources = sources
         self.agents = agents
 
+    async def _call(self, payload: dict[str, Any], timeout: float = 30) -> dict[str, Any]:
+        return await sdk_call(payload, timeout, secret_repo=self.sources._secret_repo)
+
     def source(
         self, source_id: str, user_id: int, is_admin: bool
     ) -> tuple[ExternalSourceRow, dict[str, Any]]:
-        row = self.sources._require_manage(source_id, user_id=user_id, is_admin=is_admin)
+        row = self.sources._require_use(source_id, user_id=user_id, is_admin=is_admin)
         if row.kind not in {"akb-mcp", "akb-rest"} or self.sources.auth_type(row) != "agent":
             raise _invalid()
         return row, _default(row, self.sources.identity_config(row))
@@ -310,10 +204,10 @@ class AgentIdentityService:
         row, config = self.source(source_id, user_id, is_admin)
         problem = _sdk_problem()
         try:
-            capabilities = await sdk_call({"op": "capabilities"})
+            capabilities = await self._call({"op": "capabilities"})
         except (TimeoutError, OctopError, OSError):
             capabilities = {"supported": False}
-            problem = problem or "bridge-failed"
+            problem = problem or "native-unavailable"
         ready = bool(capabilities.get("supported"))
         available = self.agents.list_all() if is_admin else self.agents.list_by_user(user_id)
         bound = config["agents"] if config.get("simple") else {}
@@ -329,10 +223,21 @@ class AgentIdentityService:
             public_jwk = None
             if current and ready:
                 try:
-                    state = await sdk_call(
-                        {"op": "state", "owner": _binding(config, record.agent_id)[0]}
+                    state = await self._call(
+                        {
+                            "op": "state",
+                            "owner": _binding(config, record.agent_id)[0],
+                            "keyReference": current.get("keyReference"),
+                        }
                     )
                     active_kid = state.get("activeKid")
+                    if state.get("keyReference") and not current.get("keyReference"):
+                        self.sources._repo.adopt_legacy_key(
+                            row.connection_id,
+                            record.agent_id,
+                            current["externalAgentId"],
+                            state["keyReference"],
+                        )
                     # Public keys are not secret, so a saved one is returned for display.
                     public_jwk = next(
                         (
@@ -370,8 +275,12 @@ class AgentIdentityService:
                 raise ValueError()
         except ValueError as exc:
             raise _invalid() from exc
-        return await sdk_call(
-            {"op": "generate", "externalAgentId": external_id, "keyScope": row.source_id}
+        return await self._call(
+            {
+                "op": "generate",
+                "externalAgentId": external_id,
+                "keyScope": row.connection_id + ":" + str(user_id),
+            }
         )
 
     async def connect(
@@ -398,6 +307,9 @@ class AgentIdentityService:
         ):
             raise _invalid()
         current = config["agents"].get(agent_id)
+        old_reference = str(current.get("keyReference") or "") if current else ""
+        if current is None and not (private_key or key_reference):
+            raise OctopError.localized(ErrorCode.AGENT_IDENTITY_NOT_READY)
         if (
             current
             and current.get("externalAgentId") != external_id
@@ -407,13 +319,15 @@ class AgentIdentityService:
             # unbind), so a live binding cannot silently point at another identity.
             raise _invalid()
         creds = self.sources.credentials_for(row)
-        result = await sdk_call(
+        result = await self._call(
             {
                 "op": "connect",
                 "externalAgentId": external_id,
                 "privateKey": private_key,
+                "reuseExisting": current is not None,
+                "existingKeyReference": old_reference,
                 "keyReference": key_reference,
-                "keyScope": row.source_id,
+                "keyScope": row.connection_id + ":" + str(user_id),
                 "apiKey": str(creds.get("api_key") or ""),
                 "origin": _sdk_origin(row.endpoint),
                 "transport": "mcp" if row.kind == "akb-mcp" else "rest",
@@ -445,11 +359,26 @@ class AgentIdentityService:
         config["agents"][agent_id] = {
             "externalAgentId": external_id,
             "bindingId": binding["bindingId"],
+            "keyReference": result.get("keyReference"),
             "runtimeAgentKey": binding["runtimeAgentKey"],
             "lastVerifiedAt": datetime.now(UTC).isoformat(),
             "lastVerificationStatus": "success",
         }
         self.sources.save_identity_config(row, config, agent_id=agent_id)
+        self.sources._repo.record_check(
+            row.connection_id, row.source_id, agent_id, "identity", "success"
+        )
+        if key_reference:
+            self.sources._secret_repo.delete(
+                "agent_identity:generated:"
+                + row.connection_id
+                + ":"
+                + str(user_id)
+                + ":"
+                + key_reference
+            )
+        if old_reference and old_reference != result.get("keyReference"):
+            self._retire(old_reference)
         return {"status": result["status"], "activeKid": result["activeKid"]}
 
     def disconnect(self, source_id: str, agent_id: str, user_id: int, is_admin: bool) -> None:
@@ -457,8 +386,22 @@ class AgentIdentityService:
         self.agent(agent_id, user_id, is_admin)
         if agent_id not in config.get("agents", {}):
             raise _invalid()
-        config["agents"].pop(agent_id, None)
+        removed = config["agents"].pop(agent_id, {})
         self.sources.save_identity_config(row, config, agent_id=agent_id, bound=False)
+        self._retire(str(removed.get("keyReference") or ""))
+
+    def _retire(self, reference: str) -> None:
+        if reference and not self.sources._repo.key_reference_used(reference):
+            from octop.infra.knowledge.external.native_identity import KeyStore, retire_reference
+
+            retire_reference(
+                KeyStore(
+                    self.sources._secret_repo,
+                    str(PathLayout.from_env().root / "agent-identity-keys"),
+                ),
+                reference,
+                self.sources._repo,
+            )
 
     async def search(
         self, source_id: str, agent_id: str, user_id: int, is_admin: bool, query: str, top_k: int
@@ -472,8 +415,10 @@ class AgentIdentityService:
         creds = {**self.sources.credentials_for(row), "agent_identity": config}
         try:
             result = await search_as_agent(spec, creds, query, top_k=top_k)
-        except (OctopError, ExternalSourceError):
-            self._record_verification(source_id, agent_id, config, user_id, is_admin, "failure")
+        except (OctopError, ExternalSourceError) as exc:
+            self._record_verification(
+                source_id, agent_id, config, user_id, is_admin, "failure", str(exc.code)
+            )
             raise
         self._record_verification(source_id, agent_id, config, user_id, is_admin, "success")
         return {
@@ -504,15 +449,23 @@ class AgentIdentityService:
         user_id: int,
         is_admin: bool,
         status: str,
+        code: str = "",
     ) -> None:
         try:
             row, current = self.source(source_id, user_id, is_admin)
             agent = current.get("agents", {}).get(agent_id)
             if not agent or agent != previous.get("agents", {}).get(agent_id):
                 return  # An unbind or key change during the request must not be undone.
-            agent["lastVerifiedAt"] = datetime.now(UTC).isoformat()
-            agent["lastVerificationStatus"] = status
-            self.sources.save_identity_config(row, current)
+            self.sources._repo.record_verification(
+                row.connection_id,
+                agent_id,
+                agent["externalAgentId"],
+                status,
+                datetime.now(UTC).isoformat(),
+            )
+            self.sources._repo.record_check(
+                row.connection_id, row.source_id, agent_id, "retrieval", status, code
+            )
         except (OctopError, ExternalSourceError):
             logging.getLogger(__name__).info(
                 "Identity verification state changed concurrently for source=%s", source_id
@@ -541,6 +494,7 @@ async def execute_as_agent(
             "owner": owner,
             "binding": binding,
             "apiKey": str(creds.get("api_key") or ""),
+            "spec": {k: v for k, v in asdict(spec).items() if k != "octop_identity"},
             "origin": _sdk_origin(spec.endpoint),
             "transport": "mcp" if spec.kind == "akb-mcp" else "rest",
             "request": request,
@@ -552,12 +506,15 @@ async def execute_as_agent(
                 "invocationId": str(uuid.uuid4()),
             },
         },
-        max(30, spec.timeout_seconds * 3 + 10),
+        max(1, spec.timeout_seconds),
+        secret_repo=creds.get("_secret_repo"),
     )
 
 
 def _items(data: Any, kind: str) -> list[Any]:
     """Unwrap whatever the SDK returned, whichever channel produced it."""
+    if isinstance(data, dict) and isinstance(data.get("chunks"), list):
+        return list(data["chunks"])
     if kind == "akb-mcp":
         from octop.infra.knowledge.external.adapters.akb_mcp import _collect_items
 
@@ -577,6 +534,10 @@ async def search_as_agent(
 
     data = await execute_as_agent(spec, creds, query, top_k=top_k)
     items = _items(data, spec.kind)
+    if data.get("keyReference") and isinstance(spec.octop_identity, OctopIdentity):
+        creds["agent_identity"]["agents"][spec.octop_identity.agent_id]["keyReference"] = data[
+            "keyReference"
+        ]
     return ExternalSearchResult(
         chunks=filter_chunks(
             normalize_chunks(items, origin=spec.kind, ref=spec.ref),
@@ -605,6 +566,7 @@ async def list_bases_as_agent(
             "owner": owner,
             "binding": binding,
             "apiKey": str(creds.get("api_key") or ""),
+            "spec": {k: v for k, v in asdict(spec).items() if k != "octop_identity"},
             "origin": _sdk_origin(spec.endpoint),
             "transport": "mcp" if spec.kind == "akb-mcp" else "rest",
             "request": {"operation": "bases"},
@@ -616,7 +578,8 @@ async def list_bases_as_agent(
                 "invocationId": str(uuid.uuid4()),
             },
         },
-        max(30, spec.timeout_seconds * 3 + 10),
+        max(1, spec.timeout_seconds),
+        secret_repo=creds.get("_secret_repo"),
     )
     refs: list[dict[str, str]] = []
     for item in _items(data, spec.kind):

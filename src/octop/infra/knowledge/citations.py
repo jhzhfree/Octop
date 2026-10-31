@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Sequence
-from typing import Any, TypedDict
+from typing import Any, NotRequired, TypedDict
 
 CITATIONS_MARKER_PREFIX = "<!--octop-kb-citations:"
 CITATIONS_MARKER_SUFFIX = "-->"
@@ -17,6 +17,8 @@ class KnowledgeCitation(TypedDict):
     doc_id: str
     filename: str
     path: str
+    source_id: NotRequired[str]
+    url: NotRequired[str]
 
 
 def citations_from_ranked(ranked: Sequence[tuple[Any, Any, Any]]) -> list[KnowledgeCitation]:
@@ -38,6 +40,48 @@ def citations_from_ranked(ranked: Sequence[tuple[Any, Any, Any]]) -> list[Knowle
             }
         )
     return out
+
+
+def citations_from_external(chunks: Sequence[Any]) -> list[KnowledgeCitation]:
+    from urllib.parse import urlsplit
+
+    seen: set[str] = set()
+    result: list[KnowledgeCitation] = []
+    for chunk in chunks:
+        if not chunk.source_id:
+            continue
+        document = str(
+            chunk.metadata.get("documentId")
+            or chunk.metadata.get("docId")
+            or chunk.source
+            or chunk.id
+        )
+        identifier = f"{chunk.source_id}:{chunk.ref}:{document}"
+        if identifier in seen:
+            continue
+        seen.add(identifier)
+        raw_url = str(chunk.metadata.get("url") or chunk.metadata.get("sourceUrl") or "")
+        parts = urlsplit(raw_url)
+        url = (
+            raw_url
+            if parts.scheme in {"http", "https"}
+            and parts.hostname
+            and not parts.username
+            and not parts.password
+            else ""
+        )
+        result.append(
+            {
+                "kb_id": chunk.ref,
+                "kb_name": chunk.ref,
+                "doc_id": identifier,
+                "filename": chunk.source or document,
+                "path": "",
+                "source_id": chunk.source_id,
+                "url": url,
+            }
+        )
+    return result
 
 
 _CITATIONS_MARKER_RE = re.compile(

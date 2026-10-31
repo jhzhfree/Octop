@@ -45,6 +45,7 @@ class ExternalChunk:
     metadata: dict[str, Any] = field(default_factory=dict)
     origin: str = ""
     ref: str = ""
+    source_id: str = ""
 
     def dedupe_key(self) -> str:
         return self.id.strip() or self.content[:200].strip()
@@ -57,6 +58,7 @@ class SourceWarning:
     origin: str
     code: str
     message: str
+    source_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -147,13 +149,7 @@ def base_argument(spec: ExternalSourceSpec) -> dict[str, Any]:
     if not value:
         raise missing_ref(spec.kind)
     if key == ID_SELECTOR_ARGUMENT:
-        if not value.isdecimal():
-            raise ExternalSourceError(
-                INVALID_ARGUMENT,
-                f"{ID_SELECTOR_ARGUMENT} expects a numeric knowledge base identifier",
-                origin=spec.kind,
-            )
-        return {ID_SELECTOR_ARGUMENT: int(value)}
+        return {ID_SELECTOR_ARGUMENT: int(value) if value.isdecimal() else value}
     # Nothing was declared and the reference is a bare number: AKB's MCP tools
     # only understand ids, so guessing "code" here would silently drop the target.
     if not declared and value.isdecimal():

@@ -9,7 +9,11 @@ from typing import Any
 
 from octop.i18n import tr
 from octop.infra.knowledge.akb_identity import OctopIdentity
-from octop.infra.knowledge.citations import append_citations_marker, citations_from_ranked
+from octop.infra.knowledge.citations import (
+    append_citations_marker,
+    citations_from_external,
+    citations_from_ranked,
+)
 from octop.infra.knowledge.embed import embed_knowledge_texts
 from octop.infra.knowledge.external.fuse import rrf_fuse
 from octop.infra.knowledge.external.service import ExternalKnowledgeService
@@ -65,20 +69,26 @@ async def retrieve_context(
         except Exception:
             logger.warning("knowledge retrieval skipped for user=%s", user_id, exc_info=True)
             ranked = []
-    external_chunks = await _external_chunks(
+    external_chunks, external_warnings = await _external_chunks(
         services, external_specs, query, k=k, octop_identity=octop_identity
     )
     if not external_chunks:
         if not ranked:
-            return ""
-        return _format_context(ranked[:k], char_budget=char_budget, locale=locale)
+            return tr("knowledge.retrieval.partial_failure", locale) if external_warnings else ""
+        context = _format_context(ranked[:k], char_budget=char_budget, locale=locale)
+        return (
+            tr("knowledge.retrieval.partial_failure", locale) + "\n\n" if external_warnings else ""
+        ) + context
     local_chunks = [_chunk_for_hit(item) for item in ranked]
     fused = rrf_fuse(
         [local_chunks, external_chunks],
         limit=k,
-        key=lambda chunk: f"{chunk.origin}:{chunk.dedupe_key()}",
+        key=lambda chunk: f"{chunk.origin}:{chunk.source_id}:{chunk.ref}:{chunk.dedupe_key()}",
     )
-    return _format_fused(fused, ranked, char_budget=char_budget, locale=locale)
+    context = _format_fused(fused, ranked, char_budget=char_budget, locale=locale)
+    return (
+        tr("knowledge.retrieval.partial_failure", locale) + "\n\n" if external_warnings else ""
+    ) + context
 
 
 async def _external_chunks(
@@ -88,17 +98,21 @@ async def _external_chunks(
     *,
     k: int,
     octop_identity: OctopIdentity | None = None,
-) -> list[ExternalChunk]:
+) -> tuple[list[ExternalChunk], list[dict[str, Any]]]:
     """Retrieve from external sources; a failing source degrades to empty."""
     if not specs:
-        return []
+        return [], []
     try:
         result = await _external_service(services).retrieve(
             query=(query or "").strip(), specs=list(specs), limit=k, octop_identity=octop_identity
         )
     except Exception:
         logger.warning("external knowledge retrieval failed", exc_info=True)
-        return []
+        return [], []
+    if result.get("status") == "failed":
+        from octop.infra.knowledge.external.types import ExternalSourceError
+
+        raise ExternalSourceError("UPSTREAM_UNAVAILABLE", "all external knowledge sources failed")
     chunks: list[ExternalChunk] = []
     for item in result.get("chunks", []):
         if not isinstance(item, dict):
@@ -106,6 +120,7 @@ async def _external_chunks(
         chunks.append(
             ExternalChunk(
                 id=str(item.get("id") or ""),
+                source_id=str(item.get("source_id") or ""),
                 content=str(item.get("content") or ""),
                 score=float(item.get("score") or 0.0),
                 source=str(item.get("source") or ""),
@@ -114,7 +129,7 @@ async def _external_chunks(
                 ref=str(item.get("ref") or ""),
             )
         )
-    return chunks
+    return chunks, result.get("warnings", [])
 
 
 def _external_service(services: Any) -> ExternalKnowledgeService:
@@ -235,7 +250,9 @@ def _format_fused(
     if not sections:
         return ""
     body = tr("knowledge.retrieval.preamble", locale) + "\n\n" + "\n\n".join(sections)
-    return append_citations_marker(body, citations_from_ranked(ranked))
+    return append_citations_marker(
+        body, citations_from_ranked(ranked) + citations_from_external(chunks)
+    )
 
 
 def _unique_ids(ids: Sequence[str]) -> list[str]:

@@ -226,8 +226,8 @@ async def test_declared_selector_wins_over_the_guessed_shape(setup):
 
 
 @pytest.mark.asyncio
-async def test_declared_id_selector_rejects_a_non_numeric_reference(setup):
-    """Asking for an id while carrying a code fails here, not inside AKB."""
+async def test_declared_id_selector_accepts_akb_string_identifier(setup):
+    """AKB accepts a stable string identifier in knowledgeBaseId."""
     svc, sources, repo, source, user, _, sdk = setup
     await _connect(svc, sdk, source, "alpha", user, ALPHA)
     creds = sources.credentials_for(repo.get(source))
@@ -236,10 +236,8 @@ async def test_declared_id_selector_rejects_a_non_numeric_reference(setup):
         selector_argument="knowledgeBaseId",
         octop_identity=OctopIdentity(str(user), "alpha", "session", workload_only=True),
     )
-    with pytest.raises(ExternalSourceError) as err:
-        await identity.execute_as_agent(spec, creds, "q", top_k=3)
-    assert err.value.code == "INVALID_ARGUMENT"
-    assert "knowledgeBaseId" in str(err.value)
+    await identity.execute_as_agent(spec, creds, "q", top_k=3)
+    assert sdk.await_args.args[0]["request"]["knowledgeBaseId"] == "HR-POLICY"
 
 
 @pytest.mark.asyncio
@@ -357,7 +355,7 @@ async def test_generation_is_scoped_and_never_returns_private_material(setup):
     assert sdk.await_args.args[0] == {
         "op": "generate",
         "externalAgentId": ALPHA,
-        "keyScope": source,
+        "keyScope": source + ":" + str(user),
     }
     assert "private" not in str(result).lower()
     sdk.reset_mock()
@@ -491,27 +489,11 @@ async def test_agent_id_change_requires_fresh_key_material(setup):
     assert "ROTATED-PRIVATE-MATERIAL" not in str(stored)
 
 
-def test_bridge_lookup_explains_a_missing_host_runtime(monkeypatch, tmp_path: Path):
-    bridge = tmp_path / "bridge.js"
-    bridge.write_text("// bridge")
-    monkeypatch.setenv("OCTOP_AGENT_IDENTITY_SDK_BRIDGE", str(bridge))
-    monkeypatch.setattr(identity.shutil, "which", lambda name: "node" if name == "node" else None)
-    assert identity._sdk_path() == ("node", str(bridge))
-    assert identity._sdk_problem() is None
-    # A checkout without the SDK at all must say so instead of failing generically.
-    monkeypatch.setattr(identity, "_bridge_script", lambda: None)
-    assert identity._sdk_problem() == "bridge-missing"
-    monkeypatch.setattr(identity.shutil, "which", lambda name: None)
-    assert identity._sdk_problem() == "node-missing"
-
-
 @pytest.mark.asyncio
-async def test_unavailable_runtime_explains_itself_in_error_details(monkeypatch):
-    monkeypatch.setattr(identity, "_bridge_script", lambda: None)
-    with pytest.raises(OctopError) as err:
-        await identity.sdk_call({"op": "capabilities"})
-    assert err.value.code == ErrorCode.AGENT_IDENTITY_UNAVAILABLE
-    assert err.value.details["reason"] == "bridge-missing"
+async def test_native_identity_capabilities_without_external_runtime(monkeypatch):
+    monkeypatch.setenv("PATH", "")
+    assert identity._sdk_problem() is None
+    assert (await identity.sdk_call({"op": "capabilities"}))["runtime"] == "python"
 
 
 @pytest.mark.asyncio
@@ -520,7 +502,7 @@ async def test_describe_reports_why_the_host_runtime_is_unavailable(setup):
     sdk.side_effect = OctopError.localized(ErrorCode.AGENT_IDENTITY_UNAVAILABLE)
     result = await svc.describe(source, user, False)
     assert result["runtimeReady"] is False
-    assert result["runtimeReason"] == "bridge-failed"
+    assert result["runtimeReason"] == "native-unavailable"
     sdk.side_effect = None
     sdk.return_value = {"supported": False}
     result = await svc.describe(source, user, False)

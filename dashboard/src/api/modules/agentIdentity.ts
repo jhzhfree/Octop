@@ -14,7 +14,7 @@ export interface SourceAgentIdentity {
 }
 export interface SourceIdentityState {
   runtimeReady: boolean;
-  /** Why the host bridge is unavailable: node-missing, bridge-missing, bridge-failed, unsupported. */
+  /** Native identity runtime diagnostic, when unavailable. */
   runtimeReason?: string | null;
   serviceKeySaved?: boolean;
   agents: SourceAgentIdentity[];

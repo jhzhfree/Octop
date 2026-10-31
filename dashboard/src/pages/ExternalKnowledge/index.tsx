@@ -36,6 +36,7 @@ import { agentIdentityApi } from "@/api/modules/agentIdentity";
 import {
   externalKnowledgeApi,
   type ExternalKnowledgeChunk,
+  type ExternalKnowledgeConnection,
   type ExternalKnowledgeProbe,
   type ExternalKnowledgeSource,
   type ExternalKnowledgeToolSchema,
@@ -61,6 +62,7 @@ const KIND_COLORS: Record<string, string> = {
 };
 
 interface SourceFormValues {
+  connection_id?: string;
   display_name: string;
   kind: string;
   endpoint: string;
@@ -178,6 +180,14 @@ export default function ExternalKnowledgePage() {
   const isMobile = useIsMobile();
 
   const [sources, setSources] = useState<ExternalKnowledgeSource[]>([]);
+  const [connections, setConnections] = useState<ExternalKnowledgeConnection[]>(
+    [],
+  );
+  const [connectionEditor, setConnectionEditor] = useState<
+    ExternalKnowledgeConnection | "new" | null
+  >(null);
+  const [connectionForm] = Form.useForm();
+  const connectionKind = Form.useWatch("kind", connectionForm);
   const [kinds, setKinds] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [identitySource, setIdentitySource] =
@@ -195,6 +205,11 @@ export default function ExternalKnowledgePage() {
   const insecureHttp = Form.useWatch("allow_insecure_http", form);
   const formKind = Form.useWatch("kind", form);
   const formAuthType = Form.useWatch("auth_type", form);
+  const reusedConnection = Form.useWatch("connection_id", form);
+  const [catalogAgent, setCatalogAgent] = useState<string>();
+  const [catalogAgents, setCatalogAgents] = useState<
+    { value: string; label: string }[]
+  >([]);
   const selectedTool = Form.useWatch("tool_name", form);
   // The advertised tools and their argument schemas: what the operator picks
   // from, dropped as soon as the drawer closes because it is upstream state.
@@ -231,11 +246,13 @@ export default function ExternalKnowledgePage() {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const [rows, kindResult] = await Promise.all([
+      const [rows, kindResult, connectionRows] = await Promise.all([
         externalKnowledgeApi.list(),
         externalKnowledgeApi.kinds(),
+        externalKnowledgeApi.connections(),
       ]);
       setSources(rows);
+      setConnections(connectionRows);
       setKinds(kindResult.kinds);
     } catch {
       message.error(t("externalKnowledge.loadFailed"));
@@ -256,6 +273,7 @@ export default function ExternalKnowledgePage() {
     setToolArgs([]);
     form.resetFields();
     form.setFieldsValue({
+      connection_id: "",
       kind: kinds[0] ?? "akb-mcp",
       auth_type: "service",
       api_key_header: "x-api-key",
@@ -281,7 +299,7 @@ export default function ExternalKnowledgePage() {
         display_name: row.display_name,
         kind: row.kind,
         endpoint: row.endpoint,
-        auth_type: row.auth_type || "service",
+        auth_type: row.needs_attention ? undefined : row.auth_type || "service",
         api_key_header: row.api_key_header || "x-api-key",
         ref: row.ref,
         top_k: row.top_k,
@@ -304,6 +322,7 @@ export default function ExternalKnowledgePage() {
       auth_type: ["akb-mcp", "akb-rest"].includes(values.kind)
         ? values.auth_type || "service"
         : "service",
+      connection_id: values.connection_id || undefined,
       display_name: values.display_name,
       kind: values.kind,
       endpoint: values.endpoint,
@@ -324,7 +343,22 @@ export default function ExternalKnowledgePage() {
     try {
       let saved: ExternalKnowledgeSource;
       if (editing) {
-        saved = await externalKnowledgeApi.update(editing.source_id, body);
+        const patch: import("@/api/modules/externalKnowledge").ExternalSourcePatchBody =
+          { ...body, revision: editing.revision };
+        if (editing.can_manage_connection === false) {
+          for (const key of [
+            "kind",
+            "endpoint",
+            "api_key",
+            "api_key_header",
+            "auth_type",
+            "allow_insecure_http",
+            "shared",
+          ] as const)
+            delete patch[key];
+        }
+        delete patch.connection_id;
+        saved = await externalKnowledgeApi.update(editing.source_id, patch);
       } else {
         saved = await externalKnowledgeApi.create(body);
         setEditing(saved);
@@ -414,9 +448,13 @@ export default function ExternalKnowledgePage() {
       // list has to be fetched through one of the bound Agents instead.
       const viaIdentity = async () => {
         const state = await agentIdentityApi.state(editing.source_id);
-        const bound = state.agents.find(
+        const available = state.agents.filter(
           (a) => a.externalAgentId && a.activeKid,
         );
+        setCatalogAgents(
+          available.map((a) => ({ value: a.agentId, label: a.name })),
+        );
+        const bound = available.find((a) => a.agentId === catalogAgent);
         if (!bound) throw new Error(t("externalKnowledge.noBoundAgent"));
         return agentIdentityApi.bases(editing.source_id, bound.agentId);
       };
@@ -439,7 +477,7 @@ export default function ExternalKnowledgePage() {
     } finally {
       setRefsLoading(false);
     }
-  }, [editing, message, t]);
+  }, [editing, message, t, catalogAgent]);
 
   const toggleEnabled = useCallback(
     async (row: ExternalKnowledgeSource, enabled: boolean) => {
@@ -625,11 +663,34 @@ export default function ExternalKnowledgePage() {
         ),
       },
       {
+        title: t("externalKnowledge.checkStatus"),
+        key: "checks",
+        render: (_value: unknown, row) => (
+          <Space wrap>
+            {(row.checks || []).length ? (
+              row.checks?.map((check) => (
+                <Tag
+                  key={`${check.agent_id}:${check.stage}`}
+                  color={check.status === "success" ? "green" : "red"}
+                >
+                  {check.agent_id || t("externalKnowledge.connection")} ·{" "}
+                  {check.stage} · {check.code || check.status}
+                </Tag>
+              ))
+            ) : (
+              <Tag>{t("externalKnowledge.notVerified")}</Tag>
+            )}
+          </Space>
+        ),
+      },
+      {
         title: t("externalKnowledge.authType"),
         key: "auth_type",
         render: (_value: unknown, row) =>
           t(
-            row.auth_type === "agent"
+            row.needs_attention
+              ? "externalKnowledge.needsAttention"
+              : row.auth_type === "agent"
               ? "externalKnowledge.authAgent"
               : "externalKnowledge.authService",
           ),
@@ -640,7 +701,7 @@ export default function ExternalKnowledgePage() {
         width: 340,
         render: (_value: unknown, row) => (
           <div className={styles.rowActions}>
-            {row.can_manage && row.auth_type === "agent" && (
+            {row.auth_type === "agent" && (
               <Tooltip title={t("externalKnowledge.identity.manage")}>
                 <Button
                   size="small"
@@ -741,6 +802,105 @@ export default function ExternalKnowledgePage() {
           message={t("externalKnowledge.identity.platformScopeTitle")}
           description={t("externalKnowledge.identity.platformScopeHelp")}
         />
+        <Space direction="vertical" style={{ width: "100%" }}>
+          <Space>
+            <Typography.Title level={5} style={{ margin: 0 }}>
+              {t("externalKnowledge.connection")}
+            </Typography.Title>
+            <Button
+              onClick={() => {
+                connectionForm.resetFields();
+                connectionForm.setFieldsValue({
+                  kind: "akb-mcp",
+                  auth_type: "service",
+                  api_key_header: "x-api-key",
+                });
+                setConnectionEditor("new");
+              }}
+            >
+              {t("externalKnowledge.newConnection")}
+            </Button>
+          </Space>
+          <Table<ExternalKnowledgeConnection>
+            size="small"
+            rowKey="connection_id"
+            dataSource={connections}
+            pagination={false}
+            scroll={{ x: 650 }}
+            columns={[
+              { title: t("externalKnowledge.name"), dataIndex: "display_name" },
+              {
+                title: t("externalKnowledge.endpoint"),
+                dataIndex: "endpoint",
+                ellipsis: true,
+              },
+              {
+                title: t("externalKnowledge.authType"),
+                render: (_, row) =>
+                  t(
+                    row.auth_type === "agent"
+                      ? "externalKnowledge.authAgent"
+                      : "externalKnowledge.authService",
+                  ),
+              },
+              {
+                title: t("externalKnowledge.resourceCount"),
+                dataIndex: "resource_count",
+              },
+              {
+                title: t("externalKnowledge.actions"),
+                render: (_, row) =>
+                  row.can_manage && (
+                    <Space>
+                      <Switch
+                        checked={!!row.enabled}
+                        onChange={async (enabled) => {
+                          try {
+                            await externalKnowledgeApi.updateConnection(
+                              row.connection_id,
+                              { revision: row.revision, enabled },
+                            );
+                            await refresh();
+                          } catch {
+                            message.error(t("externalKnowledge.saveFailed"));
+                          }
+                        }}
+                      />
+                      <Button
+                        onClick={() => {
+                          connectionForm.resetFields();
+                          connectionForm.setFieldsValue({
+                            ...row,
+                            api_key: undefined,
+                          });
+                          setConnectionEditor(row);
+                        }}
+                      >
+                        {t("externalKnowledge.edit")}
+                      </Button>
+                      <Popconfirm
+                        title={t("externalKnowledge.delete")}
+                        onConfirm={async () => {
+                          try {
+                            await externalKnowledgeApi.deleteConnection(
+                              row.connection_id,
+                            );
+                            await refresh();
+                          } catch {
+                            message.error(t("externalKnowledge.saveFailed"));
+                          }
+                        }}
+                      >
+                        <Button danger disabled={row.resource_count > 0}>
+                          {t("externalKnowledge.delete")}
+                        </Button>
+                      </Popconfirm>
+                    </Space>
+                  ),
+              },
+            ]}
+          />
+        </Space>
         <div className={styles.panelHeader}>
           <div className={styles.panelStats}>
             <Tag className={styles.statTag} bordered={false}>
@@ -958,6 +1118,108 @@ export default function ExternalKnowledgePage() {
       </Drawer>
 
       <Drawer
+        open={connectionEditor !== null}
+        width={520}
+        title={t("externalKnowledge.connection")}
+        onClose={() => setConnectionEditor(null)}
+        extra={
+          <Button
+            type="primary"
+            onClick={async () => {
+              try {
+                const values = await connectionForm.validateFields();
+                if (connectionEditor === "new")
+                  await externalKnowledgeApi.createConnection(values);
+                else if (connectionEditor)
+                  await externalKnowledgeApi.updateConnection(
+                    connectionEditor.connection_id,
+                    { ...values, revision: connectionEditor.revision },
+                  );
+                setConnectionEditor(null);
+                await refresh();
+                message.success(t("externalKnowledge.updated"));
+              } catch {
+                message.error(t("externalKnowledge.saveFailed"));
+              }
+            }}
+          >
+            {t("externalKnowledge.save")}
+          </Button>
+        }
+      >
+        <Form form={connectionForm} layout="vertical">
+          <Form.Item
+            name="display_name"
+            label={t("externalKnowledge.name")}
+            rules={[{ required: true }]}
+          >
+            <Input />
+          </Form.Item>
+          <Form.Item name="kind" label={t("externalKnowledge.kind")}>
+            <Select
+              disabled={
+                connectionEditor !== "new" && !!connectionEditor?.agent_count
+              }
+              options={kinds.map((kind) => ({ value: kind, label: kind }))}
+              onChange={(kind: string) => {
+                if (!["akb-mcp", "akb-rest"].includes(kind))
+                  connectionForm.setFieldValue("auth_type", "service");
+              }}
+            />
+          </Form.Item>
+          <Form.Item
+            name="endpoint"
+            label={t("externalKnowledge.endpoint")}
+            rules={[{ required: true }]}
+          >
+            <Input
+              disabled={
+                connectionEditor !== "new" && !!connectionEditor?.agent_count
+              }
+            />
+          </Form.Item>
+          <Form.Item name="auth_type" label={t("externalKnowledge.authType")}>
+            <Select
+              disabled={
+                connectionEditor !== "new" && !!connectionEditor?.agent_count
+              }
+              options={[
+                { value: "service", label: t("externalKnowledge.authService") },
+                ...(["akb-mcp", "akb-rest"].includes(connectionKind)
+                  ? [
+                      {
+                        value: "agent",
+                        label: t("externalKnowledge.authAgent"),
+                      },
+                    ]
+                  : []),
+              ]}
+            />
+          </Form.Item>
+          <Form.Item
+            name="api_key"
+            label={t("externalKnowledge.apiKey")}
+            extra={t("externalKnowledge.apiKeyHint")}
+          >
+            <Input.Password autoComplete="new-password" />
+          </Form.Item>
+          <Form.Item
+            name="shared"
+            valuePropName="checked"
+            label={t("externalKnowledge.shared")}
+          >
+            <Switch />
+          </Form.Item>
+          <Form.Item
+            name="allow_insecure_http"
+            valuePropName="checked"
+            label={t("externalKnowledge.insecureWarning")}
+          >
+            <Switch />
+          </Form.Item>
+        </Form>
+      </Drawer>
+      <Drawer
         className={styles.drawer}
         open={formOpen}
         width={520}
@@ -980,6 +1242,39 @@ export default function ExternalKnowledgePage() {
           <div className={styles.sectionTitle}>
             {t("externalKnowledge.basicSection")}
           </div>
+          {!editing && (
+            <Form.Item
+              name="connection_id"
+              label={t("externalKnowledge.connection")}
+              extra={t("externalKnowledge.connectionHelp")}
+            >
+              <Select
+                options={[
+                  { value: "", label: t("externalKnowledge.newConnection") },
+                  ...connections
+                    .filter((row) => row.enabled)
+                    .map((row) => ({
+                      value: row.connection_id,
+                      label: `${row.display_name} · ${row.endpoint}`,
+                    })),
+                ]}
+                onChange={(value: string) => {
+                  const row = connections.find(
+                    (item) => item.connection_id === value,
+                  );
+                  if (row)
+                    form.setFieldsValue({
+                      kind: row.kind,
+                      endpoint: row.endpoint,
+                      auth_type: row.auth_type || "service",
+                      api_key: undefined,
+                      api_key_header: "x-api-key",
+                      allow_insecure_http: row.allow_insecure_http,
+                    });
+                }}
+              />
+            </Form.Item>
+          )}
           <Form.Item
             name="display_name"
             label={t("externalKnowledge.name")}
@@ -989,7 +1284,11 @@ export default function ExternalKnowledgePage() {
           </Form.Item>
           <Form.Item name="kind" label={t("externalKnowledge.kind")}>
             <Select
-              disabled={editing?.identity_ready}
+              disabled={
+                !!reusedConnection ||
+                editing?.can_manage_connection === false ||
+                editing?.identity_configured
+              }
               onChange={(kind: string) => {
                 if (!["akb-mcp", "akb-rest"].includes(kind))
                   form.setFieldValue("auth_type", "service");
@@ -1008,7 +1307,11 @@ export default function ExternalKnowledgePage() {
             }
           >
             <Input
-              disabled={editing?.identity_ready}
+              disabled={
+                !!reusedConnection ||
+                editing?.can_manage_connection === false ||
+                editing?.identity_configured
+              }
               placeholder={
                 formKind === "standard-retrieval"
                   ? "https://akb.example.com/api/v1/external/kb/retrievals"
@@ -1018,6 +1321,7 @@ export default function ExternalKnowledgePage() {
           </Form.Item>
           <Form.Item
             name="auth_type"
+            rules={[{ required: true }]}
             label={t("externalKnowledge.authType")}
             extra={t(
               formAuthType === "agent"
@@ -1026,7 +1330,11 @@ export default function ExternalKnowledgePage() {
             )}
           >
             <Select
-              disabled={editing?.identity_ready}
+              disabled={
+                !!reusedConnection ||
+                editing?.can_manage_connection === false ||
+                editing?.identity_configured
+              }
               options={[
                 { value: "service", label: t("externalKnowledge.authService") },
                 ...(["akb-mcp", "akb-rest"].includes(formKind)
@@ -1042,6 +1350,9 @@ export default function ExternalKnowledgePage() {
           </Form.Item>
           <Form.Item name="api_key" label={t("externalKnowledge.apiKey")}>
             <Input.Password
+              disabled={
+                !!reusedConnection || editing?.can_manage_connection === false
+              }
               autoComplete="new-password"
               placeholder={editing ? t("externalKnowledge.apiKeyHint") : ""}
             />
@@ -1096,6 +1407,15 @@ export default function ExternalKnowledgePage() {
                   }))}
                 />
               </Form.Item>
+              {editing?.auth_type === "agent" && (
+                <Select
+                  value={catalogAgent}
+                  onChange={setCatalogAgent}
+                  options={catalogAgents}
+                  style={{ minWidth: 140 }}
+                  placeholder={t("externalKnowledge.catalogAgent")}
+                />
+              )}
               <Button
                 loading={refsLoading}
                 disabled={!editing}
@@ -1244,10 +1564,16 @@ export default function ExternalKnowledgePage() {
                   onChange={changeTool}
                   placeholder={t("externalKnowledge.toolNamePlaceholder")}
                   optionFilterProp="label"
-                  options={toolOptions.map((tool) => ({
-                    value: tool.name,
-                    label: toolLabel(tool),
-                  }))}
+                  options={toolOptions
+                    .filter((tool) =>
+                      ["knowledge_search", "knowledge_query"].includes(
+                        tool.name,
+                      ),
+                    )
+                    .map((tool) => ({
+                      value: tool.name,
+                      label: toolLabel(tool),
+                    }))}
                 />
               </Form.Item>
               <Form.Item

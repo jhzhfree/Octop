@@ -137,6 +137,12 @@ def _tool_name(spec: ExternalSourceSpec) -> str:
     # made that choice, so knowledge_search keeps working untouched.
     picked = (spec.tool_name or "").strip()
     if picked:
+        if picked not in _FALLBACK_TOOLS:
+            raise ExternalSourceError(
+                "INVALID_ARGUMENT",
+                "AKB knowledge sources require a supported read-only search/query tool",
+                origin=ORIGIN,
+            )
         return picked
     for tool in spec.read_tools:
         if tool in _FALLBACK_TOOLS:
