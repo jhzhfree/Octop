@@ -6951,13 +6951,18 @@
     "noBoundAgent": "No usable Agent binding on this source, so the picklist cannot travel through one",
     "sharedHint": "Shared sources can be bound by every user.",
     "insecureWarning": "Plain HTTP exposes the API key on the wire; trusted intranets only.",
+    "authType": "Authentication type",
+    "authService": "Service credential",
+    "authAgent": "Agent authentication",
+    "authServiceHelp": "Call directly with a service credential. No Agent identity binding is required.",
+    "authAgentHelp": "The service key connects and discovers tools. Tool calls require a verified Agent binding. Remove all Agent bindings before changing authentication type.",
     "identity": {
       "manage": "Bind Agent / auth",
       "boundBadge": "Agent identity",
 
       "platformScopeTitle": "Connect Octop Agents to AKB",
-      "platformScopeHelp": "Add an AKB REST/MCP connection, choose Agent key authentication, enter the shared Key, then bind a system Agent and import its private key. Install the OpenCode adapter in OpenCode; Octop uses its built-in adapter.",
-      "bindingHelp": "For an Agent binding, enter the internal Octop Agent ID shown as Platform Agent ID in Configure Agent identity. Do not enter an AKB principal ID or external UUID. Then use the knowledge search tool in that Agent chat."
+      "platformScopeHelp": "Choose authentication independently of protocol: service credentials retrieve directly; Agent authentication requires a bound identity. MCP discovery does not grant permission to call tools.",
+      "bindingHelp": "Select the Octop Agent or local knowledge base that can use this source. This configures source availability; service credentials do not require an Agent identity binding or private key."
     },
     "simple": {
       "title": "Bind Agent · {{name}}",

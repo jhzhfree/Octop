@@ -299,7 +299,7 @@ async def probe(spec: ExternalSourceSpec, creds: dict[str, Any]) -> SourceProbeR
             instructions=instructions,
         )
     refs: list[dict[str, str]] = []
-    if "list_knowledge_bases" in tools:
+    if "list_knowledge_bases" in tools and creds.get("auth_type") != "agent":
         try:
             refs = await list_refs(spec, creds)
         except ExternalSourceError:

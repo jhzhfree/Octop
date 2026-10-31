@@ -1,5 +1,7 @@
 # AKB knowledge and memory integration
 
+For the external-knowledge source editor, use the explicit [service credential / Agent authentication configuration](external-knowledge-authentication.md). Its authentication choice controls whether Agent binding is required; service credential sources do not attach Agent assertions. The delegated-user configuration below describes the separate legacy identity and memory integration.
+
 Octop connects to AKB through AKB's MCP server. Agent owners can attach the connection using Octop's existing MCP selection flow; AKB remains responsible for knowledge governance, retrieval permissions, and citations. The built-in external-knowledge adapters can also send a signed, short-lived Octop identity assertion when the AKB identity integration is enabled.
 
 Virtual workers can also use AKB's platform memory as run context. This binding is read-only: Octop pins the memory scope, requires `memory_recall` before the planned work, and blocks `memory_capture` and `memory_forget` during the run.

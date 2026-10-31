@@ -65,6 +65,7 @@ interface SourceFormValues {
   kind: string;
   endpoint: string;
   api_key?: string;
+  auth_type?: "service" | "agent";
   api_key_header?: string;
   ref?: string;
   top_k: number;
@@ -193,6 +194,7 @@ export default function ExternalKnowledgePage() {
   );
   const insecureHttp = Form.useWatch("allow_insecure_http", form);
   const formKind = Form.useWatch("kind", form);
+  const formAuthType = Form.useWatch("auth_type", form);
   const selectedTool = Form.useWatch("tool_name", form);
   // The advertised tools and their argument schemas: what the operator picks
   // from, dropped as soon as the drawer closes because it is upstream state.
@@ -255,6 +257,7 @@ export default function ExternalKnowledgePage() {
     form.resetFields();
     form.setFieldsValue({
       kind: kinds[0] ?? "akb-mcp",
+      auth_type: "service",
       api_key_header: "x-api-key",
       top_k: 8,
       min_score: 0,
@@ -278,6 +281,7 @@ export default function ExternalKnowledgePage() {
         display_name: row.display_name,
         kind: row.kind,
         endpoint: row.endpoint,
+        auth_type: row.auth_type || "service",
         api_key_header: row.api_key_header || "x-api-key",
         ref: row.ref,
         top_k: row.top_k,
@@ -297,6 +301,9 @@ export default function ExternalKnowledgePage() {
   const submitForm = useCallback(async () => {
     const values = await form.validateFields();
     const body: ExternalSourceCreateBody = {
+      auth_type: ["akb-mcp", "akb-rest"].includes(values.kind)
+        ? values.auth_type || "service"
+        : "service",
       display_name: values.display_name,
       kind: values.kind,
       endpoint: values.endpoint,
@@ -311,8 +318,9 @@ export default function ExternalKnowledgePage() {
       shared: values.shared,
     };
     if (values.api_key) body.api_key = values.api_key;
-    if (values.kind === "akb-mcp" && values.api_key_header)
-      body.api_key_header = values.api_key_header;
+    if (["akb-mcp", "akb-rest"].includes(values.kind) && values.api_key_header)
+      body.api_key_header =
+        values.auth_type === "agent" ? "x-api-key" : values.api_key_header;
     try {
       let saved: ExternalKnowledgeSource;
       if (editing) {
@@ -328,10 +336,7 @@ export default function ExternalKnowledgePage() {
         ),
       );
       message.success(t("externalKnowledge.updated"));
-      if (
-        ["akb-mcp", "akb-rest"].includes(values.kind) &&
-        !saved.identity_ready
-      )
+      if (saved.auth_type === "agent" && !saved.identity_ready)
         setIdentitySource(saved);
       setFormOpen(false);
       await refresh();
@@ -415,9 +420,10 @@ export default function ExternalKnowledgePage() {
         if (!bound) throw new Error(t("externalKnowledge.noBoundAgent"));
         return agentIdentityApi.bases(editing.source_id, bound.agentId);
       };
-      const result = editing.identity_ready
-        ? await viaIdentity()
-        : await externalKnowledgeApi.refs(editing.source_id);
+      const result =
+        editing.auth_type === "agent"
+          ? await viaIdentity()
+          : await externalKnowledgeApi.refs(editing.source_id);
       setRefs(result.refs ?? []);
       if ((result.refs ?? []).length === 0) {
         message.info(t("externalKnowledge.noRefs"));
@@ -462,7 +468,7 @@ export default function ExternalKnowledgePage() {
 
   const probe = useCallback(
     async (row: ExternalKnowledgeSource) => {
-      if (row.identity_ready) {
+      if (row.auth_type === "agent" && row.kind !== "akb-mcp") {
         setIdentitySource(row);
         return;
       }
@@ -619,12 +625,22 @@ export default function ExternalKnowledgePage() {
         ),
       },
       {
+        title: t("externalKnowledge.authType"),
+        key: "auth_type",
+        render: (_value: unknown, row) =>
+          t(
+            row.auth_type === "agent"
+              ? "externalKnowledge.authAgent"
+              : "externalKnowledge.authService",
+          ),
+      },
+      {
         title: t("externalKnowledge.actions"),
         key: "actions",
         width: 340,
         render: (_value: unknown, row) => (
           <div className={styles.rowActions}>
-            {row.can_manage && ["akb-mcp", "akb-rest"].includes(row.kind) && (
+            {row.can_manage && row.auth_type === "agent" && (
               <Tooltip title={t("externalKnowledge.identity.manage")}>
                 <Button
                   size="small"
@@ -652,7 +668,7 @@ export default function ExternalKnowledgePage() {
                 aria-label={t("externalKnowledge.test")}
                 icon={<Search size={15} />}
                 onClick={() => {
-                  if (row.identity_ready) {
+                  if (row.auth_type === "agent") {
                     setIdentitySource(row);
                     return;
                   }
@@ -662,19 +678,15 @@ export default function ExternalKnowledgePage() {
                 }}
               />
             </Tooltip>
-            {/* AKB sources are bound from the identity drawer, which also
-                verifies the key, so a separate bind button only duplicates it. */}
-            {!["akb-mcp", "akb-rest"].includes(row.kind) && (
+            {/* Identity bindings verify Agent credentials; service sources
+                use the ordinary source availability bindings. */}
+            {row.auth_type !== "agent" && (
               <Tooltip title={t("externalKnowledge.bind")}>
                 <Button
                   size="small"
                   aria-label={t("externalKnowledge.bind")}
                   icon={<Link2 size={15} />}
-                  onClick={() =>
-                    row.identity_ready
-                      ? setBindingSource(row)
-                      : setIdentitySource(row)
-                  }
+                  onClick={() => setBindingSource(row)}
                 >
                   {t("externalKnowledge.bind")}
                 </Button>
@@ -978,6 +990,10 @@ export default function ExternalKnowledgePage() {
           <Form.Item name="kind" label={t("externalKnowledge.kind")}>
             <Select
               disabled={editing?.identity_ready}
+              onChange={(kind: string) => {
+                if (!["akb-mcp", "akb-rest"].includes(kind))
+                  form.setFieldValue("auth_type", "service");
+              }}
               options={kinds.map((kind) => ({ value: kind, label: kind }))}
             />
           </Form.Item>
@@ -1000,26 +1016,51 @@ export default function ExternalKnowledgePage() {
               }
             />
           </Form.Item>
+          <Form.Item
+            name="auth_type"
+            label={t("externalKnowledge.authType")}
+            extra={t(
+              formAuthType === "agent"
+                ? "externalKnowledge.authAgentHelp"
+                : "externalKnowledge.authServiceHelp",
+            )}
+          >
+            <Select
+              disabled={editing?.identity_ready}
+              options={[
+                { value: "service", label: t("externalKnowledge.authService") },
+                ...(["akb-mcp", "akb-rest"].includes(formKind)
+                  ? [
+                      {
+                        value: "agent",
+                        label: t("externalKnowledge.authAgent"),
+                      },
+                    ]
+                  : []),
+              ]}
+            />
+          </Form.Item>
           <Form.Item name="api_key" label={t("externalKnowledge.apiKey")}>
             <Input.Password
               autoComplete="new-password"
               placeholder={editing ? t("externalKnowledge.apiKeyHint") : ""}
             />
           </Form.Item>
-          {formKind === "akb-mcp" && (
-            <Form.Item
-              name="api_key_header"
-              label={t("externalKnowledge.apiKeyHeader")}
-              extra={t("externalKnowledge.apiKeyHeaderHint")}
-            >
-              <Select
-                options={[
-                  { value: "x-api-key", label: "X-API-Key" },
-                  { value: "authorization", label: "Authorization: Bearer" },
-                ]}
-              />
-            </Form.Item>
-          )}
+          {["akb-mcp", "akb-rest"].includes(formKind) &&
+            formAuthType !== "agent" && (
+              <Form.Item
+                name="api_key_header"
+                label={t("externalKnowledge.apiKeyHeader")}
+                extra={t("externalKnowledge.apiKeyHeaderHint")}
+              >
+                <Select
+                  options={[
+                    { value: "x-api-key", label: "X-API-Key" },
+                    { value: "authorization", label: "Authorization: Bearer" },
+                  ]}
+                />
+              </Form.Item>
+            )}
           {/* Every adapter addresses one knowledge base, MCP included: how the
               call travels differs, what it selects does not — knowledge_query
               without a base is rejected by AKB. */}
@@ -1072,21 +1113,24 @@ export default function ExternalKnowledgePage() {
               </div>
               <Form.Item
                 label={t("externalKnowledge.tools")}
-                extra={
-                  editing?.identity_ready
-                    ? t("externalKnowledge.probeIdentityManaged")
-                    : t("externalKnowledge.toolsHint")
-                }
+                extra={t("externalKnowledge.toolsHint")}
               >
                 <Space direction="vertical" size={8} style={{ width: "100%" }}>
                   <Button
                     loading={probing}
-                    disabled={!editing || !!editing.identity_ready}
+                    disabled={!editing}
                     onClick={() => void runProbe()}
                     title={editing ? "" : t("externalKnowledge.probeAfterSave")}
                   >
                     {t("externalKnowledge.testConnection")}
                   </Button>
+                  {probeResult?.ok && editing?.auth_type === "agent" && (
+                    <Alert
+                      type="info"
+                      showIcon
+                      description={t("externalKnowledge.authAgentHelp")}
+                    />
+                  )}
                   {probeResult && (
                     <>
                       <Space size={4} wrap>
@@ -1190,16 +1234,12 @@ export default function ExternalKnowledgePage() {
                   the operator can set, so nothing here invents argument names. */}
               <Form.Item
                 label={t("externalKnowledge.toolName")}
-                extra={
-                  editing?.identity_ready
-                    ? t("externalKnowledge.probeIdentityManaged")
-                    : t("externalKnowledge.toolNameHint")
-                }
+                extra={t("externalKnowledge.toolNameHint")}
               >
                 <Select
                   allowClear
                   showSearch
-                  disabled={!editing || !!editing.identity_ready}
+                  disabled={!editing}
                   value={selectedTool}
                   onChange={changeTool}
                   placeholder={t("externalKnowledge.toolNamePlaceholder")}

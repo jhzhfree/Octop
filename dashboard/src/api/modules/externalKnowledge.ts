@@ -2,6 +2,7 @@ import { request } from "../request";
 
 export interface ExternalKnowledgeSource {
   identity_ready?: boolean;
+  auth_type?: "service" | "agent";
   api_key_header?: string;
   source_id: string;
   display_name: string;
@@ -78,6 +79,7 @@ export interface ExternalSourceCreateBody {
   display_name: string;
   endpoint: string;
   api_key?: string;
+  auth_type?: "service" | "agent";
   api_key_header?: string;
   instance_id?: string;
   ref?: string;

@@ -290,7 +290,7 @@ class AgentIdentityService:
         self, source_id: str, user_id: int, is_admin: bool
     ) -> tuple[ExternalSourceRow, dict[str, Any]]:
         row = self.sources._require_manage(source_id, user_id=user_id, is_admin=is_admin)
-        if row.kind not in {"akb-mcp", "akb-rest"}:
+        if row.kind not in {"akb-mcp", "akb-rest"} or self.sources.auth_type(row) != "agent":
             raise _invalid()
         return row, _default(row, self.sources.identity_config(row))
 

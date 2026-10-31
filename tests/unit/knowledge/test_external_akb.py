@@ -461,3 +461,26 @@ async def test_http_rejection_names_the_requested_target(
             origin="akb-rest",
         )
     assert "/api/v1/external/api/v1/external/kb/retrievals" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_agent_mcp_discovery_never_calls_business_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    methods: list[str] = []
+
+    async def fake_post_json(url: str, **kwargs: Any) -> Any:
+        method = kwargs["payload"]["method"]
+        methods.append(method)
+        if method == "initialize":
+            return {"result": {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}}}
+        assert method == "tools/list"
+        return {
+            "result": {"tools": [{"name": "list_knowledge_bases"}, {"name": "knowledge_query"}]}
+        }
+
+    monkeypatch.setattr(akb_mcp, "post_json", fake_post_json)
+    result = await akb_mcp.probe(_spec(kind="akb-mcp"), {"api_key": "k", "auth_type": "agent"})
+    assert result.ok
+    assert result.refs == []
+    assert methods == ["initialize", "tools/list"]

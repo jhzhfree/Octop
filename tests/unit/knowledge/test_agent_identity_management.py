@@ -57,6 +57,7 @@ def setup(tmp_path: Path, monkeypatch):
         endpoint="https://akb.example",
         ref="HR-POLICY",
         api_key="shared-test-key",
+        auth_type="agent",
     )
     records = {
         "alpha": SimpleNamespace(agent_id="alpha", name="A", user_id=user),
@@ -575,3 +576,57 @@ def test_origin_check_matches_the_sdk(endpoint: str, insecure: bool, allowed: bo
 )
 def test_sdk_origin_strips_the_pasted_path(endpoint: str, expected: str) -> None:
     assert identity._sdk_origin(endpoint) == expected
+
+
+def test_authentication_type_is_explicit_and_protocol_constrained(setup):
+    svc, sources, repo, source, user, _, _ = setup
+    assert sources.list_sources(user_id=user, is_admin=False)[0]["auth_type"] == "agent"
+    changed = sources.update_source(source, user_id=user, is_admin=False, auth_type="service")
+    assert changed["auth_type"] == "service"
+    assert sources.credentials_for(repo.get(source))["api_key"] == "shared-test-key"
+    with pytest.raises(OctopError):
+        svc.source(source, user, False)
+    with pytest.raises(OctopError):
+        sources.create_source(
+            user_id=user,
+            kind="ragflow",
+            display_name="bad",
+            endpoint="https://example.com",
+            auth_type="agent",
+        )
+
+
+@pytest.mark.asyncio
+async def test_agent_mode_without_binding_never_calls_unsigned_adapter(setup, monkeypatch):
+    _, sources, _, source, user, _, _ = setup
+    adapter = SimpleNamespace(search=AsyncMock())
+    monkeypatch.setattr("octop.infra.knowledge.external.service.get_adapter", lambda _: adapter)
+    with pytest.raises(OctopError) as err:
+        await sources.search_source(source, "question", user_id=user, is_admin=False)
+    assert err.value.code == ErrorCode.AGENT_IDENTITY_NOT_READY
+    adapter.search.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_bound_agent_cannot_be_silently_changed_to_service_mode(setup):
+    svc, sources, _, source, user, _, sdk = setup
+    await _connect(svc, sdk, source, "alpha", user, ALPHA)
+    with pytest.raises(OctopError):
+        sources.update_source(source, user_id=user, is_admin=False, auth_type="service")
+
+
+@pytest.mark.asyncio
+async def test_service_mode_calls_adapter_without_agent_assertion(setup, monkeypatch):
+    from octop.infra.knowledge.external.types import ExternalSearchResult
+
+    _, sources, repo, source, user, _, sdk = setup
+    sources.update_source(source, user_id=user, is_admin=False, auth_type="service")
+    adapter = SimpleNamespace(search=AsyncMock(return_value=ExternalSearchResult(chunks=[])))
+    monkeypatch.setattr("octop.infra.knowledge.external.service.get_adapter", lambda _: adapter)
+    spec = replace(
+        sources.to_spec(repo.get(source)), octop_identity=OctopIdentity(str(user), "alpha", "s")
+    )
+    await sources._search_spec(spec, "question", top_k=3)
+    assert adapter.search.await_args.args[0].octop_identity is None
+    assert adapter.search.await_args.args[1]["auth_type"] == "service"
+    sdk.assert_not_awaited()

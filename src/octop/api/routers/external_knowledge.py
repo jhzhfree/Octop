@@ -57,6 +57,10 @@ class SourceCreateBody(BaseModel):
     display_name: str = Field(min_length=1, max_length=120)
     endpoint: str = Field(min_length=1, max_length=2048)
     api_key: str = Field(default="", max_length=2048)
+    auth_type: Literal["service", "agent"] = Field(
+        default="service",
+        description="Service credential calls directly; Agent authentication requires a signed Agent binding (AKB REST/MCP only).",
+    )
     # How the key is sent: "x-api-key" (default) or "authorization" (Bearer).
     api_key_header: str = Field(default="", max_length=32)
     instance_id: str = Field(default="", max_length=120)
@@ -81,6 +85,10 @@ class SourcePatchBody(BaseModel):
     display_name: str | None = Field(default=None, min_length=1, max_length=120)
     endpoint: str | None = Field(default=None, min_length=1, max_length=2048)
     api_key: str | None = Field(default=None, max_length=2048)
+    auth_type: Literal["service", "agent"] | None = Field(
+        default=None,
+        description="Authentication type; remove existing Agent identity bindings before changing it.",
+    )
     api_key_header: str | None = Field(default=None, max_length=32)
     ref: str | None = Field(default=None, max_length=255)
     top_k: int | None = Field(default=None, ge=1, le=MAX_TOP_K)
@@ -151,6 +159,7 @@ async def create_source(
             endpoint=body.endpoint,
             api_key=body.api_key,
             api_key_header=body.api_key_header,
+            auth_type=body.auth_type,
             instance_id=body.instance_id,
             ref=body.ref,
             top_k=body.top_k,

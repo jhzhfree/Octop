@@ -6951,12 +6951,17 @@
     "noBoundAgent": "该来源暂无可用的 Agent 绑定，无法经绑定通道拉取知识库列表",
     "sharedHint": "共享后所有用户都能绑定这个来源。",
     "insecureWarning": "明文 HTTP 会把 API Key 暴露在链路上，仅用于可信内网。",
+    "authType": "认证类型",
+    "authService": "服务凭证",
+    "authAgent": "Agent 认证",
+    "authServiceHelp": "使用服务凭证直接调用，无需绑定 Agent 身份。",
+    "authAgentHelp": "服务 Key 用于连接和发现工具；执行工具必须先绑定并验证 Agent 身份。解绑所有 Agent 后可修改认证类型。",
     "identity": {
       "manage": "绑定 Agent / 认证",
       "boundBadge": "Agent 身份",
       "platformScopeTitle": "为 Octop 内的 Agent 接入 AKB",
-      "platformScopeHelp": "添加 AKB REST/MCP 连接，填写共享服务 Key，再绑定系统 Agent 并导入私钥。OpenCode 的适配插件安装在 OpenCode 中；Octop 使用内置接入。",
-      "bindingHelp": "绑定到 Agent 时填写 Octop 内部的 Agent ID，可在“绑定 Agent / 认证”中选择 Agent 后复制。完成绑定后，还需在该 Agent 的对话中使用知识检索工具。"
+      "platformScopeHelp": "认证类型与协议分别配置：服务凭证可直接检索；Agent 认证需要绑定身份，MCP 连接成功不代表具备工具调用权限。",
+      "bindingHelp": "选择可使用此来源的 Octop Agent 或本地知识库。这是来源的使用范围配置，服务凭证无需绑定 Agent 身份或导入私钥。"
     },
     "simple": {
       "title": "绑定 Agent · {{name}}",
