@@ -6,6 +6,7 @@ export interface SourceAgentIdentity {
   name: string;
   externalAgentId: string;
   activeKid: string | null;
+  identityVerified?: boolean;
   /** Saved public key, safe to show and copy. The private half is never returned. */
   publicJwk?: Record<string, string> | null;
   keySaved?: boolean;
@@ -13,6 +14,11 @@ export interface SourceAgentIdentity {
   lastVerificationStatus?: "success" | "failure" | null;
 }
 export interface SourceIdentityState {
+  connectionId?: string;
+  revision?: number;
+  resourceCount?: number;
+  resources?: { sourceId: string; name: string }[];
+  pendingKeys?: GeneratedAgentKey[];
   runtimeReady: boolean;
   /** Native identity runtime diagnostic, when unavailable. */
   runtimeReason?: string | null;
@@ -20,7 +26,11 @@ export interface SourceIdentityState {
   agents: SourceAgentIdentity[];
 }
 const root = (id: string) =>
-  `/external-knowledge/sources/${encodeURIComponent(id)}/identity`;
+  id.startsWith("connection:")
+    ? `/external-knowledge/connections/${encodeURIComponent(
+        id.slice(11),
+      )}/identity`
+    : `/external-knowledge/sources/${encodeURIComponent(id)}/identity`;
 function post<T>(url: string, body: unknown = {}) {
   return request<T>(url, {
     method: "POST",
@@ -43,14 +53,28 @@ export const agentIdentityApi = {
     externalAgentId: string,
     privateKey: string,
     keyReference = "",
+    revision?: number,
   ) =>
     post<{ activeKid: string | null }>(
       `${root(id)}/agents/${encodeURIComponent(agent)}/connect`,
-      { externalAgentId, privateKey, keyReference },
+      {
+        externalAgentId,
+        privateKey,
+        keyReference,
+        revision,
+        mountResource: false,
+      },
     ),
-  disconnect: (id: string, agent: string) =>
+  disconnect: (id: string, agent: string, revision?: number) =>
     request<{ ok: boolean }>(
-      `${root(id)}/agents/${encodeURIComponent(agent)}/connect`,
+      `${root(id)}/agents/${encodeURIComponent(agent)}/connect${
+        revision ? `?revision=${revision}` : ""
+      }`,
+      { method: "DELETE" },
+    ),
+  discard: (id: string, reference: string) =>
+    request<{ ok: boolean }>(
+      `${root(id)}/generated/${encodeURIComponent(reference)}`,
       { method: "DELETE" },
     ),
   state: (id: string) => request<SourceIdentityState>(root(id)),

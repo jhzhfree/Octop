@@ -2126,6 +2126,13 @@ def _apply_sqlite_migration(db: DatabasePool, version: int, path: Path) -> None:
         with db.connect() as conn:
             conn.execute("UPDATE _schema_version SET version = ?", (version,))
         return
+    if version == 31:
+        _ensure_column(
+            db, "external_connection_checks", "resource_revision", "INTEGER NOT NULL DEFAULT 0"
+        )
+        with db.connect() as conn:
+            conn.execute("UPDATE _schema_version SET version = ?", (version,))
+        return
     if version == 30:
         _ensure_external_connection_schema(db)
         with db.connect() as conn:

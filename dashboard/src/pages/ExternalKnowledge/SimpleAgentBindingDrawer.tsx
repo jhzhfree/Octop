@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
   App,
-  AutoComplete,
   Button,
   Card,
   Drawer,
@@ -22,10 +21,8 @@ import {
   type SourceIdentityState,
   type GeneratedAgentKey,
 } from "@/api/modules/agentIdentity";
-import {
-  externalKnowledgeApi,
-  type ExternalKnowledgeSource,
-} from "@/api/modules/externalKnowledge";
+import type { ExternalKnowledgeSource } from "@/api/modules/externalKnowledge";
+import { apiErrorMessage } from "@/utils/apiError";
 import { saveBlobAsFile } from "@/utils/saveBlobAsFile";
 import { isAgentId, randomAgentId } from "./agentKeygen";
 import { useServerTimezone } from "@/hooks/useServerTimezone";
@@ -39,7 +36,11 @@ const RUNTIME_REASON: Record<string, string> = {
   unsupported: "runtimeMissingUnsupported",
 };
 interface Props {
-  source: ExternalKnowledgeSource | null;
+  source: Pick<
+    ExternalKnowledgeSource,
+    "source_id" | "connection_id" | "display_name"
+  > | null;
+  connectionName?: string;
   onClose: () => void;
   onSaved: () => void;
 }
@@ -51,6 +52,7 @@ interface Values {
 }
 export default function SimpleAgentBindingDrawer({
   source,
+  connectionName,
   onClose,
   onSaved,
 }: Props) {
@@ -62,18 +64,15 @@ export default function SimpleAgentBindingDrawer({
   const [state, setState] = useState<SourceIdentityState | null>(null);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
-  const [apiKey, setApiKey] = useState("");
-  const [ref, setRef] = useState(""),
-    [selector, setSelector] = useState("");
-  const [refs, setRefs] = useState<{ ref: string; name: string }[]>([]);
-  const [refsLoading, setRefsLoading] = useState(false);
+  const [replacing, setReplacing] = useState(false);
+  const [testSource, setTestSource] = useState("");
   const [query, setQuery] = useState(""),
     [result, setResult] = useState<string | null>(null);
   const [generated, setGenerated] = useState<GeneratedAgentKey | null>(null);
   const selected = Form.useWatch("agentId", form);
   const externalId = Form.useWatch("externalAgentId", form);
+  const publicKey = Form.useWatch("publicKey", form);
   const file = useRef<HTMLInputElement>(null);
-  const publicFile = useRef<HTMLInputElement>(null);
   const generation = useRef(0);
   const load = useCallback(async () => {
     if (!source) return;
@@ -86,10 +85,12 @@ export default function SimpleAgentBindingDrawer({
     const currentGeneration = ++generation.current;
     setState(null);
     setError("");
-    setApiKey("");
-    setRef(source?.ref ?? "");
-    setSelector(source?.selector_argument ?? "");
-    setRefs([]);
+    setReplacing(false);
+    setTestSource(
+      source?.source_id.startsWith("connection:")
+        ? ""
+        : source?.source_id ?? "",
+    );
     setQuery("");
     setResult(null);
     setGenerated(null);
@@ -106,53 +107,10 @@ export default function SimpleAgentBindingDrawer({
     try {
       await fn();
     } catch (e) {
-      setError(e instanceof Error ? e.message : t(k + "failed"));
+      setError(apiErrorMessage(e, t(k + "failed"), t));
     } finally {
       setBusy(false);
     }
-  }
-  async function saveServiceKey() {
-    await act(async () => {
-      if (!source || !apiKey.trim()) return;
-      await externalKnowledgeApi.update(source.source_id, {
-        api_key: apiKey.trim(),
-      });
-      setApiKey("");
-      onSaved();
-      message.success(t(k + "saved"));
-    });
-  }
-  // A bound Agent can list the bases it may read, so the picklist works even
-  // though identity-managed sources refuse the legacy credential calls.
-  async function fetchRefs() {
-    if (!source) return;
-    setRefsLoading(true);
-    try {
-      const boundNow = active.find(
-        (a) => a.agentId === selected && !!a.activeKid,
-      );
-      const result = boundNow
-        ? await agentIdentityApi.bases(source.source_id, boundNow.agentId)
-        : await externalKnowledgeApi.refs(source.source_id);
-      setRefs(result.refs ?? []);
-      if ((result.refs ?? []).length === 0)
-        message.info(t("externalKnowledge.noRefs"));
-    } catch {
-      message.error(t("externalKnowledge.fetchRefsFailed"));
-    } finally {
-      setRefsLoading(false);
-    }
-  }
-  async function saveRef() {
-    if (!source) return;
-    await act(async () => {
-      await externalKnowledgeApi.update(source.source_id, {
-        ref: ref.trim(),
-        selector_argument: selector.trim(),
-      });
-      onSaved();
-      message.success(t(k + "saved"));
-    });
   }
   async function connect() {
     let v: Values;
@@ -173,7 +131,10 @@ export default function SimpleAgentBindingDrawer({
         !pem && generated?.externalAgentId === v.externalAgentId.trim()
           ? generated.keyReference
           : "",
+        state?.revision,
       );
+      setGenerated(null);
+      setReplacing(false);
       await load();
       onSaved();
       message.success(t(k + "connected"));
@@ -192,6 +153,7 @@ export default function SimpleAgentBindingDrawer({
         }),
         `${pair.externalAgentId}-public.jwk`,
       );
+      setReplacing(true);
       setGenerated(pair);
       form.setFieldsValue({
         externalAgentId: pair.externalAgentId,
@@ -199,16 +161,20 @@ export default function SimpleAgentBindingDrawer({
         privateKey: "",
       });
       setResult(null);
+      await load();
     });
   }
   const active = state?.agents.filter((a) => a.externalAgentId) ?? [];
-  const step = active.length ? 2 : 1;
+  const step = generated
+    ? 1
+    : active.some((a) => a.agentId === selected)
+    ? 2
+    : 0;
   // A key generated by the host is already in protected storage; there is no
   // PEM to paste, so the form shows its state instead of an import box.
   const hostKey = !!generated && generated.externalAgentId === externalId;
   const bound = active.find((a) => a.agentId === selected);
-  const keySaved = hostKey || !!bound?.keySaved;
-  const savedPublic = !generated && !!bound?.publicJwk;
+  const keySaved = hostKey || (!!bound?.keySaved && !replacing);
   useEffect(() => {
     if (generated) return;
     form.setFieldValue(
@@ -219,7 +185,9 @@ export default function SimpleAgentBindingDrawer({
   return (
     <Drawer
       open={!!source}
-      title={t(k + "title", { name: source?.display_name })}
+      title={t(k + "title", {
+        name: connectionName || source?.connection_id || source?.display_name,
+      })}
       width={680}
       onClose={onClose}
       closable={!busy}
@@ -255,93 +223,58 @@ export default function SimpleAgentBindingDrawer({
             )}
           />
         )}
-        <Typography.Title level={5}>{t(k + "systemIdentity")}</Typography.Title>
-        <Form
-          layout="vertical"
-          disabled={busy || !state || source?.can_manage_connection === false}
-        >
-          <Form.Item
-            label={t(k + "serviceKey")}
-            extra={
-              <Space direction="vertical" size={2}>
-                <span>{t(k + "serviceKeyHint")}</span>
-                {state?.serviceKeySaved && (
-                  <Space size={4}>
-                    <Tag color="green">{t(k + "privateSaved")}</Tag>
-                    <Typography.Text type="secondary">
-                      {t(k + "serviceKeySavedHint")}
-                    </Typography.Text>
-                  </Space>
-                )}
-              </Space>
-            }
-          >
-            <Input.Password
-              autoComplete="new-password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-            />
-          </Form.Item>
-          <Button
-            loading={busy}
-            disabled={
-              !state ||
-              !apiKey.trim() ||
-              source?.can_manage_connection === false
-            }
-            onClick={() => void saveServiceKey()}
-          >
-            {t(k + "saveConnection")}
-          </Button>
-        </Form>
-
-        <Typography.Title level={5}>{t(k + "knowledgeBase")}</Typography.Title>
-        <Form
-          layout="vertical"
-          disabled={busy || !source || source.can_manage === false}
-        >
-          <Form.Item
-            label={t("externalKnowledge.ref")}
-            extra={t(k + "refHint")}
-          >
-            <Space.Compact style={{ width: "100%" }}>
-              <AutoComplete
-                style={{ flex: 1 }}
-                filterOption
-                value={ref}
-                onChange={setRef}
-                placeholder="HR-POLICY"
-                options={refs.map((item) => ({
-                  value: item.ref,
-                  label: item.name ? `${item.name}（${item.ref}）` : item.ref,
-                }))}
-              />
-              <Button loading={refsLoading} onClick={() => void fetchRefs()}>
-                {t("externalKnowledge.fetchRefs")}
-              </Button>
-              <Button
-                type="primary"
-                disabled={
-                  busy || !ref.trim() || ref.trim() === (source?.ref ?? "")
-                }
-                onClick={() => void saveRef()}
-              >
-                {t(k + "saveRef")}
-              </Button>
-            </Space.Compact>
-          </Form.Item>
-          <Form.Item
-            label={t("externalKnowledge.selector")}
-            extra={t(k + "selectorHint")}
-          >
-            <Input
-              value={selector}
-              onChange={(e) => setSelector(e.target.value)}
-              placeholder="knowledgeBaseCode"
-            />
-          </Form.Item>
-        </Form>
-
+        <Alert
+          type="info"
+          showIcon
+          message={t(k + "connectionScope", {
+            count: state?.resourceCount ?? 0,
+          })}
+          description={t(k + "connectionScopeHelp")}
+        />
+        {!!state?.pendingKeys?.length && (
+          <Card size="small" title={t(k + "pendingKeys")}>
+            <Space direction="vertical" style={{ width: "100%" }}>
+              {state.pendingKeys.map((pair) => (
+                <Space key={pair.keyReference}>
+                  <Typography.Text code>{pair.externalAgentId}</Typography.Text>
+                  <Button
+                    disabled={busy}
+                    onClick={() => {
+                      setGenerated(pair);
+                      setReplacing(true);
+                      form.setFieldsValue({
+                        externalAgentId: pair.externalAgentId,
+                        publicKey: JSON.stringify(pair.publicJwk, null, 2),
+                        privateKey: "",
+                      });
+                    }}
+                  >
+                    {t(k + "resumeKey")}
+                  </Button>
+                  <Popconfirm
+                    title={t(k + "discardKeyHelp")}
+                    onConfirm={() =>
+                      act(async () => {
+                        if (!source) return;
+                        await agentIdentityApi.discard(
+                          source.source_id,
+                          pair.keyReference,
+                        );
+                        if (generated?.keyReference === pair.keyReference)
+                          setGenerated(null);
+                        await load();
+                      })
+                    }
+                  >
+                    <Button danger disabled={busy}>
+                      {t(k + "discardKey")}
+                    </Button>
+                  </Popconfirm>
+                </Space>
+              ))}
+            </Space>
+          </Card>
+        )}
         <Typography.Title level={5}>{t(k + "agentIdentity")}</Typography.Title>
         <Form
           form={form}
@@ -361,10 +294,11 @@ export default function SimpleAgentBindingDrawer({
                 label: `${a.name} · ${a.agentId}`,
               }))}
               onChange={(id) => {
+                setGenerated(null);
+                setReplacing(false);
                 const a = state?.agents.find((a) => a.agentId === id);
                 form.setFieldsValue({
-                  externalAgentId:
-                    a?.externalAgentId || generated?.externalAgentId || "",
+                  externalAgentId: a?.externalAgentId || "",
                   privateKey: "",
                 });
                 setResult(null);
@@ -380,6 +314,18 @@ export default function SimpleAgentBindingDrawer({
             columns={[
               { title: t(k + "systemAgent"), dataIndex: "name" },
               {
+                title: t(k + "publicKid"),
+                dataIndex: "activeKid",
+                render: (kid: string | null) =>
+                  kid ? (
+                    <Typography.Text copyable={{ text: kid }}>
+                      {kid.slice(0, 10)}…
+                    </Typography.Text>
+                  ) : (
+                    "—"
+                  ),
+              },
+              {
                 title: t(k + "agentId"),
                 dataIndex: "externalAgentId",
                 render: (v: string) => (
@@ -392,24 +338,20 @@ export default function SimpleAgentBindingDrawer({
                 title: t(k + "state"),
                 render: (_, row) => (
                   <Space direction="vertical" size={0}>
-                    <Tag
-                      color={
-                        row.lastVerificationStatus === "failure"
-                          ? "error"
-                          : row.activeKid
-                          ? "blue"
-                          : "default"
-                      }
-                    >
+                    <Tag color={row.activeKid ? "blue" : "default"}>
+                      {t(k + (row.activeKid ? "verified" : "pending"))}
+                    </Tag>
+                    <Tag color={row.identityVerified ? "green" : "default"}>
                       {t(
                         k +
-                          (row.lastVerificationStatus === "failure"
-                            ? "verificationFailed"
-                            : row.activeKid
-                            ? "verified"
-                            : "pending"),
+                          (row.identityVerified
+                            ? "identityVerified"
+                            : "identityNeedsVerify"),
                       )}
                     </Tag>
+                    {row.lastVerificationStatus === "failure" && (
+                      <Tag color="orange">{t(k + "verificationFailed")}</Tag>
+                    )}
                     {row.lastVerifiedAt && (
                       <Typography.Text type="secondary">
                         {formatServerIsoDateTime(row.lastVerifiedAt, timezone)}
@@ -427,6 +369,7 @@ export default function SimpleAgentBindingDrawer({
                       disabled={busy}
                       onClick={() => {
                         setGenerated(null);
+                        setReplacing(false);
                         form.setFieldsValue({
                           agentId: row.agentId,
                           externalAgentId: row.externalAgentId,
@@ -438,13 +381,16 @@ export default function SimpleAgentBindingDrawer({
                       {t(k + "select")}
                     </Button>
                     <Popconfirm
-                      title={t(k + "unbindHint")}
+                      title={t(k + "unbindHint", {
+                        count: state?.resourceCount ?? 0,
+                      })}
                       onConfirm={() =>
                         act(async () => {
                           if (!source) return;
                           await agentIdentityApi.disconnect(
                             source.source_id,
                             row.agentId,
+                            state?.revision,
                           );
                           await load();
                           onSaved();
@@ -460,6 +406,23 @@ export default function SimpleAgentBindingDrawer({
               },
             ]}
           />
+          {!!bound && (
+            <Space>
+              <Button disabled={busy} onClick={() => void connect()}>
+                {t(k + "reverify")}
+              </Button>
+              <Button
+                disabled={busy}
+                onClick={() => {
+                  setGenerated(null);
+                  setReplacing(true);
+                  form.setFieldValue("privateKey", "");
+                }}
+              >
+                {t(k + "replaceKey")}
+              </Button>
+            </Space>
+          )}
           <Card size="small" title={t(k + "keygenTitle")}>
             <Space direction="vertical" size="middle" style={{ width: "100%" }}>
               <Typography.Text type="secondary">
@@ -503,7 +466,7 @@ export default function SimpleAgentBindingDrawer({
                     />
                   </Form.Item>
                   <Button
-                    disabled={busy}
+                    disabled={busy || !!bound}
                     onClick={() =>
                       form.setFieldValue("externalAgentId", randomAgentId())
                     }
@@ -530,56 +493,23 @@ export default function SimpleAgentBindingDrawer({
                   </Typography.Text>
                 </Form.Item>
               )}
-              <Form.Item
-                label={t(k + "publicKey")}
-                extra={
-                  <Space direction="vertical" size={2}>
-                    <span>{t(k + "publicHint")}</span>
-                    {savedPublic && (
-                      <Space size={4}>
-                        <Tag color="green">{t(k + "privateSaved")}</Tag>
-                        <Typography.Text type="secondary">
-                          {t(k + "publicSavedHint")}
-                        </Typography.Text>
-                      </Space>
-                    )}
-                  </Space>
-                }
-              >
-                <input
-                  ref={publicFile}
-                  type="file"
-                  style={{ display: "none" }}
-                  accept=".jwk,.json"
-                  hidden
-                  onChange={(e) => {
-                    const input = e.target,
-                      f = input.files?.[0];
-                    input.value = "";
-                    if (!f) return;
-                    if (f.size > 16384) {
-                      setError(t(k + "keyTooLarge"));
-                      return;
-                    }
-                    void f
-                      .text()
-                      .then((text) => form.setFieldValue("publicKey", text));
-                  }}
-                />
-                <Button
-                  disabled={busy}
-                  onClick={() => publicFile.current?.click()}
-                >
-                  {t(k + "importPublic")}
-                </Button>
+              <Form.Item label={t(k + "publicKey")} extra={t(k + "publicHint")}>
                 <Form.Item name="publicKey" noStyle>
-                  <Input.TextArea
-                    rows={4}
-                    autoComplete="off"
-                    placeholder={t(k + "publicPlaceholder")}
-                    style={{ marginTop: 8 }}
-                  />
+                  <Input.TextArea rows={4} readOnly autoComplete="off" />
                 </Form.Item>
+                <Button
+                  disabled={!publicKey}
+                  onClick={() =>
+                    void saveBlobAsFile(
+                      new Blob([form.getFieldValue("publicKey")], {
+                        type: "application/json",
+                      }),
+                      `${externalId}-public.jwk`,
+                    )
+                  }
+                >
+                  {t(k + "downloadPublic")}
+                </Button>
               </Form.Item>
               <Form.Item
                 label={t(k + "privateKey")}
@@ -656,6 +586,20 @@ export default function SimpleAgentBindingDrawer({
             {t(k + "saveAndTest")}
           </Button>
         </Form>
+        <Select
+          style={{ width: "100%" }}
+          value={testSource}
+          onChange={setTestSource}
+          options={(
+            state?.resources ?? [
+              {
+                sourceId: source?.source_id ?? "",
+                name: source?.display_name ?? "",
+              },
+            ]
+          ).map((item) => ({ value: item.sourceId, label: item.name }))}
+          aria-label={t(k + "testResource")}
+        />
         <Space.Compact style={{ width: "100%" }}>
           <Input
             value={query}
@@ -666,6 +610,7 @@ export default function SimpleAgentBindingDrawer({
             disabled={
               busy ||
               !query.trim() ||
+              !testSource ||
               !active.some((a) => a.agentId === selected && a.activeKid)
             }
             onClick={() =>
@@ -674,7 +619,7 @@ export default function SimpleAgentBindingDrawer({
                 setResult(null);
                 try {
                   const r = await agentIdentityApi.search(
-                    source.source_id,
+                    testSource || source.source_id,
                     selected,
                     query,
                   );

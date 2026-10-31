@@ -642,3 +642,122 @@ def test_one_corrupt_legacy_credential_does_not_break_catalog_and_can_be_repaire
         },
     )
     assert service.credentials_for(repo.get("broken"))["api_key"] == "replaced-test-key"
+
+
+def test_resource_change_invalidates_checks_and_late_result_is_discarded(product):
+    service, repo, _, _, owner, _, _ = product
+    saved = source(product)
+    old = repo.get(saved["source_id"])
+    repo.record_check(
+        old.connection_id,
+        old.source_id,
+        "",
+        "retrieval",
+        "success",
+        expected_revision=old.revision,
+        expected_resource_revision=old.resource_revision,
+    )
+    assert repo.checks(old.connection_id, old.source_id)
+    service.update_source(
+        old.source_id,
+        user_id=owner,
+        is_admin=False,
+        ref="KB_B",
+        resource_revision=old.resource_revision,
+    )
+    assert repo.checks(old.connection_id, old.source_id) == []
+    repo.record_check(
+        old.connection_id,
+        old.source_id,
+        "",
+        "retrieval",
+        "success",
+        expected_revision=old.revision,
+        expected_resource_revision=old.resource_revision,
+    )
+    assert repo.checks(old.connection_id, old.source_id) == []
+    with pytest.raises(OctopError):
+        service.update_source(
+            old.source_id,
+            user_id=owner,
+            is_admin=False,
+            ref="KB_C",
+            resource_revision=old.resource_revision,
+        )
+
+
+@pytest.mark.asyncio
+async def test_connection_identity_without_resource_and_pending_keys_are_scoped(product):
+    from types import SimpleNamespace
+
+    from octop.infra.knowledge.external.agent_identity import AgentIdentityService
+    from octop.infra.knowledge.external.connections import Connections
+
+    service, repo, _, _, owner, other, _ = product
+    connection = Connections(service).create(
+        owner,
+        kind="akb-rest",
+        display_name="Independent",
+        endpoint="https://kb.example",
+        auth_type="agent",
+        api_key="synthetic",
+    )
+    identity = AgentIdentityService(service, SimpleNamespace(list_by_user=lambda _: []))
+    context = "connection:" + connection["connection_id"]
+    key = await identity.generate(context, owner, False, "")
+    state = await identity.describe(context, owner, False)
+    assert state["resourceCount"] == 0 and state["resources"] == []
+    assert state["pendingKeys"] == [key]
+    assert "pem" not in str(state) and "PRIVATE KEY" not in str(state)
+    with pytest.raises(OctopError):
+        await identity.discard_generated(context, other, False, key["keyReference"])
+    repo.update_connection(connection["connection_id"], connection["revision"], {"shared": 1})
+    other_state = await identity.describe(context, other, False)
+    assert other_state["pendingKeys"] == []
+    await identity.discard_generated(context, other, False, key["keyReference"])
+    assert (await identity.describe(context, owner, False))["pendingKeys"] == [key]
+    await identity.discard_generated(context, owner, False, key["keyReference"])
+    assert (await identity.describe(context, owner, False))["pendingKeys"] == []
+
+
+def test_resource_visibility_does_not_change_connection_or_other_resources(product):
+    service, repo, _, _, owner, _, _ = product
+    first = source(product)
+    row = repo.get(first["source_id"])
+    second = service.create_source(
+        user_id=owner,
+        kind=row.kind,
+        display_name="Private resource",
+        endpoint=row.endpoint,
+        connection_id=row.connection_id,
+        ref="SECOND",
+    )
+    service.update_source(
+        row.source_id,
+        user_id=owner,
+        is_admin=False,
+        resource_shared=True,
+        resource_revision=row.resource_revision,
+    )
+    assert repo.get(row.source_id).shared is True
+    assert repo.get(second["source_id"]).shared is False
+    assert not repo.connection(row.connection_id)["shared"]
+    assert repo.connection(row.connection_id)["revision"] == row.revision
+
+
+def test_upgrading_schema30_invalidates_old_resource_checks(product):
+    service, repo, _, _, _, _, pool = product
+    saved = source(product)
+    row = repo.get(saved["source_id"])
+    repo.record_check(row.connection_id, row.source_id, "", "retrieval", "success")
+    with pool.transaction() as db:
+        db.execute("ALTER TABLE external_connection_checks DROP COLUMN resource_revision")
+        db.execute("UPDATE _schema_version SET version=30")
+    run_migrations(pool)
+    run_migrations(pool)
+    assert repo.checks(row.connection_id, row.source_id) == []
+    with pool.connect() as db:
+        assert (
+            db.execute("SELECT resource_revision FROM external_connection_checks").fetchone()[0]
+            == 0
+        )

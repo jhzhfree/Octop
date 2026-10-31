@@ -220,6 +220,25 @@ async def call(payload: dict[str, Any], repo: SecretRepo | None) -> dict[str, An
     if repo is None:
         raise _failure()
     store = KeyStore(repo, payload["root"])
+    if op in {"pending", "discard"}:
+        prefix = "generated:" + payload["keyScope"] + ":"
+        if op == "discard":
+            reference = str(uuid.UUID(payload["keyReference"]))
+            store.repo.delete("agent_identity:" + prefix + reference)
+            return {"ok": True}
+        keys = []
+        for name in store.repo.names("agent_identity:" + prefix):
+            value = store.read(name.removeprefix("agent_identity:"))
+            jwk = public_jwk(value["pem"])
+            keys.append(
+                {
+                    "externalAgentId": value["agentId"],
+                    "keyReference": name.rsplit(":", 1)[1],
+                    "kid": jwk["kid"],
+                    "publicJwk": jwk,
+                }
+            )
+        return {"keys": keys}
     if op == "generate":
         external = str(uuid.UUID(payload.get("externalAgentId") or str(uuid.uuid4())))
 

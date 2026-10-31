@@ -260,6 +260,7 @@ def build_app(server: OctopServer) -> FastAPI:
             _RouterMount(knowledge_bases.router, "/api", ["knowledge"]),
             _RouterMount(external_knowledge.router, "/api", ["knowledge"]),
             _RouterMount(external_knowledge_identity.router, "/api", ["knowledge"]),
+            _RouterMount(external_knowledge_identity.connection_router, "/api", ["knowledge"]),
             _RouterMount(internal_mcp.router, "/api", ["internal-mcp"]),
             _RouterMount(channels.router, "/api", ["channels"]),
             _RouterMount(cron.router, "/api", ["cron"]),

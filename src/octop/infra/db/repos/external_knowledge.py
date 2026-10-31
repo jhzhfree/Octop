@@ -265,8 +265,16 @@ class ExternalKnowledgeRepo:
         agent_id: str | None = None,
         *,
         bound: bool = True,
+        mount_resource: bool = True,
     ) -> bool:
         with self._db.transaction() as conn:
+            previous = conn.execute(
+                "SELECT identity_json FROM external_knowledge_connections WHERE connection_id=?",
+                (row.connection_id,),
+            ).fetchone()
+            unchanged_coordinates = previous is not None and json.loads(
+                previous["identity_json"]
+            ) == {k: v for k, v in config.items() if k != "agents"}
             result = conn.execute(
                 "UPDATE external_knowledge_connections SET identity_json=?,revision=revision+1 WHERE connection_id=? AND revision=?",
                 (
@@ -277,6 +285,13 @@ class ExternalKnowledgeRepo:
             )
             if result.rowcount != 1:
                 return False
+            if unchanged_coordinates and agent_id is not None:
+                # A binding edit changes this Agent only. Preserve other Agents' checks
+                # without relabelling the changed Agent's old proof or retrieval result.
+                conn.execute(
+                    "UPDATE external_connection_checks SET revision=? WHERE connection_id=? AND revision=? AND agent_id<>?",
+                    (row.revision + 1, row.connection_id, row.revision, agent_id),
+                )
             if agent_id is not None:
                 if bound:
                     data = dict(config["agents"])[agent_id]
@@ -293,10 +308,11 @@ class ExternalKnowledgeRepo:
                             else None,
                         ),
                     )
-                    conn.execute(
-                        "INSERT INTO external_knowledge_bindings(source_id,target_type,target_id,enabled,created_at) VALUES(?,'agent',?,1,?) ON CONFLICT(source_id,target_type,target_id) DO UPDATE SET enabled=1",
-                        (row.source_id, agent_id, now_ts()),
-                    )
+                    if mount_resource:
+                        conn.execute(
+                            "INSERT INTO external_knowledge_bindings(source_id,target_type,target_id,enabled,created_at) VALUES(?,'agent',?,1,?) ON CONFLICT(source_id,target_type,target_id) DO UPDATE SET enabled=1",
+                            (row.source_id, agent_id, now_ts()),
+                        )
                 else:
                     conn.execute(
                         "DELETE FROM external_agent_bindings WHERE connection_id=? AND agent_id=?",
@@ -343,6 +359,7 @@ class ExternalKnowledgeRepo:
         code: str = "",
         *,
         expected_revision: int | None = None,
+        expected_resource_revision: int | None = None,
     ) -> None:
         with self._db.transaction() as conn:
             row = conn.execute(
@@ -353,13 +370,25 @@ class ExternalKnowledgeRepo:
                 expected_revision is not None and row["revision"] != expected_revision
             ):
                 return
+            resource = conn.execute(
+                "SELECT resource_revision FROM external_knowledge_sources WHERE source_id=? AND connection_id=?",
+                (resource_id, connection_id),
+            ).fetchone()
+            if not resource_id:
+                resource = {"resource_revision": 0}
+            if resource is None or (
+                expected_resource_revision is not None
+                and resource["resource_revision"] != expected_resource_revision
+            ):
+                return
             conn.execute(
-                "INSERT INTO external_connection_checks(connection_id,resource_id,agent_id,revision,stage,status,code,checked_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(connection_id,resource_id,agent_id,stage) DO UPDATE SET revision=excluded.revision,status=excluded.status,code=excluded.code,checked_at=excluded.checked_at",
+                "INSERT INTO external_connection_checks(connection_id,resource_id,agent_id,revision,resource_revision,stage,status,code,checked_at) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(connection_id,resource_id,agent_id,stage) DO UPDATE SET revision=excluded.revision,resource_revision=excluded.resource_revision,status=excluded.status,code=excluded.code,checked_at=excluded.checked_at",
                 (
                     connection_id,
                     resource_id,
                     agent_id,
                     row["revision"],
+                    resource["resource_revision"],
                     stage,
                     status,
                     code,
@@ -370,7 +399,7 @@ class ExternalKnowledgeRepo:
     def checks(self, connection_id: str, resource_id: str) -> list[dict[str, object]]:
         with self._db.connect() as conn:
             rows = conn.execute(
-                "SELECT x.agent_id,x.stage,x.status,x.code,x.checked_at FROM external_connection_checks x JOIN external_knowledge_connections c ON x.connection_id=c.connection_id AND x.revision=c.revision WHERE x.connection_id=? AND x.resource_id=?",
+                "SELECT x.agent_id,x.stage,x.status,x.code,x.checked_at FROM external_connection_checks x JOIN external_knowledge_connections c ON x.connection_id=c.connection_id AND x.revision=c.revision LEFT JOIN external_knowledge_sources s ON s.source_id=x.resource_id AND s.resource_revision=x.resource_revision WHERE (x.resource_id='' OR s.source_id IS NOT NULL) AND x.connection_id=? AND x.resource_id=?",
                 (connection_id, resource_id),
             ).fetchall()
         return [dict(r) for r in rows]
@@ -554,6 +583,7 @@ class ExternalKnowledgeRepo:
         tool_arguments: str | None = None,
         enabled: bool | None = None,
         shared: bool | None = None,
+        resource_shared: bool | None = None,
         credential_blob: bytes | None = None,
         replace_credentials: bool = False,
         auth_type: str | None = None,
@@ -583,7 +613,7 @@ class ExternalKnowledgeRepo:
         flags: dict[str, bool | None] = {
             "allow_insecure_http": allow_insecure_http,
             "enabled": enabled,
-            "shared": shared,
+            "shared": resource_shared if resource_shared is not None else shared,
         }
         for column, value in flags.items():
             if value is not None:

@@ -70,6 +70,8 @@ class GeneratedAgentKeyResponse(BaseModel):
 
 
 class SimpleBindingBody(BaseModel):
+    revision: int | None = Field(default=None, ge=1)
+    mount_resource: bool = Field(default=True, alias="mountResource")
     external_agent_id: str = Field(alias="externalAgentId", pattern=r"^[0-9a-f-]{36}$")
     key_reference: str = Field(default="", alias="keyReference", max_length=36)
     private_key: str = Field(
@@ -120,6 +122,22 @@ async def generate(
         raise _fail(exc) from exc
 
 
+@router.delete("/generated/{reference}", summary="取消本人未完成的密钥生成")
+async def discard_generated(
+    source_id: str,
+    reference: str,
+    user: Any = Depends(current_user),
+    server: Any = Depends(get_server),
+) -> dict[str, bool]:
+    try:
+        await _identity(server).discard_generated(
+            source_id, user.id, user.role == "admin", reference
+        )
+        return {"ok": True}
+    except ExternalSourceError as exc:
+        raise _fail(exc) from exc
+
+
 @router.post(
     "/agents/{agent_id}/connect",
     summary="绑定系统 Agent 并验证密钥",
@@ -141,6 +159,8 @@ async def connect(
             body.external_agent_id,
             body.private_key,
             body.key_reference,
+            body.revision,
+            body.mount_resource,
         )
     except ExternalSourceError as exc:
         raise _fail(exc) from exc
@@ -149,16 +169,17 @@ async def connect(
 @router.delete(
     "/agents/{agent_id}/connect",
     summary="解除 Agent 身份及检索绑定",
-    description="保留受保护密钥文件以便恢复；AKB 公钥需在 AKB 单独撤销。",
+    description="移除整个连接的 Agent 身份及该 Agent 的直接资源挂载；回收无引用的宿主密钥。AKB 公钥需在 AKB 单独撤销。",
 )
 async def disconnect(
     source_id: str,
     agent_id: str,
+    revision: int | None = None,
     user: Any = Depends(current_user),
     server: Any = Depends(get_server),
 ) -> dict[str, bool]:
     try:
-        _identity(server).disconnect(source_id, agent_id, user.id, user.role == "admin")
+        _identity(server).disconnect(source_id, agent_id, user.id, user.role == "admin", revision)
         return {"ok": True}
     except ExternalSourceError as exc:
         raise _fail(exc) from exc
@@ -203,3 +224,69 @@ async def list_bases(
         }
     except ExternalSourceError as exc:
         raise _fail(exc) from exc
+
+
+connection_router = APIRouter(
+    route_class=SensitiveIdentityRoute,
+    prefix="/external-knowledge/connections/{connection_id}/identity",
+    tags=["knowledge"],
+)
+
+
+@connection_router.get("", summary="查看连接级 Agent 身份（无需先建知识库）")
+async def connection_state(
+    connection_id: str, user: Any = Depends(current_user), server: Any = Depends(get_server)
+) -> dict[str, Any]:
+    return await state("connection:" + connection_id, user, server)
+
+
+@connection_router.post(
+    "/generate", response_model=GeneratedAgentKeyResponse, summary="为连接生成 Agent 密钥"
+)
+async def connection_generate(
+    connection_id: str,
+    body: GenerateKeyBody,
+    user: Any = Depends(current_user),
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    return await generate("connection:" + connection_id, body, user, server)
+
+
+@connection_router.delete("/generated/{reference}", summary="取消连接中本人待完成的密钥")
+async def connection_discard(
+    connection_id: str,
+    reference: str,
+    user: Any = Depends(current_user),
+    server: Any = Depends(get_server),
+) -> dict[str, bool]:
+    return await discard_generated("connection:" + connection_id, reference, user, server)
+
+
+@connection_router.post("/agents/{agent_id}/connect", summary="保存并验证连接身份，不自动挂载资源")
+async def connection_connect(
+    connection_id: str,
+    agent_id: str,
+    body: SimpleBindingBody,
+    user: Any = Depends(current_user),
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    return await connect(
+        "connection:" + connection_id,
+        agent_id,
+        body.model_copy(update={"mount_resource": False}),
+        user,
+        server,
+    )
+
+
+@connection_router.delete(
+    "/agents/{agent_id}/connect", summary="移除连接身份及该 Agent 在连接下的全部直接挂载"
+)
+async def connection_disconnect(
+    connection_id: str,
+    agent_id: str,
+    revision: int | None = None,
+    user: Any = Depends(current_user),
+    server: Any = Depends(get_server),
+) -> dict[str, bool]:
+    return await disconnect("connection:" + connection_id, agent_id, revision, user, server)

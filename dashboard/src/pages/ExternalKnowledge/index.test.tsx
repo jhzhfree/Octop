@@ -1,5 +1,11 @@
 import { App } from "antd";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import ExternalKnowledge from "./index";
 
@@ -9,10 +15,13 @@ const api = vi.hoisted(() => ({
   connections: vi.fn(),
   createConnection: vi.fn(),
   updateConnection: vi.fn(),
+  update: vi.fn(),
 }));
 vi.mock("@/api/modules/externalKnowledge", () => ({
   externalKnowledgeApi: api,
 }));
+const identity = vi.hoisted(() => ({ state: vi.fn(), bases: vi.fn() }));
+vi.mock("@/api/modules/agentIdentity", () => ({ agentIdentityApi: identity }));
 vi.mock("@/context/AgentContext", () => ({ useAgent: () => ({ agents: [] }) }));
 vi.mock("@/hooks/useIsMobile", () => ({ useIsMobile: () => false }));
 vi.mock("@/layouts/PageShell", () => ({
@@ -96,4 +105,138 @@ it("disables the connection using its revision instead of editing every resource
       enabled: false,
     }),
   );
+});
+
+it("shows a legacy connection as requiring attention rather than service authentication", async () => {
+  api.connections.mockResolvedValue([
+    { ...connection, auth_type: "legacy", needs_attention: true },
+  ]);
+  render(
+    <App>
+      <ExternalKnowledge />
+    </App>,
+  );
+  expect(
+    await screen.findByText("externalKnowledge.needsAttention"),
+  ).toBeVisible();
+  expect(
+    screen.queryByText("externalKnowledge.authService"),
+  ).not.toBeInTheDocument();
+});
+
+it("opens independent identity management before any resource exists", async () => {
+  api.connections.mockResolvedValue([{ ...connection, auth_type: "agent" }]);
+  render(
+    <App>
+      <ExternalKnowledge />
+    </App>,
+  );
+  fireEvent.click(await screen.findByText("externalKnowledge.details"));
+  fireEvent.click(
+    await screen.findByRole("tab", {
+      name: "externalKnowledge.identity.manage",
+    }),
+  );
+  expect(
+    await screen.findByRole("button", {
+      name: "externalKnowledge.identity.manage",
+    }),
+  ).toBeEnabled();
+});
+
+const resource = {
+  source_id: "resource",
+  connection_id: "c",
+  display_name: "Policies",
+  kind: "akb-mcp",
+  endpoint: "https://kb.example",
+  auth_type: "agent",
+  revision: 4,
+  resource_revision: 2,
+  ref: "HR",
+  top_k: 8,
+  min_score: 0,
+  timeout_ms: 10000,
+  tool_name: "knowledge_search",
+  tool_arguments: {},
+  selector_argument: "",
+  shared: false,
+  enabled: true,
+  bindings: [],
+  can_manage: true,
+  can_manage_connection: true,
+};
+
+it("loads Agent choices before the first catalog request", async () => {
+  api.list.mockResolvedValue([resource]);
+  identity.state.mockResolvedValue({
+    runtimeReady: true,
+    agents: [
+      {
+        agentId: "alpha",
+        name: "Alpha",
+        externalAgentId: "uuid",
+        activeKid: "kid",
+      },
+    ],
+  });
+  identity.bases.mockResolvedValue({ refs: [{ ref: "HR", name: "HR" }] });
+  render(
+    <App>
+      <ExternalKnowledge />
+    </App>,
+  );
+  const row = (await screen.findByText("Policies")).closest("tr")!;
+  fireEvent.click(
+    within(row).getByRole("button", { name: "externalKnowledge.edit" }),
+  );
+  await waitFor(() => expect(identity.state).toHaveBeenCalledWith("resource"));
+  const catalog = await screen.findByRole("combobox", {
+    name: "externalKnowledge.catalogAgent",
+  });
+  expect(
+    screen.getByRole("button", { name: "externalKnowledge.fetchRefs" }),
+  ).toBeDisabled();
+  fireEvent.mouseDown(catalog);
+  fireEvent.click(await screen.findByText("Alpha"));
+  fireEvent.click(
+    screen.getByRole("button", { name: "externalKnowledge.fetchRefs" }),
+  );
+  await waitFor(() =>
+    expect(identity.bases).toHaveBeenCalledWith("resource", "alpha"),
+  );
+});
+
+it("sends both versions when saving a resource without rewriting connection credentials", async () => {
+  api.list.mockResolvedValue([{ ...resource, auth_type: "service" }]);
+  api.update.mockResolvedValue(resource);
+  render(
+    <App>
+      <ExternalKnowledge />
+    </App>,
+  );
+  const row = (await screen.findByText("Policies")).closest("tr")!;
+  fireEvent.click(
+    within(row).getByRole("button", { name: "externalKnowledge.edit" }),
+  );
+  fireEvent.change(await screen.findByLabelText("externalKnowledge.name"), {
+    target: { value: "Updated Policies" },
+  });
+  fireEvent.click(
+    screen.getByRole("button", { name: "externalKnowledge.save" }),
+  );
+  await waitFor(() =>
+    expect(api.update).toHaveBeenCalledWith(
+      "resource",
+      expect.objectContaining({
+        revision: 4,
+        resource_revision: 2,
+        display_name: "Updated Policies",
+      }),
+    ),
+  );
+  const body = api.update.mock.calls[0][1];
+  expect(body).not.toHaveProperty("auth_type");
+  expect(body).not.toHaveProperty("api_key");
+  expect(body).not.toHaveProperty("endpoint");
 });

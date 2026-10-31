@@ -6,7 +6,7 @@ export interface ExternalKnowledgeConnection {
   display_name: string;
   endpoint: string;
   kind: string;
-  auth_type: "service" | "agent";
+  auth_type: "service" | "agent" | "legacy";
   allow_insecure_http: boolean;
   shared: boolean;
   enabled: boolean;
@@ -133,6 +133,7 @@ export type ExternalSourcePatchBody = Partial<ExternalSourceCreateBody> & {
   enabled?: boolean;
   revision?: number;
   resource_revision?: number;
+  resource_shared?: boolean;
 };
 
 export const externalKnowledgeApi = {

@@ -183,8 +183,54 @@ class AgentIdentityService:
     def source(
         self, source_id: str, user_id: int, is_admin: bool
     ) -> tuple[ExternalSourceRow, dict[str, Any]]:
-        row = self.sources._require_use(source_id, user_id=user_id, is_admin=is_admin)
+        if source_id.startswith("connection:"):
+            connection = self.sources._repo.connection(source_id.removeprefix("connection:"))
+            if (
+                connection is None
+                or not connection["enabled"]
+                or (
+                    not is_admin
+                    and connection["owner_user_id"] != user_id
+                    and not connection["shared"]
+                )
+            ):
+                raise OctopError.localized(ErrorCode.KNOWLEDGE_FORBIDDEN)
+            row = ExternalSourceRow(
+                id=0,
+                source_id="",
+                owner_user_id=connection["owner_user_id"],
+                instance_id=connection["instance_id"],
+                kind=connection["kind"],
+                display_name=connection["display_name"],
+                endpoint=connection["endpoint"],
+                ref="",
+                top_k=8,
+                min_score=0,
+                timeout_ms=10000,
+                allow_insecure_http=bool(connection["allow_insecure_http"]),
+                selector_argument="",
+                forbidden_arguments="",
+                read_tools="",
+                tool_name="",
+                tool_arguments="{}",
+                enabled=True,
+                shared=bool(connection["shared"]),
+                credential_blob=connection["credential_blob"],
+                created_at=connection["created_at"],
+                updated_at=connection["updated_at"],
+                connection_id=connection["connection_id"],
+                auth_type=connection["auth_type"],
+                revision=connection["revision"],
+                resource_revision=0,
+                connection_owner_user_id=connection["owner_user_id"],
+                connection_shared=bool(connection["shared"]),
+                connection_enabled=bool(connection["enabled"]),
+            )
+        else:
+            row = self.sources._require_use(source_id, user_id=user_id, is_admin=is_admin)
         if row.kind not in {"akb-mcp", "akb-rest"} or self.sources.auth_type(row) != "agent":
+            raise _invalid()
+        if row.auth_type == "legacy":
             raise _invalid()
         return row, _default(row, self.sources.identity_config(row))
 
@@ -212,10 +258,30 @@ class AgentIdentityService:
         available = self.agents.list_all() if is_admin else self.agents.list_by_user(user_id)
         bound = config["agents"] if config.get("simple") else {}
         result: dict[str, Any] = {
+            "connectionId": row.connection_id,
+            "revision": row.revision,
+            "resourceCount": len(self.sources._repo.connection_resources(row.connection_id)),
+            "resources": [
+                {"sourceId": item.source_id, "name": item.display_name}
+                for item in self.sources._repo.list_visible(user_id, is_admin=is_admin)
+                if item.connection_id == row.connection_id
+            ],
             "runtimeReady": ready,
             "runtimeReason": None if ready else (problem or "unsupported"),
             "serviceKeySaved": self._service_key_saved(row),
+            "pendingKeys": (
+                await self._call(
+                    {"op": "pending", "keyScope": row.connection_id + ":" + str(user_id)}
+                )
+            ).get("keys", [])
+            if ready
+            else [],
             "agents": [],
+        }
+        checks = {
+            str(c["agent_id"]): c
+            for c in self.sources._repo.checks(row.connection_id, "")
+            if c["stage"] == "identity"
         }
         for record in available:
             current = bound.get(record.agent_id)
@@ -254,6 +320,7 @@ class AgentIdentityService:
                     "agentId": record.agent_id,
                     "name": record.name,
                     "externalAgentId": current.get("externalAgentId", "") if current else "",
+                    "identityVerified": checks.get(record.agent_id, {}).get("status") == "success",
                     "activeKid": active_kid,
                     "publicJwk": public_jwk,
                     "keySaved": bool(public_jwk),
@@ -283,6 +350,20 @@ class AgentIdentityService:
             }
         )
 
+    async def discard_generated(
+        self, source_id: str, user_id: int, is_admin: bool, reference: str
+    ) -> None:
+        row, _ = self.source(source_id, user_id, is_admin)
+        if str(uuid.UUID(reference)) != reference:
+            raise _invalid()
+        await self._call(
+            {
+                "op": "discard",
+                "keyScope": row.connection_id + ":" + str(user_id),
+                "keyReference": reference,
+            }
+        )
+
     async def connect(
         self,
         source_id: str,
@@ -292,9 +373,13 @@ class AgentIdentityService:
         external_id: str,
         private_key: str,
         key_reference: str = "",
+        revision: int | None = None,
+        mount_resource: bool = True,
     ) -> dict[str, Any]:
         row, config = self.source(source_id, user_id, is_admin)
         self.agent(agent_id, user_id, is_admin)
+        if revision is not None and row.revision != revision:
+            raise OctopError.localized(ErrorCode.AGENT_IDENTITY_CONFLICT)
         _require_origin(row)
         try:
             if str(uuid.UUID(external_id)) != external_id:
@@ -364,9 +449,17 @@ class AgentIdentityService:
             "lastVerifiedAt": datetime.now(UTC).isoformat(),
             "lastVerificationStatus": "success",
         }
-        self.sources.save_identity_config(row, config, agent_id=agent_id)
+        self.sources.save_identity_config(
+            row, config, agent_id=agent_id, mount_resource=mount_resource and bool(row.source_id)
+        )
         self.sources._repo.record_check(
-            row.connection_id, row.source_id, agent_id, "identity", "success"
+            row.connection_id,
+            "",
+            agent_id,
+            "identity",
+            "success",
+            expected_revision=row.revision + 1,
+            expected_resource_revision=0,
         )
         if key_reference:
             self.sources._secret_repo.delete(
@@ -381,8 +474,17 @@ class AgentIdentityService:
             self._retire(old_reference)
         return {"status": result["status"], "activeKid": result["activeKid"]}
 
-    def disconnect(self, source_id: str, agent_id: str, user_id: int, is_admin: bool) -> None:
+    def disconnect(
+        self,
+        source_id: str,
+        agent_id: str,
+        user_id: int,
+        is_admin: bool,
+        revision: int | None = None,
+    ) -> None:
         row, config = self.source(source_id, user_id, is_admin)
+        if revision is not None and row.revision != revision:
+            raise OctopError.localized(ErrorCode.AGENT_IDENTITY_CONFLICT)
         self.agent(agent_id, user_id, is_admin)
         if agent_id not in config.get("agents", {}):
             raise _invalid()
@@ -417,10 +519,19 @@ class AgentIdentityService:
             result = await search_as_agent(spec, creds, query, top_k=top_k)
         except (OctopError, ExternalSourceError) as exc:
             self._record_verification(
-                source_id, agent_id, config, user_id, is_admin, "failure", str(exc.code)
+                source_id,
+                agent_id,
+                config,
+                user_id,
+                is_admin,
+                "failure",
+                str(exc.code),
+                expected_row=row,
             )
             raise
-        self._record_verification(source_id, agent_id, config, user_id, is_admin, "success")
+        self._record_verification(
+            source_id, agent_id, config, user_id, is_admin, "success", expected_row=row
+        )
         return {
             "source_id": source_id,
             "chunks": [asdict(chunk) for chunk in result.chunks],
@@ -450,9 +561,16 @@ class AgentIdentityService:
         is_admin: bool,
         status: str,
         code: str = "",
+        *,
+        expected_row: Any = None,
     ) -> None:
         try:
             row, current = self.source(source_id, user_id, is_admin)
+            if expected_row is not None and (
+                row.revision != expected_row.revision
+                or row.resource_revision != expected_row.resource_revision
+            ):
+                return
             agent = current.get("agents", {}).get(agent_id)
             if not agent or agent != previous.get("agents", {}).get(agent_id):
                 return  # An unbind or key change during the request must not be undone.
@@ -464,7 +582,16 @@ class AgentIdentityService:
                 datetime.now(UTC).isoformat(),
             )
             self.sources._repo.record_check(
-                row.connection_id, row.source_id, agent_id, "retrieval", status, code
+                row.connection_id,
+                row.source_id,
+                agent_id,
+                "retrieval",
+                status,
+                code,
+                expected_revision=expected_row.revision if expected_row else row.revision,
+                expected_resource_revision=expected_row.resource_revision
+                if expected_row
+                else row.resource_revision,
             )
         except (OctopError, ExternalSourceError):
             logging.getLogger(__name__).info(

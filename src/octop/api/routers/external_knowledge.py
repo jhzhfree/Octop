@@ -141,6 +141,9 @@ class SourceCreateBody(BaseModel):
 
 
 class SourcePatchBody(BaseModel):
+    resource_shared: bool | None = Field(
+        default=None, description="Resource visibility only; does not change connection sharing"
+    )
     resource_revision: int | None = Field(
         default=None, ge=1, description="Expected resource revision"
     )

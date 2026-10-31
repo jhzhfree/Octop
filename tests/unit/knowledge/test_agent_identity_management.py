@@ -612,3 +612,97 @@ async def test_service_mode_calls_adapter_without_agent_assertion(setup, monkeyp
     assert adapter.search.await_args.args[0].octop_identity is None
     assert adapter.search.await_args.args[1]["auth_type"] == "service"
     sdk.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_connection_binding_does_not_mount_and_connection_removal_covers_all_resources(setup):
+    svc, sources, repo, source, user, _, sdk = setup
+    first = repo.get(source)
+    second = sources.create_source(
+        user_id=user,
+        kind="akb-rest",
+        display_name="Second",
+        endpoint=first.endpoint,
+        connection_id=first.connection_id,
+        ref="OTHER",
+    )
+    sdk.return_value = {
+        "binding": _binding(ALPHA),
+        "status": {"agentId": ALPHA},
+        "activeKid": "k" * 43,
+    }
+    context = "connection:" + first.connection_id
+    await svc.connect(
+        context,
+        "alpha",
+        user,
+        False,
+        ALPHA,
+        "PRIVATE-TEST-MATERIAL",
+        revision=first.revision,
+        mount_resource=False,
+    )
+    assert not repo.list_bindings()
+    current = repo.get(source)
+    assert repo.checks(current.connection_id, "")[0]["status"] == "success"
+    # Existing direct mounts under both resources must be removed together, while resources survive.
+    repo.set_binding(source_id=source, target_type="agent", target_id="alpha", enabled=True)
+    repo.set_binding(
+        source_id=second["source_id"], target_type="agent", target_id="alpha", enabled=True
+    )
+    with pytest.raises(OctopError):
+        svc.disconnect(context, "alpha", user, False, revision=first.revision)
+    svc.disconnect(context, "alpha", user, False, revision=current.revision)
+    assert not repo.list_bindings()
+    assert repo.get(source) and repo.get(second["source_id"])
+
+
+@pytest.mark.asyncio
+async def test_reverifying_one_agent_preserves_other_agents_checks(setup):
+    svc, _, repo, source, user, _, sdk = setup
+    await _connect(svc, sdk, source, "alpha", user, ALPHA)
+    await _connect(svc, sdk, source, "beta", user, BETA)
+    connection = repo.get(source).connection_id
+    assert {row["agent_id"] for row in repo.checks(connection, "")} == {"alpha", "beta"}
+    await _connect(svc, sdk, source, "alpha", user, ALPHA)
+    assert {row["agent_id"] for row in repo.checks(connection, "")} == {"alpha", "beta"}
+    svc.disconnect(source, "alpha", user, False)
+    assert {row["agent_id"] for row in repo.checks(connection, "")} == {"beta"}
+
+
+@pytest.mark.asyncio
+async def test_connection_identity_http_contract_has_no_resource_requirement(setup, monkeypatch):
+    import httpx
+    from fastapi import FastAPI
+
+    from octop.api.deps import current_user, get_server
+    from octop.api.routers import external_knowledge_identity as routes
+    from octop.infra.knowledge.external.connections import Connections
+
+    svc, sources, _, _, user, _, _ = setup
+    connection = Connections(sources).create(
+        user,
+        kind="akb-rest",
+        display_name="Empty",
+        endpoint="https://akb.example",
+        auth_type="agent",
+        api_key="synthetic",
+    )
+    monkeypatch.setattr(routes, "_identity", lambda _: svc)
+    app = FastAPI()
+    app.include_router(routes.connection_router)
+    app.dependency_overrides[current_user] = lambda: SimpleNamespace(id=user, role="user")
+    app.dependency_overrides[get_server] = lambda: SimpleNamespace()
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.get(
+            f"/external-knowledge/connections/{connection['connection_id']}/identity"
+        )
+    assert response.status_code == 200
+    assert response.json()["resources"] == []
+    assert response.json()["connectionId"] == connection["connection_id"]
+    assert "privateKey" not in response.json()
+    assert app.openapi()["paths"][
+        "/external-knowledge/connections/{connection_id}/identity/agents/{agent_id}/connect"
+    ]["post"]

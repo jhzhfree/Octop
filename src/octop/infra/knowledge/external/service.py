@@ -226,7 +226,7 @@ class ExternalKnowledgeService:
             config = credentials.get("agent_identity", {})
             identity_ready = self.auth_type(row) == "agent" and any(
                 check["agent_id"] and check["status"] == "success" and check["stage"] == "identity"
-                for check in self._repo.checks(row.connection_id, row.source_id)
+                for check in self._repo.checks(row.connection_id, "")
             )
             stored = str(credentials.get("api_key_header") or "")
             if stored in API_KEY_HEADERS:
@@ -284,10 +284,13 @@ class ExternalKnowledgeService:
         *,
         agent_id: str | None = None,
         bound: bool = True,
+        mount_resource: bool = True,
     ) -> None:
         row = self._migrate_row(row)
         try:
-            saved = self._repo.save_identity(row, config, agent_id, bound=bound)
+            saved = self._repo.save_identity(
+                row, config, agent_id, bound=bound, mount_resource=mount_resource
+            )
         except Exception as exc:
             if not is_reference_conflict(exc):
                 raise
@@ -477,6 +480,7 @@ class ExternalKnowledgeService:
             raise ExternalSourceError("INVALID_ARGUMENT", "unsupported AKB retrieval tool")
         tool_arguments = fields.pop("tool_arguments", None)
         shared = fields.pop("shared", None)
+        resource_shared = fields.pop("resource_shared", None)
         enabled = fields.pop("enabled", None)
         allow_insecure = fields.pop("allow_insecure_http", None)
         replace_credentials = False
@@ -523,6 +527,7 @@ class ExternalKnowledgeService:
                 else _dump_tool_arguments(tool_arguments),
                 enabled=None if enabled is None else bool(enabled),
                 shared=None if shared is None else bool(shared),
+                resource_shared=resource_shared,
                 credential_blob=blob,
                 replace_credentials=replace_credentials,
                 auth_type=mode if auth_type is not None else None,
@@ -641,19 +646,39 @@ class ExternalKnowledgeService:
                 result = await adapter.probe(spec, creds)
         except TimeoutError:
             self._repo.record_check(
-                row.connection_id, row.source_id, "", "connection", "failed", "TIMEOUT"
+                row.connection_id,
+                row.source_id,
+                "",
+                "connection",
+                "failed",
+                "TIMEOUT",
+                expected_revision=row.revision,
+                expected_resource_revision=row.resource_revision,
             )
             return {"ok": False, "code": "TIMEOUT", "message": "connection deadline exceeded"}
         except ExternalSourceError as exc:
             self._repo.record_check(
-                row.connection_id, row.source_id, "", "connection", "failed", exc.code
+                row.connection_id,
+                row.source_id,
+                "",
+                "connection",
+                "failed",
+                exc.code,
+                expected_revision=row.revision,
+                expected_resource_revision=row.resource_revision,
             )
             return {"ok": False, "code": exc.code, "message": str(exc)}
         except Exception:  # noqa: BLE001 - upstreams are untrusted
             logger.warning("external knowledge probe failed source=%s", source_id, exc_info=True)
             return {"ok": False, "code": "UNEXPECTED", "message": "probe failed"}
         self._repo.record_check(
-            row.connection_id, row.source_id, "", "connection", "success" if result.ok else "failed"
+            row.connection_id,
+            row.source_id,
+            "",
+            "connection",
+            "success" if result.ok else "failed",
+            expected_revision=row.revision,
+            expected_resource_revision=row.resource_revision,
         )
         return {
             "auth_type": self.auth_type(row),
@@ -774,6 +799,7 @@ class ExternalKnowledgeService:
                 "failed",
                 exc.code,
                 expected_revision=row.revision,
+                expected_resource_revision=row.resource_revision,
             )
             raise
         self._repo.record_check(
@@ -783,6 +809,7 @@ class ExternalKnowledgeService:
             "retrieval",
             "success",
             expected_revision=row.revision,
+            expected_resource_revision=row.resource_revision,
         )
         return result
 
@@ -816,6 +843,7 @@ class ExternalKnowledgeService:
             status,
             code,
             expected_revision=row.revision,
+            expected_resource_revision=row.resource_revision,
         )
         self._repo.record_verification(
             row.connection_id,
