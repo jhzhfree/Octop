@@ -10,7 +10,7 @@ from collections.abc import Callable
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from octop.api.deps import current_user, get_server
 from octop.infra.errors import ErrorCode, OctopError
@@ -76,8 +76,10 @@ class ConnectionView(BaseModel):
     shared: bool
     revision: int
     has_credentials: bool
+    api_key_header: str = "x-api-key"
     can_manage: bool
     needs_attention: bool
+    check: dict[str, Any] | None = None
     resource_count: int
     agent_count: int
     created_at: int
@@ -179,6 +181,11 @@ class SourcePatchBody(BaseModel):
 class SearchBody(BaseModel):
     query: str = Field(min_length=1, max_length=4000)
     top_k: int = Field(default=0, ge=0, le=MAX_TOP_K)
+
+    @field_validator("query", mode="before")
+    @classmethod
+    def nonempty_query(cls, value: Any) -> Any:
+        return value.strip() if isinstance(value, str) else value
 
 
 class BindingBody(BaseModel):
@@ -514,3 +521,39 @@ async def create_resource(
             user_id=user.id, kind="", endpoint="", **body.model_dump()
         )
     )
+
+
+@router.post(
+    "/external-knowledge/connections/{connection_id}/probe",
+    summary="Check connection and service credential without retrieval",
+)
+async def probe_connection(
+    connection_id: str, user: Any = Depends(current_user), server: Any = Depends(get_server)
+) -> dict[str, Any]:
+    from octop.infra.knowledge.external.connections import Connections
+
+    try:
+        return await Connections(_service(server)).probe(
+            connection_id, user.id, user.role == "admin"
+        )
+    except ExternalSourceError as exc:
+        raise _fail(exc) from exc
+
+
+@router.get(
+    "/external-knowledge/connections/{connection_id}/refs",
+    summary="List knowledge bases before creating a resource",
+)
+async def connection_refs(
+    connection_id: str, user: Any = Depends(current_user), server: Any = Depends(get_server)
+) -> dict[str, Any]:
+    from octop.infra.knowledge.external.connections import Connections
+
+    try:
+        return {
+            "refs": await Connections(_service(server)).refs(
+                connection_id, user.id, user.role == "admin"
+            )
+        }
+    except ExternalSourceError as exc:
+        raise _fail(exc) from exc

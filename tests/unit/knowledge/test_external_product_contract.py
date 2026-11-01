@@ -241,6 +241,7 @@ async def test_native_agent_and_service_send_same_business_request_and_exact_sig
     claims = []
 
     def upstream(request):
+        assert request.headers["X-API-Key"] == "synthetic"
         body = json.loads(request.content)
         if "X-AKB-Workload-Assertion" in request.headers:
             claim = jwt.decode(
@@ -761,3 +762,148 @@ def test_upgrading_schema30_invalidates_old_resource_checks(product):
             db.execute("SELECT resource_revision FROM external_connection_checks").fetchone()[0]
             == 0
         )
+
+
+def test_akb_connection_requires_a_real_service_credential(product):
+    from octop.infra.knowledge.external.connections import Connections
+
+    service, _, _, _, owner, _, _ = product
+    with pytest.raises(ExternalSourceError) as failure:
+        Connections(service).create(
+            owner,
+            kind="akb-mcp",
+            display_name="Empty",
+            endpoint="https://kb.example",
+            api_key="   ",
+        )
+    assert failure.value.code == "INVALID_CREDENTIALS"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["akb-mcp", "akb-rest"])
+@pytest.mark.parametrize("mode", ["service", "agent"])
+async def test_connection_check_sends_key_without_identity_or_retrieval(product, kind, mode):
+    from octop.infra.knowledge.external.connections import Connections
+
+    service, repo, _, _, owner, other, _ = product
+    manager = Connections(service)
+    connection = manager.create(
+        owner,
+        kind=kind,
+        auth_type=mode,
+        display_name="Isolated",
+        endpoint="https://kb.example/gateway",
+        api_key="synthetic-check-key",
+    )
+    calls = []
+
+    def upstream(request):
+        assert request.headers["X-API-Key"] == "synthetic-check-key"
+        assert "X-AKB-Workload-Assertion" not in request.headers
+        calls.append(request)
+        if kind == "akb-rest":
+            assert (
+                request.method == "GET"
+                and request.url.path == "/gateway/api/v1/external/connection"
+            )
+            return httpx.Response(
+                200,
+                json={
+                    "success": True,
+                    "data": {"connected": True, "agentIdentityRequired": mode == "agent"},
+                },
+            )
+        body = json.loads(request.content)
+        assert body["method"] in {"initialize", "tools/list"}
+        result = (
+            {"protocolVersion": "2025-06-18"}
+            if body["method"] == "initialize"
+            else {"tools": [{"name": "knowledge_search"}]}
+        )
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": result})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+        token = http._CLIENT.set(client)
+        try:
+            result = await manager.probe(connection["connection_id"], owner, False)
+            assert result["ok"] and result["stage"] == "connection"
+            assert result["agent_identity_required"] == (mode == "agent")
+            assert manager.list(owner, False)[0]["check"]["status"] == "success"
+            with pytest.raises(OctopError):
+                await manager.probe(connection["connection_id"], other, False)
+        finally:
+            http._CLIENT.reset(token)
+    assert len(calls) == (1 if kind == "akb-rest" else 2)
+    assert not repo.connection_resources(connection["connection_id"])
+
+
+@pytest.mark.asyncio
+async def test_missing_or_stripped_key_is_recorded_as_credentials_failure(product):
+    from octop.infra.knowledge.external.connections import Connections
+
+    service, _, _, _, owner, _, _ = product
+    manager = Connections(service)
+    connection = manager.create(
+        owner,
+        kind="akb-rest",
+        display_name="Proxy",
+        endpoint="https://kb.example",
+        api_key="synthetic",
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(401, json={"message": "missing key"})
+        )
+    ) as client:
+        token = http._CLIENT.set(client)
+        try:
+            result = await manager.probe(connection["connection_id"], owner, False)
+        finally:
+            http._CLIENT.reset(token)
+    assert result["ok"] is False and result["code"] == "INVALID_CREDENTIALS"
+    assert manager.list(owner, False)[0]["check"]["code"] == "INVALID_CREDENTIALS"
+
+
+@pytest.mark.asyncio
+async def test_resource_catalog_can_be_loaded_before_creating_first_resource(product):
+    from octop.infra.knowledge.external.connections import Connections
+
+    service, repo, _, _, owner, _, _ = product
+    manager = Connections(service)
+    connection = manager.create(
+        owner,
+        kind="akb-rest",
+        display_name="Catalog",
+        endpoint="https://kb.example",
+        api_key="synthetic",
+        api_key_header="authorization",
+    )
+
+    def upstream(request):
+        assert request.headers["Authorization"] == "Bearer synthetic"
+        assert request.url.path == "/api/v1/external/bases"
+        return httpx.Response(
+            200, json={"success": True, "data": [{"knowledgeBaseId": "KB_FIRST", "name": "First"}]}
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+        token = http._CLIENT.set(client)
+        try:
+            assert await manager.refs(connection["connection_id"], owner, False) == [
+                {"ref": "KB_FIRST", "name": "First"}
+            ]
+        finally:
+            http._CLIENT.reset(token)
+    assert not repo.connection_resources(connection["connection_id"])
+
+
+@pytest.mark.parametrize("value", ["", " ", "\n\t"])
+def test_management_retrieval_rejects_empty_questions(value):
+    from pydantic import ValidationError
+
+    from octop.api.routers.external_knowledge import SearchBody
+    from octop.api.routers.external_knowledge_identity import IdentitySearchBody
+
+    for schema in (SearchBody, IdentitySearchBody):
+        with pytest.raises(ValidationError):
+            schema(query=value)

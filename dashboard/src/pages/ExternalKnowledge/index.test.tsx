@@ -16,6 +16,8 @@ const api = vi.hoisted(() => ({
   createConnection: vi.fn(),
   updateConnection: vi.fn(),
   update: vi.fn(),
+  probeConnection: vi.fn(),
+  connectionRefs: vi.fn(),
 }));
 vi.mock("@/api/modules/externalKnowledge", () => ({
   externalKnowledgeApi: api,
@@ -25,8 +27,17 @@ vi.mock("@/api/modules/agentIdentity", () => ({ agentIdentityApi: identity }));
 vi.mock("@/context/AgentContext", () => ({ useAgent: () => ({ agents: [] }) }));
 vi.mock("@/hooks/useIsMobile", () => ({ useIsMobile: () => false }));
 vi.mock("@/layouts/PageShell", () => ({
-  default: ({ children }: { children: React.ReactNode }) => (
-    <div>{children}</div>
+  default: ({
+    children,
+    actions,
+  }: {
+    children: React.ReactNode;
+    actions: React.ReactNode;
+  }) => (
+    <div>
+      {actions}
+      {children}
+    </div>
   ),
 }));
 vi.mock("@/hooks/useServerTimezone", () => ({
@@ -57,6 +68,14 @@ beforeEach(() => {
   api.kinds.mockResolvedValue({ kinds: ["akb-mcp", "akb-rest"] });
   api.connections.mockResolvedValue([connection]);
   api.createConnection.mockResolvedValue(connection);
+  api.probeConnection.mockResolvedValue({
+    ok: false,
+    code: "INVALID_CREDENTIALS",
+    stage: "connection",
+  });
+  api.connectionRefs.mockResolvedValue({
+    refs: [{ ref: "KB_FIRST", name: "First" }],
+  });
   api.updateConnection.mockResolvedValue({ ...connection, enabled: false });
 });
 
@@ -153,7 +172,7 @@ const resource = {
   auth_type: "agent",
   revision: 4,
   resource_revision: 2,
-  ref: "HR",
+  ref: "KB_HR",
   top_k: 8,
   min_score: 0,
   timeout_ms: 10000,
@@ -180,11 +199,15 @@ it("loads Agent choices before the first catalog request", async () => {
       },
     ],
   });
-  identity.bases.mockResolvedValue({ refs: [{ ref: "HR", name: "HR" }] });
+  identity.bases.mockResolvedValue({ refs: [{ ref: "KB_HR", name: "HR" }] });
   render(
     <App>
       <ExternalKnowledge />
     </App>,
+  );
+  await screen.findByText("Company KB");
+  fireEvent.click(
+    screen.getByRole("tab", { name: "externalKnowledge.resources (1)" }),
   );
   const row = (await screen.findByText("Policies")).closest("tr")!;
   fireEvent.click(
@@ -215,6 +238,10 @@ it("sends both versions when saving a resource without rewriting connection cred
       <ExternalKnowledge />
     </App>,
   );
+  await screen.findByText("Company KB");
+  fireEvent.click(
+    screen.getByRole("tab", { name: "externalKnowledge.resources (1)" }),
+  );
   const row = (await screen.findByText("Policies")).closest("tr")!;
   fireEvent.click(
     within(row).getByRole("button", { name: "externalKnowledge.edit" }),
@@ -239,4 +266,64 @@ it("sends both versions when saving a resource without rewriting connection cred
   expect(body).not.toHaveProperty("auth_type");
   expect(body).not.toHaveProperty("api_key");
   expect(body).not.toHaveProperty("endpoint");
+});
+
+it("requires the service Key before saving a new AKB connection", async () => {
+  render(
+    <App>
+      <ExternalKnowledge />
+    </App>,
+  );
+  await screen.findByText("Company KB");
+  fireEvent.click(
+    screen.getByRole("button", { name: "externalKnowledge.newConnection" }),
+  );
+  fireEvent.change(screen.getByLabelText("externalKnowledge.name"), {
+    target: { value: "Missing Key" },
+  });
+  fireEvent.change(screen.getByLabelText("externalKnowledge.endpoint"), {
+    target: { value: "https://kb.example" },
+  });
+  fireEvent.click(
+    screen.getByRole("button", { name: "externalKnowledge.save" }),
+  );
+  expect(
+    await screen.findByText("externalKnowledge.missingServiceKey"),
+  ).toBeVisible();
+  expect(api.createConnection).not.toHaveBeenCalled();
+});
+
+it("checks a connection without creating or searching a knowledge resource", async () => {
+  render(
+    <App>
+      <ExternalKnowledge />
+    </App>,
+  );
+  await screen.findByText("Company KB");
+  fireEvent.click(
+    screen.getByRole("button", { name: "externalKnowledge.checkConnection" }),
+  );
+  await waitFor(() => expect(api.probeConnection).toHaveBeenCalledWith("c"));
+  expect(api.update).not.toHaveBeenCalled();
+  expect(identity.bases).not.toHaveBeenCalled();
+});
+
+it("loads the knowledge catalog before the first resource is saved", async () => {
+  render(
+    <App>
+      <ExternalKnowledge />
+    </App>,
+  );
+  await screen.findByText("Company KB");
+  fireEvent.click(
+    screen.getByRole("tab", { name: "externalKnowledge.resources (0)" }),
+  );
+  fireEvent.click(
+    screen.getAllByRole("button", { name: "externalKnowledge.new" })[0],
+  );
+  fireEvent.click(
+    await screen.findByRole("button", { name: "externalKnowledge.fetchRefs" }),
+  );
+  await waitFor(() => expect(api.connectionRefs).toHaveBeenCalledWith("c"));
+  expect(api.createConnection).not.toHaveBeenCalled();
 });

@@ -199,6 +199,30 @@ export default function ExternalKnowledgePage() {
   const [connectionEditor, setConnectionEditor] = useState<
     ExternalKnowledgeConnection | "new" | null
   >(null);
+  const [section, setSection] = useState("connections");
+  const [checkingConnection, setCheckingConnection] = useState<string>();
+  const openNewConnection = () => {
+    connectionForm.resetFields();
+    connectionForm.setFieldsValue({
+      kind: "akb-mcp",
+      auth_type: "service",
+      api_key_header: "x-api-key",
+    });
+    setConnectionEditor("new");
+  };
+  const checkConnection = async (row: ExternalKnowledgeConnection) => {
+    setCheckingConnection(row.connection_id);
+    try {
+      await externalKnowledgeApi.probeConnection(row.connection_id);
+      await refresh();
+    } catch (error) {
+      message.error(
+        apiErrorMessage(error, t("externalKnowledge.probeFailed"), t),
+      );
+    } finally {
+      setCheckingConnection(undefined);
+    }
+  };
   const [detailConnectionId, setDetailConnectionId] = useState<string>();
   const detailConnection = connections.find(
     (row) => row.connection_id === detailConnectionId,
@@ -223,7 +247,8 @@ export default function ExternalKnowledgePage() {
     "resource" | "connection" | null
   >(null);
   const [connectionForm] = Form.useForm();
-  const connectionKind = Form.useWatch("kind", connectionForm);
+  const connectionKind = Form.useWatch("kind", connectionForm) || "akb-mcp";
+  const connectionAuth = Form.useWatch("auth_type", connectionForm);
   const [kinds, setKinds] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [identitySource, setIdentitySource] = useState<Pick<
@@ -241,7 +266,7 @@ export default function ExternalKnowledgePage() {
     null,
   );
   const insecureHttp = Form.useWatch("allow_insecure_http", form);
-  const formKind = Form.useWatch("kind", form);
+  const formKind = Form.useWatch("kind", form) || "akb-mcp";
   const formAuthType = Form.useWatch("auth_type", form);
   const reusedConnection = Form.useWatch("connection_id", form);
   const [catalogAgent, setCatalogAgent] = useState<string>();
@@ -251,10 +276,17 @@ export default function ExternalKnowledgePage() {
   useEffect(() => {
     setCatalogAgent(undefined);
     setCatalogAgents([]);
-    if (!formOpen || !editing || editing.auth_type !== "agent") return;
+    const sourceId =
+      editing?.source_id ||
+      (reusedConnection ? `connection:${reusedConnection}` : "");
+    const mode =
+      editing?.auth_type ||
+      connections.find((row) => row.connection_id === reusedConnection)
+        ?.auth_type;
+    if (!formOpen || !sourceId || mode !== "agent") return;
     let cancelled = false;
     void agentIdentityApi
-      .state(editing.source_id)
+      .state(sourceId)
       .then((state) => {
         if (!cancelled)
           setCatalogAgents(
@@ -272,7 +304,7 @@ export default function ExternalKnowledgePage() {
     return () => {
       cancelled = true;
     };
-  }, [editing, formOpen, message, t]);
+  }, [editing, formOpen, message, t, reusedConnection, connections]);
   const selectedTool = Form.useWatch("tool_name", form);
   // The advertised tools and their argument schemas: what the operator picks
   // from, dropped as soon as the drawer closes because it is upstream state.
@@ -339,18 +371,32 @@ export default function ExternalKnowledgePage() {
     setToolArgs([]);
     form.resetFields();
     form.setFieldsValue({
-      connection_id: "",
-      kind: kinds[0] ?? "akb-mcp",
-      auth_type: "service",
+      connection_id:
+        connections.find((row) => row.enabled && !row.needs_attention)
+          ?.connection_id || "",
+      kind:
+        connections.find((row) => row.enabled && !row.needs_attention)?.kind ||
+        kinds[0] ||
+        "akb-mcp",
+      auth_type:
+        connections.find((row) => row.enabled && !row.needs_attention)
+          ?.auth_type === "agent"
+          ? "agent"
+          : "service",
       api_key_header: "x-api-key",
+      endpoint:
+        connections.find((row) => row.enabled && !row.needs_attention)
+          ?.endpoint || "",
       top_k: 8,
       min_score: 0,
       timeout_ms: 10000,
-      allow_insecure_http: false,
+      allow_insecure_http:
+        connections.find((row) => row.enabled && !row.needs_attention)
+          ?.allow_insecure_http || false,
       shared: false,
     });
     setFormOpen(true);
-  }, [form, kinds]);
+  }, [form, kinds, connections]);
 
   const openEdit = useCallback(
     (row: ExternalKnowledgeSource) => {
@@ -515,8 +561,8 @@ export default function ExternalKnowledgePage() {
   }, []);
 
   const fetchRefs = useCallback(async () => {
-    if (!editing) {
-      message.info(t("externalKnowledge.fetchRefsAfterSave"));
+    if (!editing && !reusedConnection) {
+      message.info(t("externalKnowledge.selectConnectionFirst"));
       return;
     }
     setRefsLoading(true);
@@ -526,12 +572,17 @@ export default function ExternalKnowledgePage() {
       const viaIdentity = async () => {
         if (!catalogAgent)
           throw new Error(t("externalKnowledge.chooseCatalogAgent"));
-        return agentIdentityApi.bases(editing.source_id, catalogAgent);
+        return agentIdentityApi.bases(
+          editing?.source_id || `connection:${reusedConnection}`,
+          catalogAgent,
+        );
       };
       const result =
-        editing.auth_type === "agent"
+        (editing?.auth_type || formAuthType) === "agent"
           ? await viaIdentity()
-          : await externalKnowledgeApi.refs(editing.source_id);
+          : editing
+          ? await externalKnowledgeApi.refs(editing.source_id)
+          : await externalKnowledgeApi.connectionRefs(String(reusedConnection));
       setRefs(result.refs ?? []);
       if ((result.refs ?? []).length === 0) {
         message.info(t("externalKnowledge.noRefs"));
@@ -548,7 +599,7 @@ export default function ExternalKnowledgePage() {
     } finally {
       setRefsLoading(false);
     }
-  }, [editing, message, t, catalogAgent]);
+  }, [editing, message, t, catalogAgent, reusedConnection, formAuthType]);
 
   const toggleEnabled = useCallback(
     async (row: ExternalKnowledgeSource, enabled: boolean) => {
@@ -691,7 +742,12 @@ export default function ExternalKnowledgePage() {
                 </Tooltip>
               )}
             </div>
-            <span className={styles.endpointText}>{row.endpoint}</span>
+            <span className={styles.endpointText}>
+              {t("externalKnowledge.parentConnection")}:{" "}
+              {connections.find(
+                (connection) => connection.connection_id === row.connection_id,
+              )?.display_name || row.endpoint}
+            </span>
           </div>
         ),
       },
@@ -759,7 +815,11 @@ export default function ExternalKnowledgePage() {
                     title={`${formatServerIsoDateTime(
                       new Date(check.checked_at * 1000).toISOString(),
                       timezone,
-                    )} · ${checkHint(check.code, t)}`}
+                    )} · ${check.code ? `${check.code} · ` : ""}${checkHint(
+                      check.code,
+                      t,
+                      check.status,
+                    )}`}
                   >
                     {agents.find((a) => a.agent_id === check.agent_id)?.name ||
                       (check.agent_id
@@ -882,7 +942,17 @@ export default function ExternalKnowledgePage() {
         ),
       },
     ],
-    [agents, timezone, openEdit, probe, removeSource, t, toggleEnabled, unbind],
+    [
+      agents,
+      connections,
+      timezone,
+      openEdit,
+      probe,
+      removeSource,
+      t,
+      toggleEnabled,
+      unbind,
+    ],
   );
 
   async function reviewLatest() {
@@ -949,37 +1019,71 @@ export default function ExternalKnowledgePage() {
       subtitle={t("externalKnowledge.description")}
       fill={!isMobile}
       actions={
-        <Button type="primary" icon={<Plus size={15} />} onClick={openCreate}>
-          {t("externalKnowledge.new")}
-        </Button>
+        section === "connections" ? (
+          <Button
+            type="primary"
+            icon={<Plus size={16} />}
+            onClick={openNewConnection}
+          >
+            {t("externalKnowledge.newConnection")}
+          </Button>
+        ) : (
+          <Button
+            type="primary"
+            icon={<Plus size={16} />}
+            disabled={
+              !connections.some((row) => row.enabled && !row.needs_attention)
+            }
+            onClick={openCreate}
+          >
+            {t("externalKnowledge.new")}
+          </Button>
+        )
       }
     >
       <div className={styles.layout}>
-        <Alert
-          showIcon
-          type="info"
-          message={t("externalKnowledge.identity.platformScopeTitle")}
-          description={t("externalKnowledge.identity.platformScopeHelp")}
+        <div className={styles.setupGuide}>
+          <Typography.Title level={5}>
+            {t("externalKnowledge.setupTitle")}
+          </Typography.Title>
+          <p>{t("externalKnowledge.setupHelp")}</p>
+          <ol>
+            <li>{t("externalKnowledge.setupConnection")}</li>
+            <li>{t("externalKnowledge.setupIdentity")}</li>
+            <li>{t("externalKnowledge.setupResource")}</li>
+          </ol>
+        </div>
+        <Tabs
+          className={styles.sectionTabs}
+          activeKey={section}
+          onChange={setSection}
+          items={[
+            {
+              key: "connections",
+              label: `${t("externalKnowledge.connection")} (${
+                connections.length
+              })`,
+            },
+            {
+              key: "resources",
+              label: `${t("externalKnowledge.resources")} (${sources.length})`,
+            },
+          ]}
         />
-        <Space direction="vertical" style={{ width: "100%" }}>
-          <Space>
-            <Typography.Title level={5} style={{ margin: 0 }}>
-              {t("externalKnowledge.connection")}
-            </Typography.Title>
-            <Button
-              onClick={() => {
-                connectionForm.resetFields();
-                connectionForm.setFieldsValue({
-                  kind: "akb-mcp",
-                  auth_type: "service",
-                  api_key_header: "x-api-key",
-                });
-                setConnectionEditor("new");
-              }}
-            >
-              {t("externalKnowledge.newConnection")}
-            </Button>
-          </Space>
+        <section
+          className={styles.connectionSection}
+          hidden={section !== "connections"}
+        >
+          <div className={styles.sectionHeading}>
+            <div>
+              <Typography.Title level={5}>
+                {t("externalKnowledge.connection")}
+              </Typography.Title>
+              <Typography.Text type="secondary">
+                {t("externalKnowledge.connectionDefinition")}
+              </Typography.Text>
+            </div>
+          </div>
           <Table<ExternalKnowledgeConnection>
             size="small"
             rowKey="connection_id"
@@ -1005,14 +1109,69 @@ export default function ExternalKnowledgePage() {
                   ),
               },
               {
+                title: t("externalKnowledge.checkStatus"),
+                render: (_, row) => {
+                  const check = row.check
+                    ? { ...row.check, ok: row.check.status === "success" }
+                    : null;
+                  return (
+                    <Space direction="vertical" size={2}>
+                      <Tag
+                        color={
+                          !row.has_credentials
+                            ? "red"
+                            : check
+                            ? check.ok
+                              ? "green"
+                              : "red"
+                            : "default"
+                        }
+                      >
+                        {!row.has_credentials
+                          ? t("externalKnowledge.missingServiceKey")
+                          : check
+                          ? t(
+                              check.ok
+                                ? "externalKnowledge.checkPassed"
+                                : "externalKnowledge.checkFailed",
+                            )
+                          : t("externalKnowledge.notVerified")}
+                      </Tag>
+                      {check && (
+                        <Typography.Text type="secondary">
+                          {checkHint(
+                            check.code,
+                            t,
+                            check.ok ? "success" : "failed",
+                          )}
+                        </Typography.Text>
+                      )}
+                    </Space>
+                  );
+                },
+              },
+              {
                 title: t("externalKnowledge.resourceCount"),
                 dataIndex: "resource_count",
               },
               {
                 title: t("externalKnowledge.actions"),
                 render: (_, row) => (
-                  <Space>
+                  <Space wrap>
                     <Button
+                      size="small"
+                      icon={<Activity size={14} />}
+                      loading={checkingConnection === row.connection_id}
+                      disabled={
+                        !row.enabled ||
+                        !["akb-mcp", "akb-rest"].includes(row.kind)
+                      }
+                      onClick={() => void checkConnection(row)}
+                    >
+                      {t("externalKnowledge.checkConnection")}
+                    </Button>
+                    <Button
+                      size="small"
                       onClick={() => setDetailConnectionId(row.connection_id)}
                     >
                       {t("externalKnowledge.details")}
@@ -1089,58 +1248,73 @@ export default function ExternalKnowledgePage() {
               },
             ]}
           />
-        </Space>
-        <div className={styles.panelHeader}>
-          <div className={styles.panelStats}>
-            <Tag className={styles.statTag} bordered={false}>
-              {t("externalKnowledge.total")}: {summary.total}
-            </Tag>
-            <Tag className={styles.statTag} color="green" bordered={false}>
-              {t("externalKnowledge.enabledCount")}: {summary.enabled}
-            </Tag>
-            <Tag className={styles.statTag} color="blue" bordered={false}>
-              {t("externalKnowledge.sharedCount")}: {summary.shared}
-            </Tag>
+        </section>
+        <section
+          className={styles.resourceSection}
+          hidden={section !== "resources"}
+        >
+          <div className={styles.sectionHeading}>
+            <div>
+              <Typography.Title level={5}>
+                {t("externalKnowledge.resources")}
+              </Typography.Title>
+              <Typography.Text type="secondary">
+                {t("externalKnowledge.resourceDefinition")}
+              </Typography.Text>
+            </div>
           </div>
-          <div className={styles.panelActions}>
-            <Tooltip title={t("externalKnowledge.refresh")}>
-              <Button
-                className={styles.iconBtn}
-                aria-label={t("externalKnowledge.refresh")}
-                icon={<RefreshCw size={15} />}
-                loading={loading}
-                onClick={() => void refresh()}
-              />
-            </Tooltip>
+          <div className={styles.panelHeader}>
+            <div className={styles.panelStats}>
+              <Tag className={styles.statTag} bordered={false}>
+                {t("externalKnowledge.total")}: {summary.total}
+              </Tag>
+              <Tag className={styles.statTag} color="green" bordered={false}>
+                {t("externalKnowledge.enabledCount")}: {summary.enabled}
+              </Tag>
+              <Tag className={styles.statTag} color="blue" bordered={false}>
+                {t("externalKnowledge.sharedCount")}: {summary.shared}
+              </Tag>
+            </div>
+            <div className={styles.panelActions}>
+              <Tooltip title={t("externalKnowledge.refresh")}>
+                <Button
+                  className={styles.iconBtn}
+                  aria-label={t("externalKnowledge.refresh")}
+                  icon={<RefreshCw size={15} />}
+                  loading={loading}
+                  onClick={() => void refresh()}
+                />
+              </Tooltip>
+            </div>
           </div>
-        </div>
 
-        <div className={styles.tableWrap}>
-          <Table<ExternalKnowledgeSource>
-            rowKey="source_id"
-            loading={loading}
-            columns={columns}
-            dataSource={sources}
-            pagination={false}
-            scroll={{ x: 960 }}
-            locale={{
-              emptyText: (
-                <Empty
-                  image={Empty.PRESENTED_IMAGE_SIMPLE}
-                  description={t("externalKnowledge.empty")}
-                >
-                  <Button
-                    type="primary"
-                    icon={<Plus size={15} />}
-                    onClick={openCreate}
+          <div className={styles.tableWrap}>
+            <Table<ExternalKnowledgeSource>
+              rowKey="source_id"
+              loading={loading}
+              columns={columns}
+              dataSource={sources}
+              pagination={false}
+              scroll={{ x: 960 }}
+              locale={{
+                emptyText: (
+                  <Empty
+                    image={Empty.PRESENTED_IMAGE_SIMPLE}
+                    description={t("externalKnowledge.empty")}
                   >
-                    {t("externalKnowledge.new")}
-                  </Button>
-                </Empty>
-              ),
-            }}
-          />
-        </div>
+                    <Button
+                      type="primary"
+                      icon={<Plus size={15} />}
+                      onClick={openCreate}
+                    >
+                      {t("externalKnowledge.new")}
+                    </Button>
+                  </Empty>
+                ),
+              }}
+            />
+          </div>
+        </section>
       </div>
 
       <Drawer
@@ -1547,6 +1721,10 @@ export default function ExternalKnowledgePage() {
               disabled={
                 connectionEditor !== "new" && !!connectionEditor?.agent_count
               }
+              onChange={(mode: string) => {
+                if (mode === "agent")
+                  connectionForm.setFieldValue("api_key_header", "x-api-key");
+              }}
               options={[
                 { value: "service", label: t("externalKnowledge.authService") },
                 ...(["akb-mcp", "akb-rest"].includes(connectionKind)
@@ -1564,9 +1742,33 @@ export default function ExternalKnowledgePage() {
             name="api_key"
             label={t("externalKnowledge.apiKey")}
             extra={t("externalKnowledge.apiKeyHint")}
+            rules={[
+              {
+                required:
+                  ["akb-mcp", "akb-rest"].includes(connectionKind) &&
+                  (connectionEditor === "new" ||
+                    !connectionEditor?.has_credentials),
+                message: t("externalKnowledge.missingServiceKey"),
+              },
+            ]}
           >
             <Input.Password autoComplete="new-password" />
           </Form.Item>
+          {["akb-mcp", "akb-rest"].includes(connectionKind) && (
+            <Form.Item
+              name="api_key_header"
+              label={t("externalKnowledge.authHeader")}
+              extra={t("externalKnowledge.headerHelp")}
+            >
+              <Select
+                disabled={connectionAuth === "agent"}
+                options={[
+                  { value: "x-api-key", label: "X-API-Key" },
+                  { value: "authorization", label: "Authorization: Bearer" },
+                ]}
+              />
+            </Form.Item>
+          )}
           <Form.Item
             name="shared"
             valuePropName="checked"
@@ -1623,10 +1825,15 @@ export default function ExternalKnowledgePage() {
               name="connection_id"
               label={t("externalKnowledge.connection")}
               extra={t("externalKnowledge.connectionHelp")}
+              rules={[
+                {
+                  required: true,
+                  message: t("externalKnowledge.selectConnectionFirst"),
+                },
+              ]}
             >
               <Select
                 options={[
-                  { value: "", label: t("externalKnowledge.newConnection") },
                   ...connections
                     .filter((row) => row.enabled)
                     .map((row) => ({
@@ -1635,6 +1842,8 @@ export default function ExternalKnowledgePage() {
                     })),
                 ]}
                 onChange={(value: string) => {
+                  setRefs([]);
+                  form.setFieldValue("ref", "");
                   const row = connections.find(
                     (item) => item.connection_id === value,
                   );
@@ -1804,6 +2013,7 @@ export default function ExternalKnowledgePage() {
                   formKind.startsWith("akb-")
                     ? [
                         {
+                          required: true,
                           pattern: /^KB_[A-Za-z0-9]{1,125}$/,
                           message: t("externalKnowledge.refHint"),
                         },
@@ -1825,7 +2035,7 @@ export default function ExternalKnowledgePage() {
                   }))}
                 />
               </Form.Item>
-              {editing?.auth_type === "agent" && (
+              {(editing?.auth_type || formAuthType) === "agent" && (
                 <Select
                   aria-label={t("externalKnowledge.catalogAgent")}
                   value={catalogAgent}
@@ -1838,10 +2048,16 @@ export default function ExternalKnowledgePage() {
               <Button
                 loading={refsLoading}
                 disabled={
-                  !editing || (editing.auth_type === "agent" && !catalogAgent)
+                  (!editing && !reusedConnection) ||
+                  ((editing?.auth_type || formAuthType) === "agent" &&
+                    !catalogAgent)
                 }
                 onClick={() => void fetchRefs()}
-                title={editing ? "" : t("externalKnowledge.fetchRefsAfterSave")}
+                title={
+                  editing || reusedConnection
+                    ? ""
+                    : t("externalKnowledge.selectConnectionFirst")
+                }
               >
                 {t("externalKnowledge.fetchRefs")}
               </Button>

@@ -17,7 +17,7 @@ __all__ = ["auth_headers"]
 def auth_headers(creds: dict[str, Any], *, origin: str) -> dict[str, str]:
     api_key = str(creds.get("api_key") or "").strip()
     if not api_key:
-        raise ExternalSourceError("INVALID_ARGUMENT", "AKB API key is missing", origin=origin)
+        raise ExternalSourceError("INVALID_CREDENTIALS", "AKB API key is missing", origin=origin)
     scheme = str(creds.get("api_key_header") or "").strip().lower() or API_KEY_HEADERS[0]
     if scheme == "authorization":
         return {"Authorization": f"Bearer {api_key}"}

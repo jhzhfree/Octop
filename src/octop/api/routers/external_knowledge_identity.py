@@ -8,7 +8,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from octop.api.deps import current_user, get_server
 from octop.api.routers.external_knowledge import _fail, _service
@@ -86,6 +86,11 @@ class SimpleBindingBody(BaseModel):
 class IdentitySearchBody(BaseModel):
     query: str = Field(min_length=1, max_length=4000)
     top_k: int = Field(default=3, ge=1, le=50)
+
+    @field_validator("query", mode="before")
+    @classmethod
+    def nonempty_query(cls, value: Any) -> Any:
+        return value.strip() if isinstance(value, str) else value
 
 
 @router.get(
@@ -290,3 +295,15 @@ async def connection_disconnect(
     server: Any = Depends(get_server),
 ) -> dict[str, bool]:
     return await disconnect("connection:" + connection_id, agent_id, revision, user, server)
+
+
+@connection_router.get(
+    "/agents/{agent_id}/bases", summary="List knowledge bases using a verified connection Agent"
+)
+async def connection_bases(
+    connection_id: str,
+    agent_id: str,
+    user: Any = Depends(current_user),
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    return await list_bases("connection:" + connection_id, agent_id, user, server)

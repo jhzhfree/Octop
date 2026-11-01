@@ -1,6 +1,8 @@
 import { request } from "../request";
 
 export interface ExternalKnowledgeConnection {
+  api_key_header?: string;
+  check?: { status: string; code: string; checked_at: number } | null;
   needs_attention?: boolean;
   connection_id: string;
   display_name: string;
@@ -137,6 +139,21 @@ export type ExternalSourcePatchBody = Partial<ExternalSourceCreateBody> & {
 };
 
 export const externalKnowledgeApi = {
+  probeConnection: (id: string) =>
+    request<{
+      ok: boolean;
+      code: string;
+      stage: string;
+      agent_identity_required: boolean;
+    }>(`/external-knowledge/connections/${id}/probe`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    }),
+  connectionRefs: (id: string) =>
+    request<{ refs: { ref: string; name: string }[] }>(
+      `/external-knowledge/connections/${id}/refs`,
+    ),
   connections: () =>
     request<ExternalKnowledgeConnection[]>("/external-knowledge/connections"),
   createConnection: (body: Record<string, unknown>) =>

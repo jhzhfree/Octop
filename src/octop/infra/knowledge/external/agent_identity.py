@@ -183,47 +183,10 @@ class AgentIdentityService:
         self, source_id: str, user_id: int, is_admin: bool
     ) -> tuple[ExternalSourceRow, dict[str, Any]]:
         if source_id.startswith("connection:"):
-            connection = self.sources._repo.connection(source_id.removeprefix("connection:"))
-            if (
-                connection is None
-                or not connection["enabled"]
-                or (
-                    not is_admin
-                    and connection["owner_user_id"] != user_id
-                    and not connection["shared"]
-                )
-            ):
-                raise OctopError.localized(ErrorCode.KNOWLEDGE_FORBIDDEN)
-            row = ExternalSourceRow(
-                id=0,
-                source_id="",
-                owner_user_id=connection["owner_user_id"],
-                instance_id=connection["instance_id"],
-                kind=connection["kind"],
-                display_name=connection["display_name"],
-                endpoint=connection["endpoint"],
-                ref="",
-                top_k=8,
-                min_score=0,
-                timeout_ms=10000,
-                allow_insecure_http=bool(connection["allow_insecure_http"]),
-                selector_argument="",
-                forbidden_arguments="",
-                read_tools="",
-                tool_name="",
-                tool_arguments="{}",
-                enabled=True,
-                shared=bool(connection["shared"]),
-                credential_blob=connection["credential_blob"],
-                created_at=connection["created_at"],
-                updated_at=connection["updated_at"],
-                connection_id=connection["connection_id"],
-                auth_type=connection["auth_type"],
-                revision=connection["revision"],
-                resource_revision=0,
-                connection_owner_user_id=connection["owner_user_id"],
-                connection_shared=bool(connection["shared"]),
-                connection_enabled=bool(connection["enabled"]),
+            from octop.infra.knowledge.external.connections import Connections
+
+            row = Connections(self.sources).source(
+                source_id.removeprefix("connection:"), user_id, is_admin
             )
         else:
             row = self.sources._require_use(source_id, user_id=user_id, is_admin=is_admin)

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import builtins
 from typing import TYPE_CHECKING, Any
 
 from cryptography.fernet import InvalidToken
 
 from octop.infra.connectors.crypto import decrypt_credentials, encrypt_credentials
 from octop.infra.db.repos._base import now_ts
+from octop.infra.db.repos.external_knowledge import ExternalSourceRow
 from octop.infra.errors import ErrorCode, OctopError
 from octop.infra.knowledge.external.http import validate_endpoint
 from octop.infra.knowledge.external.types import SOURCE_KINDS, ExternalSourceError
@@ -22,7 +24,50 @@ class Connections:
         self.sources = sources
         self.repo = sources._repo
 
+    def source(self, connection_id: str, user_id: int, is_admin: bool) -> ExternalSourceRow:
+        connection = self.repo.connection(connection_id)
+        if (
+            connection is None
+            or not connection["enabled"]
+            or (
+                not is_admin and connection["owner_user_id"] != user_id and not connection["shared"]
+            )
+        ):
+            raise OctopError.localized(ErrorCode.KNOWLEDGE_FORBIDDEN)
+        return ExternalSourceRow(
+            id=0,
+            source_id="",
+            owner_user_id=connection["owner_user_id"],
+            instance_id=connection["instance_id"],
+            kind=connection["kind"],
+            display_name=connection["display_name"],
+            endpoint=connection["endpoint"],
+            ref="",
+            top_k=8,
+            min_score=0,
+            timeout_ms=10000,
+            allow_insecure_http=bool(connection["allow_insecure_http"]),
+            selector_argument="",
+            forbidden_arguments="",
+            read_tools="",
+            tool_name="",
+            tool_arguments="{}",
+            enabled=True,
+            shared=bool(connection["shared"]),
+            credential_blob=connection["credential_blob"],
+            created_at=connection["created_at"],
+            updated_at=connection["updated_at"],
+            connection_id=connection["connection_id"],
+            auth_type=connection["auth_type"],
+            revision=connection["revision"],
+            resource_revision=0,
+            connection_owner_user_id=connection["owner_user_id"],
+            connection_shared=bool(connection["shared"]),
+            connection_enabled=bool(connection["enabled"]),
+        )
+
     def _public(self, row: dict[str, Any], user_id: int, is_admin: bool) -> dict[str, Any]:
+        credentials: dict[str, Any] = {}
         attention = row["auth_type"] == "legacy"
         try:
             credentials = (
@@ -35,7 +80,18 @@ class Connections:
             has_credentials = False
             attention = True
         return {k: v for k, v in row.items() if k not in {"credential_blob", "identity_json"}} | {
+            "api_key_header": credentials.get("api_key_header", "x-api-key")
+            if has_credentials
+            else "x-api-key",
             "has_credentials": has_credentials,
+            "check": next(
+                (
+                    check
+                    for check in self.repo.checks(row["connection_id"], "")
+                    if check["stage"] == "connection" and not check["agent_id"]
+                ),
+                None,
+            ),
             "needs_attention": attention,
             "enabled": bool(row["enabled"]),
             "shared": bool(row["shared"]),
@@ -77,6 +133,8 @@ class Connections:
             "api_key": values.get("api_key", "").strip(),
             "api_key_header": values.get("api_key_header", ""),
         }
+        if kind in {"akb-mcp", "akb-rest"} and not (credential["api_key"] or instance_id):
+            raise ExternalSourceError("INVALID_CREDENTIALS", "AKB service Key is required")
         connection_id = new_ulid()
         self.repo.create_connection(
             {
@@ -173,3 +231,86 @@ class Connections:
         for reference in refs:
             if reference and not self.repo.key_reference_used(reference):
                 retire_reference(KeyStore(self.sources._secret_repo, ""), reference, self.repo)
+
+    async def probe(self, connection_id: str, user_id: int, is_admin: bool) -> dict[str, Any]:
+        """Check transport and service credential only; never invoke retrieval or assume an Agent."""
+        import asyncio
+
+        from octop.infra.knowledge.external.adapters._auth import auth_headers
+        from octop.infra.knowledge.external.http import drop_api_prefix, get_json
+        from octop.infra.knowledge.external.registry import get_adapter
+
+        row = self.source(connection_id, user_id, is_admin)
+        code = ""
+        try:
+            if row.kind not in {"akb-mcp", "akb-rest"}:
+                raise ExternalSourceError(
+                    "INVALID_ARGUMENT", "connection-only checks support AKB protocols"
+                )
+            if row.auth_type == "legacy":
+                raise ExternalSourceError(
+                    "INVALID_CREDENTIALS", "choose an explicit authentication type"
+                )
+            creds = self.sources.credentials_for(row)
+            async with asyncio.timeout(10):
+                if row.kind == "akb-rest":
+                    response = await get_json(
+                        drop_api_prefix(row.endpoint, "/api/v1/external")
+                        + "/api/v1/external/connection",
+                        headers=auth_headers(creds, origin=row.kind),
+                        timeout_seconds=10,
+                        origin=row.kind,
+                        status_map={401: "INVALID_CREDENTIALS", 403: "FORBIDDEN", 404: "NOT_FOUND"},
+                    )
+                    if (
+                        not isinstance(response, dict)
+                        or response.get("success") is not True
+                        or not isinstance(response.get("data"), dict)
+                        or response["data"].get("connected") is not True
+                    ):
+                        raise ExternalSourceError("INVALID_JSON", "invalid AKB connection response")
+                else:
+                    adapter = get_adapter(row.kind)
+                    if adapter is None:
+                        raise ExternalSourceError("INVALID_ARGUMENT", "unsupported connection kind")
+                    result = await adapter.probe(
+                        self.sources.to_spec(row), {**creds, "auth_type": "agent"}
+                    )
+                    if not result.ok:
+                        raise ExternalSourceError(
+                            "PROBE_FAILED", "no retrieval capability advertised"
+                        )
+        except ExternalSourceError as exc:
+            code = exc.code
+        except TimeoutError:
+            code = "TIMEOUT"
+        self.repo.record_check(
+            connection_id,
+            "",
+            "",
+            "connection",
+            "failed" if code else "success",
+            code,
+            expected_revision=row.revision,
+        )
+        return {
+            "ok": not bool(code),
+            "code": code,
+            "stage": "connection",
+            "agent_identity_required": row.auth_type == "agent",
+        }
+
+    async def refs(
+        self, connection_id: str, user_id: int, is_admin: bool
+    ) -> builtins.list[dict[str, str]]:
+        from octop.infra.knowledge.external.registry import get_adapter
+
+        row = self.source(connection_id, user_id, is_admin)
+        if row.auth_type != "service":
+            raise ExternalSourceError(
+                "FORBIDDEN", "Agent authentication requires a bound Agent for catalog access"
+            )
+        adapter = get_adapter(row.kind)
+        if adapter is None:
+            raise ExternalSourceError("INVALID_ARGUMENT", "unsupported connection kind")
+        return await adapter.list_refs(self.sources.to_spec(row), self.sources.credentials_for(row))

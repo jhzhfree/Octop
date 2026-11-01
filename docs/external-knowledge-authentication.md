@@ -18,6 +18,18 @@ Agent 登记仍使用 AKB 原有的 UUID、公钥登记流程。Octop 选择 `ag
 
 已有 Agent 身份绑定时禁止修改认证类型。先解绑全部 Agent，再修改。修改服务 Key 会保留现有 Agent 登记关系；并发修改使用凭证版本比较，避免恢复已删除的绑定。
 
+## 配置与分阶段排查
+
+页面分为“服务连接”和“知识库资源”。先创建连接并填写服务 Key（AKB 协议必填），再选择认证类型。连接级 Agent 身份不自动挂载知识库。
+
+- `POST /api/external-knowledge/connections/{id}/probe`：只验证地址、协议与服务凭证，不执行工具检索、不假设 Agent 身份。MCP 使用 initialize/tools/list；REST 使用 AKB `GET /api/v1/external/connection`。需要同步部署支持该端点的 AKB。
+- 连接详情中的 Agent 认证：登记 UUID、公钥，导入或生成对应私钥后验证并保存身份。只有此阶段成功才代表 Agent 身份有效。
+- 在“知识库资源”选择已有连接，通过“拉取列表”加载 `KB_...` ID；首次资源保存前即可加载目录。Agent 模式需选择已验证身份。资源检索测试必须填写非空问题；检索通过后配置 Agent 使用范围。
+
+连接失败按凭证、地址、权限、协议、限流或超时展示下一步操作；成功状态不会显示错误通用提示。连接检查按配置版本保存，修改连接后原结果失效。
+
+出现 AKB“缺少 API Key”时，先检查连接是否已保存服务 Key。服务凭证可选择 `X-API-Key` 或 `Authorization: Bearer`；Agent 请求必须转发 `X-API-Key` 和 `X-AKB-Workload-Assertion`。网关移除这些头时，AKB 仍会拒绝请求。控制台登录 Cookie 不等于服务凭证。空问题也应在检索前补全，不能用连接或身份检查替代实际资源检索。
+
 ## 本地验证
 
 1. 在 AKB 的 **Agent 凭证 → 服务 Key** 中选择多个可查询知识库，保存并重新打开确认；登记 Agent 的步骤保持不变。

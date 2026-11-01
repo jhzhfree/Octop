@@ -6853,15 +6853,15 @@
   "externalKnowledge": {
     "needsAttention": "Configuration needs attention",
     "resourceCount": "Knowledge bases",
-    "connection": "Service connection",
-    "connectionHelp": "Reuse one connection across knowledge bases; credentials and Agent identities belong to the connection.",
+    "connection": "Service connections",
+    "connectionHelp": "Choose a saved connection. Manage its endpoint, authentication and service Key under Service connections.",
     "newConnection": "Create a connection",
     "catalogAgent": "Select Agent for catalog",
     "checkStatus": "Checks by Agent",
     "notVerified": "Retrieval not verified",
     "title": "External knowledge sources",
     "description": "Connect third-party knowledge bases (AKB, RAGFlow, WeKnora, or any standard retrieval endpoint) and fuse their passages into Octop retrieval.",
-    "new": "New source",
+    "new": "Add knowledge resource",
     "edit": "Edit",
     "delete": "Delete",
     "save": "Save",
@@ -7066,19 +7066,36 @@
       "retrieval": "Resource retrieval"
     },
     "diagnostics": {
-      "credentials": "Replace or rotate the service Key in connection details, then verify again.",
+      "credentials": "Service Key missing, invalid or expired. Set or replace it in connection details; if already set, check whether the gateway forwards authentication headers.",
       "identity": "Verify the connection identity and check its UUID and public key status in AKB.",
       "permissions": "Check the AKB knowledge base grants and current Agent permissions.",
       "timeout": "Check the service endpoint, gateway and timeout settings before retrying.",
       "rate": "Quota reached. Retry later and check service and Agent budgets.",
       "upstream": "Check the AKB service and gateway availability.",
-      "recheck": "Run the check again. Connection, identity and resource retrieval are verified separately."
+      "recheck": "Run the check again. Connection, identity and resource retrieval are verified separately.",
+      "passed": "This stage passed. Complete the remaining identity or resource retrieval checks.",
+      "configuration": "Check the KB_ knowledge base ID, retrieval tool and non-empty question. Identity verification does not validate resource settings.",
+      "notFound": "Endpoint or knowledge base not found. Check the address, gateway prefix and KB ID.",
+      "protocol": "The response does not match the selected protocol. Check the connection kind and endpoint.",
+      "capability": "No retrieval tool is available. Check MCP availability and SEARCH/QUERY scopes."
     },
     "resourceShared": "Share this resource",
     "resourceSharedHelp": "Only changes this resource visibility, not connection sharing.",
     "conflictHelp": "This configuration changed elsewhere. Your input is preserved. Review the latest configuration before saving.",
     "reviewLatest": "Review latest configuration",
     "keepInputHelp": "The current server configuration is below. Confirm to keep your input and update the baseline version. Review differences, then save explicitly.",
-    "deleteConnectionHelp": "Delete this connection and {{agents}} identities, reclaiming unreferenced host keys. Revoke AKB public keys separately."
+    "deleteConnectionHelp": "Delete this connection and {{agents}} identities, reclaiming unreferenced host keys. Revoke AKB public keys separately.",
+    "setupTitle": "Connect in three steps",
+    "setupHelp": "One service connection can serve multiple knowledge resources. A successful connection verifies the endpoint and service Key; identity and retrieval are checked separately.",
+    "setupConnection": "Create a connection: enter the endpoint and service Key, then check it",
+    "setupIdentity": "Choose authentication: service credentials work directly; Agent authentication needs UUID/public-key enrollment and verification",
+    "setupResource": "Add a knowledge resource: choose the connection, load a KB ID, test retrieval and mount it for Agents",
+    "connectionDefinition": "A connection owns the service endpoint, protocol and credentials, independently of any knowledge base.",
+    "resourceDefinition": "A resource is one remote knowledge base (KB_…), with retrieval settings and Agent access using a shared connection.",
+    "selectConnectionFirst": "Create and select a service connection first",
+    "missingServiceKey": "Enter the service Key",
+    "checkConnection": "Check connection",
+    "headerHelp": "Service credentials support X-API-Key or Bearer. Signed Agent requests use X-API-Key; the gateway must forward it and X-AKB-Workload-Assertion.",
+    "parentConnection": "Connection"
   }
 }

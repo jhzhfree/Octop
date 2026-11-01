@@ -8,7 +8,7 @@
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  overflow: hidden;
+  overflow: auto;
   border: 1px solid var(--fn-border-secondary);
   border-radius: var(--fn-radius-lg);
   background: var(--fn-bg-container);
@@ -336,5 +336,69 @@
     overflow-x: auto;
     overflow-y: visible;
     padding: 0;
+  }
+}
+
+.setupGuide {
+  padding: 16px 20px;
+  background: var(--fn-bg-secondary);
+  border-bottom: 1px solid var(--fn-border-secondary);
+  flex-shrink: 0;
+}
+.setupGuide h5,
+.sectionHeading h5 {
+  margin: 0 0 6px;
+}
+.setupGuide p {
+  margin: 0 0 10px;
+  color: var(--fn-text-secondary);
+}
+.setupGuide ol {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 32px;
+  color: var(--fn-text-secondary);
+}
+.sectionTabs {
+  padding: 0 20px;
+  flex-shrink: 0;
+}
+.connectionSection,
+.resourceSection {
+  min-height: 0;
+  padding: 0 20px 20px;
+}
+.connectionSection[hidden],
+.resourceSection[hidden] {
+  display: none;
+}
+.sectionHeading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 0 16px;
+}
+.resourceSection .panelHeader {
+  padding-left: 0;
+  padding-right: 0;
+}
+.resourceSection .tableWrap {
+  padding-left: 0;
+  padding-right: 0;
+}
+@media (max-width: 767px) {
+  .setupGuide ol {
+    display: block;
+  }
+  .setupGuide li + li {
+    margin-top: 8px;
+  }
+  .connectionSection,
+  .resourceSection {
+    padding-left: 12px;
+    padding-right: 12px;
   }
 }
