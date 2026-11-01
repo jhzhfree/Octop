@@ -6941,7 +6941,7 @@
     "toolNameHint": "Fetch the list, then pick the tool to call; leave empty for the default knowledge tool.",
     "toolNamePlaceholder": "Fetch the tool list first",
     "toolArguments": "Tool arguments",
-    "toolArgumentsHint": "Fill in what the tool declares. The query, result count and knowledge base are supplied per call, so they belong here.",
+    "toolArgumentsHint": "Fill in what the tool declares. The query and result count are supplied per call. Name the knowledge base with knowledgeBaseCode (or knowledgeBaseId); it is saved as this source's identifier.",
     "toolArgumentKey": "Argument",
     "toolArgumentValue": "Value",
     "toolArgumentAdd": "Add argument",
@@ -7096,6 +7096,14 @@
     "missingServiceKey": "Enter the service Key",
     "checkConnection": "Check connection",
     "headerHelp": "Service credentials support X-API-Key or Bearer. Signed Agent requests use X-API-Key; the gateway must forward it and X-AKB-Workload-Assertion.",
-    "parentConnection": "Connection"
+    "parentConnection": "Connection",
+    "fetchTools": "Fetch tools",
+    "toolsFetchHint": "Loads the tools this service exposes and their arguments, then set a value for each below.",
+    "refRequiredFromTool": "Enter knowledgeBaseCode (or knowledgeBaseId) in the tool arguments first — it becomes the knowledge base identifier",
+    "probeDetails": "Probe details",
+    "probeDetailsTitle": "Connectivity probe result",
+    "toolList": "Tools offered",
+    "toolListHint": "Click a tool to use it, then fill in the arguments it declares below.",
+    "toolListEmpty": "No tools fetched yet — use “Fetch tools” above."
   }
 }

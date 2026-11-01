@@ -17,6 +17,7 @@ const api = vi.hoisted(() => ({
   updateConnection: vi.fn(),
   update: vi.fn(),
   probeConnection: vi.fn(),
+  probe: vi.fn(),
   connectionRefs: vi.fn(),
 }));
 vi.mock("@/api/modules/externalKnowledge", () => ({
@@ -76,7 +77,27 @@ beforeEach(() => {
   api.connectionRefs.mockResolvedValue({
     refs: [{ ref: "KB_FIRST", name: "First" }],
   });
+  api.probe.mockResolvedValue({
+    ok: true,
+    message: "",
+    tools: ["knowledge_search"],
+    tool_schemas: [
+      {
+        name: "knowledge_search",
+        description: "Search",
+        input_schema: {
+          properties: {
+            knowledgeBaseCode: { type: "string" },
+            tag: { type: "string" },
+          },
+          required: ["knowledgeBaseCode"],
+        },
+      },
+    ],
+  });
   api.updateConnection.mockResolvedValue({ ...connection, enabled: false });
+  identity.state.mockResolvedValue({ runtimeReady: true, agents: [] });
+  identity.bases.mockResolvedValue({ refs: [] });
 });
 
 it("creates a service connection independently of any knowledge resource", async () => {
@@ -187,7 +208,9 @@ const resource = {
 };
 
 it("loads Agent choices before the first catalog request", async () => {
-  api.list.mockResolvedValue([resource]);
+  // The catalog dropdown travels with the knowledge base field, which MCP
+  // resources no longer show, so this stays exercised on a REST resource.
+  api.list.mockResolvedValue([{ ...resource, kind: "akb-rest" }]);
   identity.state.mockResolvedValue({
     runtimeReady: true,
     agents: [
@@ -308,7 +331,7 @@ it("checks a connection without creating or searching a knowledge resource", asy
   expect(identity.bases).not.toHaveBeenCalled();
 });
 
-it("loads the knowledge catalog before the first resource is saved", async () => {
+it("offers the tool list instead of a knowledge base field for a new MCP resource", async () => {
   render(
     <App>
       <ExternalKnowledge />
@@ -321,9 +344,150 @@ it("loads the knowledge catalog before the first resource is saved", async () =>
   fireEvent.click(
     screen.getAllByRole("button", { name: "externalKnowledge.new" })[0],
   );
-  fireEvent.click(
-    await screen.findByRole("button", { name: "externalKnowledge.fetchRefs" }),
-  );
-  await waitFor(() => expect(api.connectionRefs).toHaveBeenCalledWith("c"));
+  expect(
+    await screen.findByRole("button", {
+      name: "externalKnowledge.fetchTools",
+    }),
+  ).toBeTruthy();
+  expect(screen.queryByLabelText("externalKnowledge.ref")).toBeNull();
   expect(api.createConnection).not.toHaveBeenCalled();
+});
+
+it("keeps the knowledge base field for REST resources", async () => {
+  api.list.mockResolvedValue([{ ...resource, kind: "akb-rest" }]);
+  render(
+    <App>
+      <ExternalKnowledge />
+    </App>,
+  );
+  await screen.findByText("Company KB");
+  fireEvent.click(
+    screen.getByRole("tab", { name: "externalKnowledge.resources (1)" }),
+  );
+  const row = (await screen.findByText("Policies")).closest("tr")!;
+  fireEvent.click(
+    within(row).getByRole("button", { name: "externalKnowledge.edit" }),
+  );
+  expect(
+    (await screen.findAllByLabelText("externalKnowledge.ref")).length,
+  ).toBeGreaterThan(0);
+  expect(
+    screen.queryByRole("button", { name: "externalKnowledge.fetchTools" }),
+  ).toBeNull();
+});
+
+it("loads the tool list into editable arguments, including the stored base", async () => {
+  api.list.mockResolvedValue([resource]);
+  render(
+    <App>
+      <ExternalKnowledge />
+    </App>,
+  );
+  await screen.findByText("Company KB");
+  fireEvent.click(
+    screen.getByRole("tab", { name: "externalKnowledge.resources (1)" }),
+  );
+  const row = (await screen.findByText("Policies")).closest("tr")!;
+  fireEvent.click(
+    within(row).getByRole("button", { name: "externalKnowledge.edit" }),
+  );
+  // The saved base comes back as the argument a tool would take.
+  expect(await screen.findByDisplayValue("knowledgeBaseCode")).toBeTruthy();
+  fireEvent.click(
+    screen.getByRole("button", { name: "externalKnowledge.fetchTools" }),
+  );
+  await waitFor(() => expect(api.probe).toHaveBeenCalledWith("resource"));
+  // What the tool declares joins the rows the operator can fill in.
+  await waitFor(() =>
+    expect(
+      screen.getAllByPlaceholderText("externalKnowledge.toolArgumentKey"),
+    ).toHaveLength(2),
+  );
+  expect(screen.getByDisplayValue("tag")).toBeTruthy();
+  expect(screen.getByDisplayValue("KB_HR")).toBeTruthy();
+});
+
+it("saves the base from the tool arguments as the source identifier", async () => {
+  api.list.mockResolvedValue([resource]);
+  api.update.mockResolvedValue(resource);
+  render(
+    <App>
+      <ExternalKnowledge />
+    </App>,
+  );
+  await screen.findByText("Company KB");
+  fireEvent.click(
+    screen.getByRole("tab", { name: "externalKnowledge.resources (1)" }),
+  );
+  const row = (await screen.findByText("Policies")).closest("tr")!;
+  fireEvent.click(
+    within(row).getByRole("button", { name: "externalKnowledge.edit" }),
+  );
+  const values = await screen.findAllByPlaceholderText(
+    "externalKnowledge.toolArgumentValue",
+  );
+  fireEvent.change(values[0], { target: { value: "KB_NEW" } });
+  fireEvent.click(
+    screen.getByRole("button", { name: "externalKnowledge.save" }),
+  );
+  await waitFor(() =>
+    expect(api.update).toHaveBeenCalledWith(
+      "resource",
+      expect.objectContaining({
+        ref: "KB_NEW",
+        selector_argument: "knowledgeBaseCode",
+      }),
+    ),
+  );
+  const body = api.update.mock.calls[0][1];
+  expect(body.tool_arguments).not.toHaveProperty("knowledgeBaseCode");
+});
+
+it("lists the fetched tools and keeps the probe detail behind an icon", async () => {
+  api.list.mockResolvedValue([resource]);
+  api.probe.mockResolvedValue({
+    ok: true,
+    message: "reachable",
+    tools: ["knowledge_search"],
+    protocol_version: "2024-11-05",
+    tool_schemas: [
+      {
+        name: "knowledge_search",
+        description: "Search",
+        input_schema: {
+          properties: { knowledgeBaseCode: { type: "string" } },
+          required: ["knowledgeBaseCode"],
+        },
+      },
+    ],
+  });
+  render(
+    <App>
+      <ExternalKnowledge />
+    </App>,
+  );
+  await screen.findByText("Company KB");
+  fireEvent.click(
+    screen.getByRole("tab", { name: "externalKnowledge.resources (1)" }),
+  );
+  const row = (await screen.findByText("Policies")).closest("tr")!;
+  fireEvent.click(
+    within(row).getByRole("button", { name: "externalKnowledge.edit" }),
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: "externalKnowledge.fetchTools" }),
+  );
+  await waitFor(() => expect(api.probe).toHaveBeenCalledWith("resource"));
+  // Tools come back as a pickable list, not hidden inside a dropdown.
+  const tool = await screen.findByRole("button", {
+    name: "knowledge_search — Search",
+  });
+  fireEvent.click(tool);
+  // The detail the probe returned stays out of the form until asked for.
+  expect(screen.queryByText("reachable")).toBeNull();
+  fireEvent.click(
+    screen.getByRole("button", { name: "externalKnowledge.probeDetails" }),
+  );
+  await waitFor(() => expect(screen.getByText("reachable")).toBeTruthy());
+  expect(screen.getByText("2024-11-05")).toBeTruthy();
 });

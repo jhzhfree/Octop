@@ -9,6 +9,7 @@ import {
   Form,
   Input,
   InputNumber,
+  Modal,
   Popconfirm,
   Segmented,
   Select,
@@ -23,6 +24,7 @@ import {
 import type { ColumnsType } from "antd/es/table";
 import {
   Activity,
+  Info,
   Link2,
   Pencil,
   Plus,
@@ -94,14 +96,42 @@ interface ToolArgumentRow {
 
 // Supplied by the caller on every retrieval: repeating them here could only
 // disagree with what the actual query asks for.
-const _CONTROLLED_ARGUMENTS = [
-  "query",
-  "question",
-  "topK",
-  "top_k",
-  "knowledgeBaseId",
-  "knowledgeBaseCode",
-];
+const _CONTROLLED_ARGUMENTS = ["query", "question", "topK", "top_k"];
+
+// Which knowledge base the call targets. An MCP tool takes it as an ordinary
+// argument, so it is edited together with the other tool arguments and lifted
+// into the source's own ref on save — the stored call still carries exactly one
+// base selector, and it stays the one the source declares.
+const _BASE_ARGUMENTS = ["knowledgeBaseId", "knowledgeBaseCode"];
+
+/** Show the stored base as the argument an MCP tool would take, so it can be
+ *  changed where the rest of the tool arguments live. */
+function baseArgumentRow(
+  ref: string | undefined,
+  selector: string | undefined,
+): ToolArgumentRow | null {
+  const value = (ref || "").trim();
+  if (!value) return null;
+  const declared = (selector || "").trim();
+  return {
+    key:
+      declared ||
+      (/^\d+$/.test(value) ? "knowledgeBaseId" : "knowledgeBaseCode"),
+    value,
+    required: false,
+  };
+}
+
+/** The base leads the argument list and never appears twice. */
+function withBaseArgument(
+  rows: ToolArgumentRow[],
+  ref: string | undefined,
+  selector: string | undefined,
+): ToolArgumentRow[] {
+  const base = baseArgumentRow(ref, selector);
+  const rest = rows.filter((row) => !_BASE_ARGUMENTS.includes(row.key.trim()));
+  return base ? [base, ...rest] : rest;
+}
 
 function toArgumentRows(saved: Record<string, string | number | boolean> = {}) {
   return Object.entries(saved).map(([key, value]) => ({
@@ -262,6 +292,7 @@ export default function ExternalKnowledgePage() {
   const [refs, setRefs] = useState<{ ref: string; name: string }[]>([]);
   const [refsLoading, setRefsLoading] = useState(false);
   const [probing, setProbing] = useState(false);
+  const [probeInfoOpen, setProbeInfoOpen] = useState(false);
   const [probeResult, setProbeResult] = useState<ExternalKnowledgeProbe | null>(
     null,
   );
@@ -405,7 +436,12 @@ export default function ExternalKnowledgePage() {
       setRefs([]);
       setProbeResult(null);
       setToolSchemas([]);
-      const savedArgs = toArgumentRows(row.tool_arguments ?? {});
+      // MCP keeps the base on the source, but shows it with the tool arguments.
+      const savedArgs = withBaseArgument(
+        toArgumentRows(row.tool_arguments ?? {}),
+        row.ref,
+        row.selector_argument,
+      );
       setToolArgs(savedArgs);
       form.resetFields();
       form.setFieldsValue({
@@ -431,6 +467,19 @@ export default function ExternalKnowledgePage() {
 
   const submitForm = useCallback(async () => {
     const values = await form.validateFields();
+    // For MCP the base is entered as a tool argument; it leaves the argument
+    // list for the source's own ref so the stored call carries one selector,
+    // declared by the source rather than by whatever the tool happened to name.
+    const baseRow = toolArgs.find(
+      (row) => _BASE_ARGUMENTS.includes(row.key.trim()) && row.value.trim(),
+    );
+    const ref = baseRow ? baseRow.value.trim() : (values.ref ?? "").trim();
+    if (values.kind === "akb-mcp" && !ref) {
+      message.error(t("externalKnowledge.refRequiredFromTool"));
+      return;
+    }
+    const arguments_ = toArgumentRecord(toolArgs);
+    if (baseRow) delete arguments_[baseRow.key.trim()];
     const body: ExternalSourceCreateBody = {
       auth_type: ["akb-mcp", "akb-rest"].includes(values.kind)
         ? values.auth_type || "service"
@@ -439,14 +488,16 @@ export default function ExternalKnowledgePage() {
       display_name: values.display_name,
       kind: values.kind,
       endpoint: values.endpoint,
-      ref: values.ref ?? "",
+      ref,
       top_k: values.top_k,
       min_score: values.min_score,
       timeout_ms: values.timeout_ms,
       allow_insecure_http: values.allow_insecure_http,
-      selector_argument: values.selector_argument ?? "",
+      selector_argument: baseRow
+        ? baseRow.key.trim()
+        : values.selector_argument ?? "",
       tool_name: values.tool_name ?? "",
-      tool_arguments: toArgumentRecord(toolArgs),
+      tool_arguments: arguments_,
       shared: values.shared,
     };
     if (values.api_key) body.api_key = values.api_key;
@@ -511,14 +562,16 @@ export default function ExternalKnowledgePage() {
       setProbeResult(result);
       const schemas = result.tool_schemas ?? [];
       setToolSchemas(schemas);
+      // A fetched list has to show what it offers even before a tool is picked,
+      // so it falls back to the retrieval tool the adapters call by default.
+      const tool =
+        schemas.find((item) => item.name === selectedTool) ??
+        schemas.find((item) => item.name === "knowledge_search") ??
+        schemas[0];
+      if (!selectedTool && tool) form.setFieldValue("tool_name", tool.name);
       // Refreshing the list should also refresh what a picked tool offers,
       // keeping already filled values and dropping ones the tool dropped.
-      setToolArgs((rows) =>
-        rowsForTool(
-          schemas.find((item) => item.name === selectedTool),
-          rows,
-        ),
-      );
+      setToolArgs((rows) => rowsForTool(tool, rows));
     } catch (error) {
       message.error(
         apiErrorMessage(error, t("externalKnowledge.probeFailedHint"), t),
@@ -526,7 +579,7 @@ export default function ExternalKnowledgePage() {
     } finally {
       setProbing(false);
     }
-  }, [editing, message, selectedTool, t]);
+  }, [editing, form, message, selectedTool, t]);
 
   const changeTool = useCallback(
     (name: string | undefined) => {
@@ -1785,6 +1838,120 @@ export default function ExternalKnowledgePage() {
           </Form.Item>
         </Form>
       </Drawer>
+      {/* Everything the probe learned that is not a tool: reachable only from
+          the info icon, so it never competes with the form for space. */}
+      <Modal
+        title={t("externalKnowledge.probeDetailsTitle")}
+        open={probeInfoOpen}
+        onCancel={() => setProbeInfoOpen(false)}
+        footer={null}
+        width={560}
+      >
+        {probeResult && (
+          <Space direction="vertical" size={8} style={{ width: "100%" }}>
+            <Space size={4} wrap>
+              <Tag color={probeResult.ok ? "green" : "red"}>
+                {probeResult.ok
+                  ? t("externalKnowledge.probeOk")
+                  : t("externalKnowledge.probeFailed")}
+              </Tag>
+              {probeResult.message && (
+                <Typography.Text type="secondary">
+                  {probeResult.message}
+                </Typography.Text>
+              )}
+            </Space>
+            {probeResult.ok && editing?.auth_type === "agent" && (
+              <Alert
+                type="info"
+                showIcon
+                description={t("externalKnowledge.authAgentHelp")}
+              />
+            )}
+            {probeResult.protocol_version && (
+              <Space size={4} wrap>
+                <Typography.Text type="secondary">
+                  {t("externalKnowledge.protocol")}
+                </Typography.Text>
+                <Tag>{probeResult.protocol_version}</Tag>
+              </Space>
+            )}
+            {probeResult.server_info &&
+              Object.keys(probeResult.server_info).length > 0 && (
+                <Space size={4} wrap>
+                  <Typography.Text type="secondary">
+                    {t("externalKnowledge.server")}
+                  </Typography.Text>
+                  <Tag>
+                    {String(probeResult.server_info.name ?? "")}
+                    {probeResult.server_info.version
+                      ? ` v${probeResult.server_info.version}`
+                      : ""}
+                  </Tag>
+                </Space>
+              )}
+            {probeResult.capabilities &&
+              Object.keys(probeResult.capabilities).length > 0 && (
+                <Space size={4} wrap>
+                  <Typography.Text type="secondary">
+                    {t("externalKnowledge.capabilities")}
+                  </Typography.Text>
+                  {Object.entries(probeResult.capabilities).map(
+                    ([key, value]) => (
+                      <Tag key={key}>
+                        {key}
+                        {value && typeof value === "object"
+                          ? `: ${Object.keys(
+                              value as Record<string, unknown>,
+                            ).join(", ")}`
+                          : ""}
+                      </Tag>
+                    ),
+                  )}
+                </Space>
+              )}
+            {probeResult.tools.length ? (
+              <Space size={4} wrap>
+                {probeResult.tools.map((tool) => (
+                  <Typography.Text
+                    key={tool}
+                    copyable={{ text: tool, tooltips: false }}
+                  >
+                    <Tag>{tool}</Tag>
+                  </Typography.Text>
+                ))}
+              </Space>
+            ) : (
+              probeResult.ok && (
+                <Typography.Text type="secondary">
+                  {t("externalKnowledge.toolsEmpty")}
+                </Typography.Text>
+              )
+            )}
+            {probeResult.instructions && (
+              <>
+                <Typography.Text type="secondary">
+                  {t("externalKnowledge.instructions")}
+                </Typography.Text>
+                <Typography.Paragraph
+                  copyable={{
+                    text: probeResult.instructions,
+                    tooltips: false,
+                  }}
+                  ellipsis={{
+                    rows: 6,
+                    expandable: true,
+                    symbol: t("externalKnowledge.instructionsMore"),
+                  }}
+                  style={{ marginBottom: 0 }}
+                >
+                  {probeResult.instructions}
+                </Typography.Paragraph>
+              </>
+            )}
+          </Space>
+        )}
+      </Modal>
       <Drawer
         className={styles.drawer}
         open={formOpen}
@@ -1870,6 +2037,35 @@ export default function ExternalKnowledgePage() {
           >
             <Input />
           </Form.Item>
+          {formKind === "akb-mcp" && (
+            <Form.Item
+              label={t("externalKnowledge.tools")}
+              extra={t("externalKnowledge.toolsFetchHint")}
+            >
+              <Space.Compact>
+                <Button
+                  loading={probing}
+                  disabled={!editing}
+                  onClick={() => void runProbe()}
+                  title={editing ? "" : t("externalKnowledge.probeAfterSave")}
+                >
+                  {t("externalKnowledge.fetchTools")}
+                </Button>
+                {/* Everything the probe learned that is not a tool is
+                    diagnostic detail: it stays behind an icon so the form keeps
+                    its width for what the operator has to fill in. */}
+                {probeResult && (
+                  <Tooltip title={t("externalKnowledge.probeDetails")}>
+                    <Button
+                      aria-label={t("externalKnowledge.probeDetails")}
+                      icon={<Info size={14} />}
+                      onClick={() => setProbeInfoOpen(true)}
+                    />
+                  </Tooltip>
+                )}
+              </Space.Compact>
+            </Form.Item>
+          )}
           {!!editing && (
             <Alert
               type="info"
@@ -1985,233 +2181,131 @@ export default function ExternalKnowledgePage() {
           {/* Every adapter addresses one knowledge base, MCP included: how the
               call travels differs, what it selects does not — knowledge_query
               without a base is rejected by AKB. */}
-          <Form.Item
-            label={t("externalKnowledge.ref")}
-            extra={
-              formKind === "akb-mcp"
-                ? t("externalKnowledge.refHintMcp")
-                : t("externalKnowledge.refHint")
-            }
-            rules={
-              formKind === "akb-mcp"
-                ? [
-                    {
-                      required: true,
-                      message: t("externalKnowledge.refRequired"),
-                    },
-                  ]
-                : undefined
-            }
-          >
-            <Space.Compact style={{ width: "100%" }}>
-              {/* Any value goes through: a stable code, a numeric id, whatever
+          {formKind !== "akb-mcp" && (
+            <Form.Item
+              label={t("externalKnowledge.ref")}
+              extra={
+                formKind === "akb-mcp"
+                  ? t("externalKnowledge.refHintMcp")
+                  : t("externalKnowledge.refHint")
+              }
+              rules={
+                formKind === "akb-mcp"
+                  ? [
+                      {
+                        required: true,
+                        message: t("externalKnowledge.refRequired"),
+                      },
+                    ]
+                  : undefined
+              }
+            >
+              <Space.Compact style={{ width: "100%" }}>
+                {/* Any value goes through: a stable code, a numeric id, whatever
                   the selector argument names. The fetched list only suggests. */}
-              <Form.Item
-                name="ref"
-                noStyle
-                rules={
-                  formKind.startsWith("akb-")
-                    ? [
-                        {
-                          required: true,
-                          pattern: /^KB_[A-Za-z0-9]{1,125}$/,
-                          message: t("externalKnowledge.refHint"),
-                        },
-                      ]
-                    : undefined
-                }
-              >
-                <AutoComplete
-                  style={{ flex: 1 }}
-                  filterOption
-                  placeholder={
+                <Form.Item
+                  name="ref"
+                  noStyle
+                  rules={
                     formKind.startsWith("akb-")
-                      ? "KB_…"
-                      : t("externalKnowledge.ref")
+                      ? [
+                          {
+                            required: true,
+                            pattern: /^KB_[A-Za-z0-9]{1,125}$/,
+                            message: t("externalKnowledge.refHint"),
+                          },
+                        ]
+                      : undefined
                   }
-                  options={refs.map((item) => ({
-                    value: item.ref,
-                    label: item.name ? `${item.name}（${item.ref}）` : item.ref,
-                  }))}
-                />
-              </Form.Item>
-              {(editing?.auth_type || formAuthType) === "agent" && (
-                <Select
-                  aria-label={t("externalKnowledge.catalogAgent")}
-                  value={catalogAgent}
-                  onChange={setCatalogAgent}
-                  options={catalogAgents}
-                  style={{ minWidth: 140 }}
-                  placeholder={t("externalKnowledge.catalogAgent")}
-                />
-              )}
-              <Button
-                loading={refsLoading}
-                disabled={
-                  (!editing && !reusedConnection) ||
-                  ((editing?.auth_type || formAuthType) === "agent" &&
-                    !catalogAgent)
-                }
-                onClick={() => void fetchRefs()}
-                title={
-                  editing || reusedConnection
-                    ? ""
-                    : t("externalKnowledge.selectConnectionFirst")
-                }
-              >
-                {t("externalKnowledge.fetchRefs")}
-              </Button>
-            </Space.Compact>
-          </Form.Item>
+                >
+                  <AutoComplete
+                    style={{ flex: 1 }}
+                    filterOption
+                    aria-label={t("externalKnowledge.ref")}
+                    placeholder={
+                      formKind.startsWith("akb-")
+                        ? "KB_…"
+                        : t("externalKnowledge.ref")
+                    }
+                    options={refs.map((item) => ({
+                      value: item.ref,
+                      label: item.name
+                        ? `${item.name}（${item.ref}）`
+                        : item.ref,
+                    }))}
+                  />
+                </Form.Item>
+                {(editing?.auth_type || formAuthType) === "agent" && (
+                  <Select
+                    aria-label={t("externalKnowledge.catalogAgent")}
+                    value={catalogAgent}
+                    onChange={setCatalogAgent}
+                    options={catalogAgents}
+                    style={{ minWidth: 140 }}
+                    placeholder={t("externalKnowledge.catalogAgent")}
+                  />
+                )}
+                <Button
+                  loading={refsLoading}
+                  disabled={
+                    (!editing && !reusedConnection) ||
+                    ((editing?.auth_type || formAuthType) === "agent" &&
+                      !catalogAgent)
+                  }
+                  onClick={() => void fetchRefs()}
+                  title={
+                    editing || reusedConnection
+                      ? ""
+                      : t("externalKnowledge.selectConnectionFirst")
+                  }
+                >
+                  {t("externalKnowledge.fetchRefs")}
+                </Button>
+              </Space.Compact>
+            </Form.Item>
+          )}
           {formKind === "akb-mcp" && (
             <>
               <div className={styles.sectionTitle}>
                 {t("externalKnowledge.mcpSection")}
               </div>
+              {/* The fetched tools are listed, not tucked into a dropdown: the
+                  operator picks one and sets what that tool declares. */}
               <Form.Item
-                label={t("externalKnowledge.tools")}
-                extra={t("externalKnowledge.toolsHint")}
+                label={t("externalKnowledge.toolList")}
+                extra={t("externalKnowledge.toolListHint")}
               >
-                <Space direction="vertical" size={8} style={{ width: "100%" }}>
-                  <Button
-                    loading={probing}
-                    disabled={!editing}
-                    onClick={() => void runProbe()}
-                    title={editing ? "" : t("externalKnowledge.probeAfterSave")}
+                {toolOptions.length === 0 ? (
+                  <Typography.Text type="secondary">
+                    {t("externalKnowledge.toolListEmpty")}
+                  </Typography.Text>
+                ) : (
+                  <Space
+                    direction="vertical"
+                    size={4}
+                    style={{ width: "100%" }}
                   >
-                    {t("externalKnowledge.testConnection")}
-                  </Button>
-                  {probeResult?.ok && editing?.auth_type === "agent" && (
-                    <Alert
-                      type="info"
-                      showIcon
-                      description={t("externalKnowledge.authAgentHelp")}
-                    />
-                  )}
-                  {probeResult && (
-                    <>
-                      <Space size={4} wrap>
-                        <Tag color={probeResult.ok ? "green" : "red"}>
-                          {probeResult.ok
-                            ? t("externalKnowledge.probeOk")
-                            : t("externalKnowledge.probeFailed")}
-                        </Tag>
-                        {probeResult.message && (
-                          <Typography.Text type="secondary">
-                            {probeResult.message}
-                          </Typography.Text>
-                        )}
-                      </Space>
-                      {probeResult.protocol_version && (
-                        <Space size={4} wrap>
-                          <Typography.Text type="secondary">
-                            {t("externalKnowledge.protocol")}
-                          </Typography.Text>
-                          <Tag>{probeResult.protocol_version}</Tag>
-                        </Space>
-                      )}
-                      {probeResult.server_info &&
-                        Object.keys(probeResult.server_info).length > 0 && (
-                          <Space size={4} wrap>
-                            <Typography.Text type="secondary">
-                              {t("externalKnowledge.server")}
-                            </Typography.Text>
-                            <Tag>
-                              {String(probeResult.server_info.name ?? "")}
-                              {probeResult.server_info.version
-                                ? ` v${probeResult.server_info.version}`
-                                : ""}
-                            </Tag>
-                          </Space>
-                        )}
-                      {probeResult.capabilities &&
-                        Object.keys(probeResult.capabilities).length > 0 && (
-                          <Space size={4} wrap>
-                            <Typography.Text type="secondary">
-                              {t("externalKnowledge.capabilities")}
-                            </Typography.Text>
-                            {Object.entries(probeResult.capabilities).map(
-                              ([key, value]) => (
-                                <Tag key={key}>
-                                  {key}
-                                  {value && typeof value === "object"
-                                    ? `: ${Object.keys(
-                                        value as Record<string, unknown>,
-                                      ).join(", ")}`
-                                    : ""}
-                                </Tag>
-                              ),
-                            )}
-                          </Space>
-                        )}
-                      {probeResult.tools.length ? (
-                        <Space size={4} wrap>
-                          {probeResult.tools.map((tool) => (
-                            <Typography.Text
-                              key={tool}
-                              copyable={{ text: tool, tooltips: false }}
-                            >
-                              <Tag>{tool}</Tag>
-                            </Typography.Text>
-                          ))}
-                        </Space>
-                      ) : (
-                        probeResult.ok && (
-                          <Typography.Text type="secondary">
-                            {t("externalKnowledge.toolsEmpty")}
-                          </Typography.Text>
-                        )
-                      )}
-                      {probeResult.instructions && (
-                        <>
-                          <Typography.Text type="secondary">
-                            {t("externalKnowledge.instructions")}
-                          </Typography.Text>
-                          <Typography.Paragraph
-                            copyable={{
-                              text: probeResult.instructions,
-                              tooltips: false,
-                            }}
-                            ellipsis={{
-                              rows: 3,
-                              expandable: true,
-                              symbol: t("externalKnowledge.instructionsMore"),
-                            }}
-                            style={{ marginBottom: 0 }}
-                          >
-                            {probeResult.instructions}
-                          </Typography.Paragraph>
-                        </>
-                      )}
-                    </>
-                  )}
-                </Space>
-              </Form.Item>
-              {/* Pick the tool first: its own schema decides which arguments
-                  the operator can set, so nothing here invents argument names. */}
-              <Form.Item
-                label={t("externalKnowledge.toolName")}
-                extra={t("externalKnowledge.toolNameHint")}
-              >
-                <Select
-                  allowClear
-                  showSearch
-                  disabled={!editing}
-                  value={selectedTool}
-                  onChange={changeTool}
-                  placeholder={t("externalKnowledge.toolNamePlaceholder")}
-                  optionFilterProp="label"
-                  options={toolOptions
-                    .filter((tool) =>
-                      ["knowledge_search", "knowledge_query"].includes(
-                        tool.name,
-                      ),
-                    )
-                    .map((tool) => ({
-                      value: tool.name,
-                      label: toolLabel(tool),
-                    }))}
-                />
+                    {toolOptions.map((tool) => {
+                      const active = selectedTool === tool.name;
+                      return (
+                        <Button
+                          key={tool.name}
+                          block
+                          type={active ? "primary" : "default"}
+                          aria-pressed={active}
+                          style={{
+                            height: "auto",
+                            textAlign: "left",
+                            whiteSpace: "normal",
+                          }}
+                          onClick={() => changeTool(tool.name)}
+                        >
+                          {toolLabel(tool)}
+                        </Button>
+                      );
+                    })}
+                  </Space>
+                )}
               </Form.Item>
               <Form.Item
                 label={t("externalKnowledge.toolArguments")}

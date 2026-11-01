@@ -6941,7 +6941,7 @@
     "toolNameHint": "拉取列表后选择要调用的工具；留空则用默认的知识检索工具。",
     "toolNamePlaceholder": "先拉取工具列表",
     "toolArguments": "工具入参",
-    "toolArgumentsHint": "按工具声明的参数填入值；查询词、返回条数与知识库标识由系统调用时给出，这里不必重复。",
+    "toolArgumentsHint": "按工具声明的参数填入值；查询词与返回条数由系统调用时给出。知识库用 knowledgeBaseCode（或 knowledgeBaseId）指定，保存后会记为该来源的知识库标识。",
     "toolArgumentKey": "参数名",
     "toolArgumentValue": "值",
     "toolArgumentAdd": "新增参数",
@@ -7096,6 +7096,14 @@
     "missingServiceKey": "请填写服务 Key",
     "checkConnection": "检查连接",
     "headerHelp": "服务凭证可选择 X-API-Key 或 Bearer。Agent 签名使用 X-API-Key；请确保网关转发该请求头及 X-AKB-Workload-Assertion。",
-    "parentConnection": "所属连接"
+    "parentConnection": "所属连接",
+    "fetchTools": "获取工具列表",
+    "toolsFetchHint": "点击后加载服务暴露的工具与其入参，加载完成后可在下方为每个参数设置值。",
+    "refRequiredFromTool": "请先在工具参数中填写 knowledgeBaseCode（或 knowledgeBaseId）作为知识库标识",
+    "probeDetails": "探测详情",
+    "probeDetailsTitle": "连接探测结果",
+    "toolList": "工具列表",
+    "toolListHint": "点击工具即选用该工具，下方按它声明的入参填写。",
+    "toolListEmpty": "尚未获取工具列表，点击上方「获取工具列表」。"
   }
 }
