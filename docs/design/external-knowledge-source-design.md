@@ -50,7 +50,7 @@
 | 认证 | `X-API-Key: <key>` |
 | 协议版本 | 文档声明协商 `2025-06-18`；代码常量 `PROTOCOL_VERSION = "2024-11-05"`（**存在出入，客户端应按服务端 initialize 返回值协商，不要硬编码**） |
 | 工具（按 scope 过滤） | `knowledge_query`（QUERY）、`knowledge_search`（SEARCH）、`list_knowledge_bases`（LIST）、`list_knowledge_cards` / `get_knowledge_card` / `list_claims` / `get_claim` / `get_evidence` / `graph_neighbors`（READ_OBJECT）、`memory_recall` / `memory_capture` / `memory_forget`（MEMORY_*）、`ingest_text`（INGEST） |
-| 关键参数 | `knowledgeBaseCode`（稳定编码，推荐）/ `knowledgeBaseId`（旧兼容，绑定 Key 可省略）、`query` 或 `question`、`topK`（默认 10）、`permissionTags`、`minScore`、`answerFormat`（default/markdown/text/html） |
+| 关键参数 | `knowledgeBaseId`（必填，KB_ 开头的系统 ID）、`query` 或 `question`、`topK`（默认 10）、`permissionTags`、`minScore`、`answerFormat`（default/markdown/text/html） |
 | 返回 | `knowledge_query` 给答案 + `queryId` + `citations`；`knowledge_search` 给候选/重排/引用与 `returned` 条数 |
 
 > `tools/list` 按授权过滤，服务端每次调用复核 scope；`permissionTags` 只是过滤条件，**不能代替 AKB 侧 ACL**。
@@ -141,7 +141,7 @@ CREATE TABLE IF NOT EXISTS external_knowledge_bindings (
   instance_id TEXT NOT NULL,              -- 关联 connector_instances（公共 id）
   kind TEXT NOT NULL,                     -- akb-mcp / akb-rest / ragflow / weknora / standard-retrieval
   ref TEXT NOT NULL DEFAULT '',           -- 默认知识库 ref（AKB baseCode / RAGFlow dataset_id / 外部 kb id）
-  selector_argument TEXT NOT NULL DEFAULT '',   -- 强制注入的参数名（AKB: knowledgeBaseCode）
+  selector_argument TEXT NOT NULL DEFAULT '',   -- 强制注入的参数名（AKB: knowledgeBaseId）
   forbidden_arguments TEXT NOT NULL DEFAULT '',  -- 禁止调用方传入的参数（逗号分隔，AKB: knowledgeBaseId）
   read_tools TEXT NOT NULL DEFAULT '',    -- 允许的工具白名单（逗号分隔）
   top_k INTEGER NOT NULL DEFAULT 8,
@@ -209,7 +209,7 @@ CREATE TABLE IF NOT EXISTS external_knowledge_targets (
 ### 3.9 Agent 侧接入
 
 - 扩展 `infra/knowledge/tools.py`：`search_knowledge` 工具在描述中标注已挂载的**外部源**，检索时同时调用 `external/service.retrieve()`；外部片段在引用中标注来源系统（如 `[AKB · HR-POLICY]`）。
-- 复用 `middleware/knowledge_source_scope.py`：外部 MCP 源在工具调用前强制 `knowledgeBaseCode`、拒绝 `knowledgeBaseId`（与 AKB 文档一致）。
+- 复用 `middleware/knowledge_source_scope.py`：外部 MCP 源在工具调用前强制 `knowledgeBaseId`、拒绝旧选择参数（与 AKB 文档一致）。
 - 数字员工现有 `knowledge_sources` 绑定保持不变（兼容）；新模块提供统一入口，后续可选迁移。
 
 ## 4. 实施计划

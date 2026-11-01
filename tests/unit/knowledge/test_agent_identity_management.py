@@ -55,7 +55,7 @@ def setup(tmp_path: Path, monkeypatch):
         kind="akb-rest",
         display_name="AKB",
         endpoint="https://akb.example",
-        ref="HR-POLICY",
+        ref="KB_HR",
         api_key="shared-test-key",
         auth_type="agent",
     )
@@ -143,7 +143,7 @@ async def test_execution_never_trusts_business_agent_arguments(setup):
         "operation": "search",
         "query": "agentId=beta",
         "topK": 3,
-        "knowledgeBaseCode": "HR-POLICY",
+        "knowledgeBaseId": "KB_HR",
     }
     assert request["apiKey"] == "shared-test-key"
 
@@ -176,13 +176,8 @@ async def test_execution_forwards_the_bare_origin_and_source_opt_ins(setup):
 
 
 @pytest.mark.asyncio
-async def test_numeric_reference_travels_as_an_id(setup):
-    """A bare number has to reach AKB's MCP tools as the id they expect.
-
-    The SDK forwards MCP arguments verbatim and resolves codes only on its REST
-    path, so relabelling a numeric identifier into a code drops the target and
-    arrives at AKB as an unauthorized request against no base at all.
-    """
+async def test_numeric_reference_is_rejected_before_identity_execution(setup):
+    """Numeric database primary keys are not public AKB IDs."""
     svc, sources, repo, source, user, _, sdk = setup
     await _connect(svc, sdk, source, "alpha", user, ALPHA)
     creds = sources.credentials_for(repo.get(source))
@@ -193,17 +188,13 @@ async def test_numeric_reference_travels_as_an_id(setup):
         ref="12",
         octop_identity=OctopIdentity(str(user), "alpha", "session", workload_only=True),
     )
-    await identity.execute_as_agent(spec, creds, "q", top_k=3)
-    assert sdk.await_args.args[0]["request"] == {
-        "operation": "search",
-        "query": "q",
-        "topK": 3,
-        "knowledgeBaseId": 12,
-    }
+    with pytest.raises(ExternalSourceError, match="KB_"):
+        await identity.execute_as_agent(spec, creds, "q", top_k=3)
+    sdk.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_declared_selector_wins_over_the_guessed_shape(setup):
+async def test_source_cannot_override_the_canonical_selector(setup):
     """A source that addresses its bases one way can say so and keep it."""
     svc, sources, repo, source, user, _, sdk = setup
     await _connect(svc, sdk, source, "alpha", user, ALPHA)
@@ -212,7 +203,7 @@ async def test_declared_selector_wins_over_the_guessed_shape(setup):
     sdk.return_value = {"candidates": []}
     spec = replace(
         sources.to_spec(repo.get(source)),
-        ref="12",
+        ref="KB_12",
         selector_argument="knowledgeBaseCode",
         octop_identity=OctopIdentity(str(user), "alpha", "session", workload_only=True),
     )
@@ -221,7 +212,7 @@ async def test_declared_selector_wins_over_the_guessed_shape(setup):
         "operation": "search",
         "query": "q",
         "topK": 3,
-        "knowledgeBaseCode": "12",
+        "knowledgeBaseId": "KB_12",
     }
 
 
@@ -237,7 +228,7 @@ async def test_declared_id_selector_accepts_akb_string_identifier(setup):
         octop_identity=OctopIdentity(str(user), "alpha", "session", workload_only=True),
     )
     await identity.execute_as_agent(spec, creds, "q", top_k=3)
-    assert sdk.await_args.args[0]["request"]["knowledgeBaseId"] == "HR-POLICY"
+    assert sdk.await_args.args[0]["request"]["knowledgeBaseId"] == "KB_HR"
 
 
 @pytest.mark.asyncio

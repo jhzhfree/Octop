@@ -50,7 +50,7 @@ def _spec(**overrides: Any) -> ExternalSourceSpec:
         "display_name": "AKB",
         "kind": "akb-rest",
         "endpoint": "https://akb.example.com",
-        "ref": "HR-POLICY",
+        "ref": "KB_HR",
     }
     base.update(overrides)
     return ExternalSourceSpec(**base)  # type: ignore[arg-type]
@@ -149,8 +149,8 @@ async def test_akb_rest_lists_bases(monkeypatch: pytest.MonkeyPatch) -> None:
         return {
             "success": True,
             "data": [
-                {"id": 101, "baseCode": "HR-POLICY", "name": "人事制度"},
-                {"id": 102, "baseCode": "OPS-RUNBOOK", "name": "运维手册"},
+                {"id": 101, "knowledgeBaseId": "KB_HR", "name": "人事制度"},
+                {"id": 102, "knowledgeBaseId": "KB_OPS", "name": "运维手册"},
                 {"name": "no code"},
             ],
         }
@@ -158,8 +158,8 @@ async def test_akb_rest_lists_bases(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(akb_rest, "get_json", fake_get_json)
     refs = await akb_rest.list_refs(_spec(), {"api_key": "k"})
     assert refs == [
-        {"ref": "HR-POLICY", "name": "人事制度"},
-        {"ref": "OPS-RUNBOOK", "name": "运维手册"},
+        {"ref": "KB_HR", "name": "人事制度"},
+        {"ref": "KB_OPS", "name": "运维手册"},
     ]
 
 
@@ -183,7 +183,7 @@ async def test_akb_rest_probe_survives_missing_list_scope(
 @pytest.mark.asyncio
 async def test_akb_rest_probe_without_ref_only_lists(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_get_json(url: str, **kwargs: Any) -> Any:
-        return {"data": [{"id": 7, "baseCode": "KB_DEFAULT", "name": "默认知识库"}]}
+        return {"data": [{"id": 7, "knowledgeBaseId": "KB_DEFAULT", "name": "默认知识库"}]}
 
     async def fake_post_json(url: str, **kwargs: Any) -> Any:
         raise AssertionError("must not retrieve before a base is chosen")
@@ -207,12 +207,16 @@ async def test_akb_mcp_signs_a_fresh_assertion_per_request(
         seen.append(kwargs["headers"].get(IDENTITY_HEADER, ""))
         if kwargs["payload"]["method"] == "initialize":
             return {"result": {"protocolVersion": "2025-06-18"}}
-        return {"result": {"structuredContent": {"items": [{"baseCode": "KB1", "name": "库一"}]}}}
+        return {
+            "result": {
+                "structuredContent": {"items": [{"knowledgeBaseId": "KB_1", "name": "库一"}]}
+            }
+        }
 
     monkeypatch.setattr(akb_mcp, "post_json", fake_post_json)
     spec = _spec(kind="akb-mcp", octop_identity=OctopIdentity(user_id="42", agent_id="agent-7"))
     refs = await akb_mcp.list_refs(spec, {"api_key": "k"})
-    assert refs == [{"ref": "KB1", "name": "库一"}]
+    assert refs == [{"ref": "KB_1", "name": "库一"}]
     assert len(seen) == 2
     jtis = [
         jwt.decode(token, _PUBLIC_PEM, algorithms=["RS256"], audience="akb")["jti"]
@@ -320,12 +324,13 @@ def test_configured_arguments_travel_but_never_override_the_call() -> None:
     """Preset values are extras; the query and its target belong to the caller."""
     spec = _spec(
         kind="akb-mcp",
-        ref="12",
+        ref="KB_12",
         tool_arguments={
             "permissionTags": "policy",
             "topK": 99,
             "query": "注入的查询",
             "knowledgeBaseId": 7,
+            "knowledgeBaseCode": 6,
         },
     )
     arguments = akb_mcp._arguments(spec, "真实问题", top_k=3)
@@ -333,20 +338,20 @@ def test_configured_arguments_travel_but_never_override_the_call() -> None:
     # Controlled values keep what the retrieval itself decided.
     assert arguments["topK"] == 3
     assert arguments["query"] == "真实问题"
-    assert arguments["knowledgeBaseId"] == 12
+    assert arguments["knowledgeBaseId"] == "KB_12"
 
 
 def test_forbidden_arguments_still_apply_to_configured_values() -> None:
     spec = _spec(
         kind="akb-mcp",
         forbidden_arguments=("knowledgeBaseId",),
-        tool_arguments={"knowledgeBaseId": 7, "mode": "strict"},
+        tool_arguments={"knowledgeBaseId": 7, "knowledgeBaseCode": 6, "mode": "strict"},
     )
     arguments = akb_mcp._arguments(spec, "q", top_k=2)
     # A source that forbids a key keeps its say even over stored arguments.
-    assert "knowledgeBaseId" not in arguments
+    assert arguments["knowledgeBaseId"] == "KB_HR"
     assert arguments["mode"] == "strict"
-    assert arguments["knowledgeBaseCode"] == "HR-POLICY"
+    assert "knowledgeBaseCode" not in arguments
 
 
 def test_akb_rest_accepts_a_pasted_retrieval_url() -> None:
@@ -418,7 +423,7 @@ async def test_akb_rest_probe_keeps_a_search_only_404(monkeypatch: pytest.Monkey
     # Listing works, so the endpoint is right: here the 404 really is about the
     # requested base and must not be relabelled as an endpoint mistake.
     async def fake_get_json(url: str, **kwargs: Any) -> Any:
-        return {"data": [{"id": 7, "baseCode": "HR-POLICY", "name": "人事制度"}]}
+        return {"data": [{"id": 7, "knowledgeBaseId": "KB_HR", "name": "人事制度"}]}
 
     async def fake_post_json(url: str, **kwargs: Any) -> Any:
         raise ExternalSourceError("NOT_FOUND", "upstream returned HTTP 404", origin="akb-rest")
@@ -485,3 +490,42 @@ async def test_agent_mcp_discovery_never_calls_business_tools(
     assert result.ok
     assert result.refs == []
     assert methods == ["initialize", "tools/list"]
+
+
+@pytest.mark.parametrize("reference", ["12", "HR-POLICY", "kb_a", "KB_a/other"])
+def test_akb_rejects_noncanonical_ids_before_transport(reference: str) -> None:
+    with pytest.raises(ExternalSourceError) as failure:
+        akb_mcp._arguments(_spec(kind="akb-mcp", ref=reference), "q", 3)
+    assert failure.value.code == "INVALID_ARGUMENT"
+
+
+def test_search_and_query_send_only_their_declared_question_field() -> None:
+    search = akb_mcp._arguments(_spec(kind="akb-mcp"), "q", 3)
+    query = akb_mcp._arguments(_spec(kind="akb-mcp", tool_name="knowledge_query"), "q", 3)
+    assert search == {"knowledgeBaseId": "KB_HR", "query": "q", "topK": 3}
+    assert query == {"knowledgeBaseId": "KB_HR", "question": "q", "topK": 3}
+
+
+@pytest.mark.asyncio
+async def test_mcp_invalid_parameter_is_configuration_error_not_protocol_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def rejected(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        return {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "error": {"code": -32602, "message": "private upstream detail"},
+        }
+
+    monkeypatch.setattr(akb_mcp, "post_json", rejected)
+    with pytest.raises(ExternalSourceError) as failure:
+        await akb_mcp._rpc(
+            "https://akb.example.com/api/mcp",
+            _spec(kind="akb-mcp"),
+            {"api_key": "k"},
+            "tools/call",
+            {},
+            timeout=1,
+        )
+    assert failure.value.code == "INVALID_ARGUMENT"
+    assert "private upstream detail" not in str(failure.value)

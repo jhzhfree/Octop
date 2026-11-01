@@ -116,10 +116,8 @@ class ExternalSourceSpec:
     octop_identity: Any = None
 
 
-# How a request names the knowledge base it wants. AKB's REST channels resolve a
-# code into an id on their own, but its MCP tools take the identifier exactly as
-# handed over, so the value has to arrive in the shape the deployment uses.
-DEFAULT_SELECTOR_ARGUMENT = "knowledgeBaseCode"
+# AKB has one public selector: the generated KB_ identifier.
+DEFAULT_SELECTOR_ARGUMENT = "knowledgeBaseId"
 ID_SELECTOR_ARGUMENT = "knowledgeBaseId"
 INVALID_ARGUMENT = "INVALID_ARGUMENT"
 MISSING_REF_MESSAGE = "an AKB knowledge base reference is required"
@@ -131,30 +129,24 @@ def missing_ref(origin: str) -> ExternalSourceError:
 
 
 def selector_argument(spec: ExternalSourceSpec) -> str:
-    """The per-source request key that carries ``spec.ref``."""
+    """AKB's public selector cannot be overridden by source configuration."""
+    if spec.kind in {"akb-mcp", "akb-rest"}:
+        return ID_SELECTOR_ARGUMENT
     return (spec.selector_argument or "").strip() or DEFAULT_SELECTOR_ARGUMENT
 
 
 def base_argument(spec: ExternalSourceSpec) -> dict[str, Any]:
-    """The single key/value pair naming this source's knowledge base.
-
-    A base is addressed either by numeric id or by stable code. Which one a
-    deployment uses is the source's own declaration; with nothing declared, a
-    purely numeric reference travels as an id and anything else as a code, so
-    both shapes survive the trip to AKB — the picklist offers either.
-    """
-    key = selector_argument(spec)
-    declared = bool((spec.selector_argument or "").strip())
+    """Resolve the canonical ID without numeric coercion or alias fallback."""
     value = (spec.ref or "").strip()
     if not value:
         raise missing_ref(spec.kind)
-    if key == ID_SELECTOR_ARGUMENT:
-        return {ID_SELECTOR_ARGUMENT: int(value) if value.isdecimal() else value}
-    # Nothing was declared and the reference is a bare number: AKB's MCP tools
-    # only understand ids, so guessing "code" here would silently drop the target.
-    if not declared and value.isdecimal():
-        return {ID_SELECTOR_ARGUMENT: int(value)}
-    return {key: value}
+    if not re.fullmatch(r"KB_[A-Za-z0-9]{1,125}", value):
+        raise ExternalSourceError(
+            INVALID_ARGUMENT,
+            "knowledgeBaseId must be a generated KB_ identifier; select a knowledge base",
+            origin=spec.kind,
+        )
+    return {ID_SELECTOR_ARGUMENT: value}
 
 
 # A tool call carries whatever the server's schema asks for, but these values are

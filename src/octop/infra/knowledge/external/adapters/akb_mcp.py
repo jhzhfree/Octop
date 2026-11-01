@@ -46,7 +46,7 @@ _STATUS_MAP: dict[int, str] = {
 }
 # JSON-RPC error code → sanitized Octop code. ``-32001`` is AKB's
 # "permission or scope insufficient".
-_RPC_CODES: dict[int, str] = {-32001: "FORBIDDEN"}
+_RPC_CODES: dict[int, str] = {-32001: "FORBIDDEN", -32602: "INVALID_ARGUMENT"}
 
 
 def _url(spec: ExternalSourceSpec) -> str:
@@ -155,8 +155,7 @@ def _arguments(spec: ExternalSourceSpec, query: str, top_k: int) -> dict[str, An
     # widened by the caller, and never missing — AKB turns a targetless
     # knowledge_query into an authorization failure rather than an empty answer.
     controlled = {
-        "question": query,
-        "query": query,
+        ("question" if _tool_name(spec) == "knowledge_query" else "query"): query,
         "topK": top_k,
         **base_argument(spec),
     }
@@ -167,7 +166,15 @@ def _arguments(spec: ExternalSourceSpec, query: str, top_k: int) -> dict[str, An
     preset = {
         key: value
         for key, value in spec.tool_arguments.items()
-        if str(key) not in spec.forbidden_arguments
+        if str(key)
+        not in (
+            *spec.forbidden_arguments,
+            "knowledgeBaseCode",
+            "knowledgeBaseId",
+            "query",
+            "question",
+            "topK",
+        )
     }
     return {**preset, **controlled}
 
@@ -181,6 +188,7 @@ async def search(
 ) -> ExternalSearchResult:
     url = _url(spec)
     capped = max(1, min(top_k, MAX_TOP_K))
+    arguments = _arguments(spec, query, capped)
     await _rpc(
         url,
         spec,
@@ -198,7 +206,7 @@ async def search(
         spec,
         creds,
         "tools/call",
-        {"name": _tool_name(spec), "arguments": _arguments(spec, query, capped)},
+        {"name": _tool_name(spec), "arguments": arguments},
         timeout=spec.timeout_seconds,
         request_id=2,
     )
@@ -260,9 +268,9 @@ async def list_refs(spec: ExternalSourceSpec, creds: dict[str, Any]) -> list[dic
     for item in _collect_items(bases):
         if not isinstance(item, dict):
             continue
-        code = item.get("baseCode") or item.get("knowledgeBaseCode") or item.get("id")
+        code = item.get("knowledgeBaseId")
         name = item.get("name") or item.get("displayName") or ""
-        if isinstance(code, (str, int)) and str(code).strip():
+        if isinstance(code, str) and code.startswith("KB_"):
             refs.append({"ref": str(code).strip(), "name": str(name)})
     return refs
 

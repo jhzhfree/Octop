@@ -44,7 +44,7 @@ async function fixture(transport = "mcp") {
       res.setHeader("Content-Type", "application/json");
       if (transport === "mcp") res.end(JSON.stringify({ jsonrpc: "2.0", id: body.id, result: body.method === "initialize"
         ? { protocolVersion: "2025-06-18" } : { content: [{ type: "text", text: claims.sub }] } }));
-      else res.end(JSON.stringify({ success: true, data: req.method === "GET" ? [{ id: index + 2, baseCode: `PRIVATE-${index}` }] : { candidates: [{ content: claims.sub }] } }));
+      else res.end(JSON.stringify({ success: true, data: req.method === "GET" ? [{ knowledgeBaseId: `KB_PRIVATE${index}` }] : { candidates: [{ content: claims.sub }] } }));
     } catch (e) { errors.push(e); res.writeHead(500).end(); }
   });
   server.listen(0, "127.0.0.1"); await once(server, "listening");
@@ -68,9 +68,9 @@ test("independent platform adapter: concurrent Agents share one credential and k
   const f = await fixture();
   try {
     const runtime = createRuntime(f.dependencies);
-    const first = runtime.invoke(f.context("build"), { operation: "search", query: "a", agentId: ids[1] });
+    const first = runtime.invoke(f.context("build"), { operation: "search", knowledgeBaseId: "KB_PRIVATE0", query: "a", agentId: ids[1] });
     assert.deepEqual(f.captured, ["build"], "capture executes before invoke yields");
-    const second = runtime.invoke(f.context("review"), { operation: "search", query: "b" });
+    const second = runtime.invoke(f.context("review"), { operation: "search", knowledgeBaseId: "KB_PRIVATE0", query: "b" });
     const [a,b] = await Promise.all([first, second]);
     assert.equal(a.metadata.externalAgentId, ids[0]); assert.equal(b.metadata.externalAgentId, ids[1]);
     assert.equal(f.calls.length, 4); assert.equal(new Set(f.calls.map(x => x.claims.jti)).size, 4);
@@ -94,14 +94,14 @@ test("denial, cancellation, unknown identity and workspace mismatch send no requ
     assert.equal(approvals, 1); assert.equal(f.calls.length, 0);
   } finally { await f.close(); }
 });
-test("REST signs discovery and data; mismatched base references are rejected", async () => {
+test("REST signs the canonical knowledge base ID; old selectors are rejected", async () => {
   const f = await fixture("rest");
   try {
     const runtime = createRuntime(f.dependencies);
-    const result = await runtime.invoke(f.context("build"), { operation: "search", query: "规则🚀", knowledgeBaseCode: "PRIVATE-0" });
+    const result = await runtime.invoke(f.context("build"), { operation: "search", knowledgeBaseId: "KB_PRIVATE0", query: "规则🚀" });
     assert.match(JSON.stringify(result.data), new RegExp(ids[0]));
-    assert.equal(f.calls[1].body.knowledgeBaseId, 2);
-    await assert.rejects(runtime.invoke(f.context("build"), { operation: "search", query: "x", knowledgeBaseCode: "PRIVATE-0", knowledgeBaseId: 99 }), /mismatched/);
+    assert.deepEqual(f.calls[0].body, { knowledgeBaseId: "KB_PRIVATE0", question: "规则🚀" });
+    await assert.rejects(runtime.invoke(f.context("build"), { operation: "search", query: "x", knowledgeBaseCode: "PRIVATE-0", knowledgeBaseId: 99 }), /Invalid knowledge request/);
   } finally { await f.close(); }
 });
 test("a valid A signature cannot be used for B with the same service credential", async () => {

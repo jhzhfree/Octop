@@ -160,7 +160,7 @@ akb-agent-identity doctor /etc/akb-agent-identity/identity.json
 
 ```text
 akb_bases({})
-akb_search({query: "报销规则", knowledgeBaseCode: "HR-POLICY", topK: 3})
+akb_search({query: "报销规则", knowledgeBaseId: "KB_xxxx", topK: 3})
 akb_query({query: "报销截止时间？", knowledgeBaseId: 12})
 ```
 

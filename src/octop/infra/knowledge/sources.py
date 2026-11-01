@@ -28,13 +28,13 @@ def canonical_knowledge_sources(capabilities: Any) -> list[dict[str, Any]]:
             continue
         selector_argument = source.get("selector_argument")
         if selector_argument is None and provider == "akb":
-            selector_argument = "knowledgeBaseCode"
+            selector_argument = "knowledgeBaseId"
         read_tools = source.get("read_tools")
         if not isinstance(read_tools, list):
             read_tools = list(AKB_READ_TOOLS) if provider == "akb" else []
         forbidden_arguments = source.get("forbidden_arguments")
         if not isinstance(forbidden_arguments, list):
-            forbidden_arguments = ["knowledgeBaseId"] if provider == "akb" else []
+            forbidden_arguments = ["knowledgeBaseCode"] if provider == "akb" else []
         normalized.append(
             {
                 "provider": provider,

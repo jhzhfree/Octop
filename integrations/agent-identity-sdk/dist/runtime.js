@@ -29,7 +29,7 @@ export function createRuntime(dependencies) {
                 throw new IdentityError("WORKSPACE_UNAPPROVED", "Unapproved execution workspace");
             const invocation = Object.freeze({ terminalAgentName: context.terminalAgentName ?? context.runtimeAgentKey, sessionId: context.sessionId, messageId: context.messageId, invocationId: crypto.randomUUID() });
             await captured.authorize(input.operation === "bases" ? { operation: "bases" } : { operation: input.operation,
-                knowledgeBaseId: input.knowledgeBaseId, knowledgeBaseCode: input.knowledgeBaseCode });
+                knowledgeBaseId: input.knowledgeBaseId });
             context.abortSignal.throwIfAborted();
             const signer = await dependencies.keyStore.openActiveSigner(ownerOf(binding));
             const data = await client.execute(input, binding, invocation, signer, context.abortSignal);

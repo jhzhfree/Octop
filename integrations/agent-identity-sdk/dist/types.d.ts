@@ -9,8 +9,7 @@ export type KnowledgeRequest = Readonly<{
     operation: "search" | "query";
     query: string;
     topK?: number;
-    knowledgeBaseId?: number;
-    knowledgeBaseCode?: string;
+    knowledgeBaseId: string;
 }>;
 export interface HostExecution {
     readonly platformId: string;
@@ -23,8 +22,7 @@ export interface HostExecution {
 }
 export interface ApprovalSummary {
     readonly operation: Operation;
-    readonly knowledgeBaseId?: number;
-    readonly knowledgeBaseCode?: string;
+    readonly knowledgeBaseId?: string;
 }
 export interface CapturedExecution {
     readonly context: HostExecution;

@@ -10,8 +10,7 @@ export type KnowledgeRequest =
       operation: "search" | "query";
       query: string;
       topK?: number;
-      knowledgeBaseId?: number;
-      knowledgeBaseCode?: string;
+      knowledgeBaseId: string;
     }>;
 
 export interface HostExecution {
@@ -26,8 +25,7 @@ export interface HostExecution {
 
 export interface ApprovalSummary {
   readonly operation: Operation;
-  readonly knowledgeBaseId?: number;
-  readonly knowledgeBaseCode?: string;
+  readonly knowledgeBaseId?: string;
 }
 
 export interface CapturedExecution {

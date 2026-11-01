@@ -599,9 +599,9 @@ class DigitalWorkerService:
                 "provider": "akb",
                 "mcp_server": source.get("mcp_server", ""),
                 "knowledge_base_ref": source.get("knowledge_base_code", ""),
-                "selector_argument": "knowledgeBaseCode",
+                "selector_argument": "knowledgeBaseId",
                 "read_tools": ["knowledge_query", "knowledge_search"],
-                "forbidden_arguments": ["knowledgeBaseId"],
+                "forbidden_arguments": ["knowledgeBaseCode"],
                 "access": "read",
             }
             for source in sources

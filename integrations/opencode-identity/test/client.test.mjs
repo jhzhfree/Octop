@@ -44,7 +44,7 @@ async function fixture(transport = "mcp", version = 1) {
     res.setHeader("Content-Type", "application/json");
     if (transport === "mcp") res.end(JSON.stringify({ jsonrpc: "2.0", id: body.id, result: body.method === "initialize"
       ? { protocolVersion: "2025-06-18" } : { content: [{ type: "text", text: claims.sub }], structuredContent: { agent: claims.sub } } }));
-    else res.end(JSON.stringify({ success: true, data: req.method === "GET" ? [{ id: 42, baseCode: "PRIVATE" }] : { candidates: [{ content: claims.sub }] } }));
+    else res.end(JSON.stringify({ success: true, data: req.method === "GET" ? [{ knowledgeBaseId: "KB_PRIVATE0" }] : { candidates: [{ content: claims.sub }] } }));
   });
   server.listen(0, "127.0.0.1"); await once(server, "listening");
   const config = { origin: `http://127.0.0.1:${server.address().port}`, allowInsecureLoopback: true, transport,
@@ -72,8 +72,8 @@ test("two Agents share one key; concurrent MCP handshakes and tool calls carry t
   try {
     const hooks = await plugin.server({ directory: f.workspace }, { configFile: f.configFile });
     const [a,b] = await Promise.all([
-      hooks.tool.akb_search.execute({ query: "a", agent_id: "uuid-b" }, f.context("build")),
-      hooks.tool.akb_search.execute({ query: "b" }, f.context("review")),
+      hooks.tool.akb_search.execute({ knowledgeBaseId:"KB_PRIVATE0", query: "a", agent_id: "uuid-b" }, f.context("build")),
+      hooks.tool.akb_search.execute({ knowledgeBaseId:"KB_PRIVATE0", query: "b" }, f.context("review")),
     ]);
     assert.match(a.output, /agent:uuid-a/); assert.match(b.output, /agent:uuid-b/);
     assert.equal(f.calls.length, 4); assert.equal(new Set(f.calls.map(x => x.claims.jti)).size, 4);
@@ -88,11 +88,11 @@ test("two Agents share one key; concurrent MCP handshakes and tool calls carry t
   try {
     const hooks = await plugin.server({ directory: f.workspace }, { configFile: f.configFile });
     let approvals = 0;
-    await assert.rejects(hooks.tool.akb_search.execute({ query: "denied" }, f.context("build", () => Effect.sync(() => { approvals++; throw new Error("DENIED"); }))), /DENIED/);
+    await assert.rejects(hooks.tool.akb_search.execute({ knowledgeBaseId:"KB_PRIVATE0", query: "denied" }, f.context("build", () => Effect.sync(() => { approvals++; throw new Error("DENIED"); }))), /DENIED/);
     assert.equal(approvals, 1); assert.equal(f.calls.length, 0);
     const [a,b] = await Promise.all([
-      hooks.tool.akb_search.execute({ query: "a", agentId: "forged" }, f.context("build")),
-      hooks.tool.akb_search.execute({ query: "b" }, f.context("review")),
+      hooks.tool.akb_search.execute({ knowledgeBaseId:"KB_PRIVATE0", query: "a", agentId: "forged" }, f.context("build")),
+      hooks.tool.akb_search.execute({ knowledgeBaseId:"KB_PRIVATE0", query: "b" }, f.context("review")),
     ]);
     assert.notEqual(a.metadata.externalAgentId, b.metadata.externalAgentId);
     assert.equal(new Set(f.calls.map(c => c.claims.sub)).size, 2);
@@ -109,7 +109,7 @@ test("two Agents share one key; concurrent MCP handshakes and tool calls carry t
     assert.ok(!JSON.stringify(audit).includes("shared-test-key"));
     await rm(f.config.auditFile);
     const requests = f.calls.length;
-    await assert.rejects(hooks.tool.akb_search.execute({ query: "audit unavailable" }, f.context("build")));
+    await assert.rejects(hooks.tool.akb_search.execute({ knowledgeBaseId:"KB_PRIVATE0", query: "audit unavailable" }, f.context("build")));
     assert.equal(f.calls.length, requests, "audit failure prevents upstream requests");
   } finally { await f.close(); }
 });
@@ -118,21 +118,20 @@ test("permission Effect is executed; denial prevents every upstream request", as
   try {
     const hooks = await plugin.server({ directory: f.workspace }, { configFile: f.configFile });
     let approvals = 0;
-    await assert.rejects(hooks.tool.akb_search.execute({ query: "denied" }, f.context("build", () => Effect.sync(() => { approvals++; throw new Error("DENIED"); }))), /DENIED/);
+    await assert.rejects(hooks.tool.akb_search.execute({ knowledgeBaseId:"KB_PRIVATE0", query: "denied" }, f.context("build", () => Effect.sync(() => { approvals++; throw new Error("DENIED"); }))), /DENIED/);
     assert.equal(approvals, 1); assert.equal(f.calls.length, 0);
-    await assert.rejects(hooks.tool.akb_search.execute({ query: "unknown" }, f.context("forged")), /unregistered/);
+    await assert.rejects(hooks.tool.akb_search.execute({ knowledgeBaseId:"KB_PRIVATE0", query: "unknown" }, f.context("forged")), /unregistered/);
     assert.equal(f.calls.length, 0);
   } finally { await f.close(); }
 });
-test("REST resolves private base code using signed discovery and sends numeric ID", async () => {
+test("REST sends the canonical KB_ ID with a signed request", async () => {
   const f = await fixture("rest");
   try {
     const hooks = await plugin.server({ directory: f.workspace }, { configFile: f.configFile });
-    await hooks.tool.akb_search.execute({ query: "policy", knowledgeBaseCode: "PRIVATE" }, f.context("build"));
-    assert.equal(f.calls.length, 2); assert.equal(f.calls[1].body.knowledgeBaseId, 42);
-    assert.equal(f.calls[1].url, "/api/v1/external/search");
-    assert.notEqual(f.calls[0].claims.jti, f.calls[1].claims.jti);
-    await assert.rejects(hooks.tool.akb_search.execute({ query: "policy", knowledgeBaseCode: "PRIVATE", knowledgeBaseId: 999 }, f.context("build")), /mismatched/);
+    await hooks.tool.akb_search.execute({ knowledgeBaseId:"KB_PRIVATE0", query: "policy" }, f.context("build"));
+    assert.equal(f.calls.length, 1); assert.equal(f.calls[0].body.knowledgeBaseId, "KB_PRIVATE0");
+    assert.equal(f.calls[0].url, "/api/v1/external/search");
+    await assert.rejects(hooks.tool.akb_search.execute({ query: "policy", knowledgeBaseCode: "PRIVATE", knowledgeBaseId: 999 }, f.context("build")), /knowledgeBaseId.*KB_/);
   } finally { await f.close(); }
 });
 test("configuration, key files and runtime workspace are protected", async () => {
@@ -154,7 +153,7 @@ test("cancelled invocations do not send a request", async () => {
   try {
     const hooks = await plugin.server({ directory: f.workspace }, { configFile: f.configFile });
     const controller = new AbortController(); controller.abort();
-    await assert.rejects(hooks.tool.akb_search.execute({ query: "cancel" }, { ...f.context("build"), abort: controller.signal }));
+    await assert.rejects(hooks.tool.akb_search.execute({ knowledgeBaseId:"KB_PRIVATE0", query: "cancel" }, { ...f.context("build"), abort: controller.signal }));
     assert.equal(f.calls.length, 0);
   } finally { await f.close(); }
 });
@@ -183,9 +182,9 @@ test("cancelled invocations do not send a request", async () => {
   const configFile=path.join(root,'config.json');await writeFile(configFile,JSON.stringify(config),{mode:0o600});
   const hooks=await plugin.server({directory:workspace},{configFile});
   const context=(agent,ask=()=>Effect.void)=>({agent,sessionID:'real-session',messageID:'real-message',directory:workspace,worktree:workspace,abort:new AbortController().signal,ask,metadata(){}});
-  await assert.rejects(hooks.tool.akb_search.execute({query:'denied'},context('build',()=>Effect.fail(new Error('DENIED')))),/DENIED/);assert.equal(calls.length,0);
-  await assert.rejects(hooks.tool.akb_search.execute({query:'unknown'},context('forged')),/not bound/);assert.equal(calls.length,0);
-  const [a,b]=await Promise.all([hooks.tool.akb_search.execute({query:'A',agentId:ids[1]},context('build')),hooks.tool.akb_search.execute({query:'B'},context('review'))]);
+  await assert.rejects(hooks.tool.akb_search.execute({knowledgeBaseId:"KB_PRIVATE0", query:'denied'},context('build',()=>Effect.fail(new Error('DENIED')))),/DENIED/);assert.equal(calls.length,0);
+  await assert.rejects(hooks.tool.akb_search.execute({knowledgeBaseId:"KB_PRIVATE0", query:'unknown'},context('forged')),/not bound/);assert.equal(calls.length,0);
+  const [a,b]=await Promise.all([hooks.tool.akb_search.execute({knowledgeBaseId:"KB_PRIVATE0", query:'A',agentId:ids[1]},context('build')),hooks.tool.akb_search.execute({knowledgeBaseId:"KB_PRIVATE0", query:'B'},context('review'))]);
   assert.equal(a.metadata.externalAgentId,ids[0]);assert.equal(b.metadata.externalAgentId,ids[1]);assert.equal(new Set(calls.map(c=>c.sub)).size,2);assert.equal(new Set(calls.map(c=>c.jti)).size,2);
  }finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));await rm(root,{recursive:true,force:true});}
 });

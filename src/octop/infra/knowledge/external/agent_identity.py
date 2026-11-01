@@ -25,7 +25,6 @@ from octop.infra.knowledge.external.types import (
     ExternalSourceError,
     ExternalSourceSpec,
     base_argument,
-    selector_argument,
 )
 from octop.infra.utils.paths import PathLayout
 
@@ -712,13 +711,8 @@ async def list_bases_as_agent(
     for item in _items(data, spec.kind):
         if not isinstance(item, dict):
             continue
-        code = (
-            item.get(selector_argument(spec))
-            or item.get("baseCode")
-            or item.get("knowledgeBaseCode")
-            or item.get("id")
-        )
+        code = item.get("knowledgeBaseId")
         name = item.get("name") or item.get("displayName") or ""
-        if isinstance(code, (str, int)) and str(code).strip():
+        if isinstance(code, str) and code.startswith("KB_"):
             refs.append({"ref": str(code).strip(), "name": str(name)})
     return refs

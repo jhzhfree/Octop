@@ -136,8 +136,11 @@ export class WorkloadClient {
     try { result = JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch { throw new Error("Invalid AKB JSON response"); }
     return result;
   }
-  async execute(operation: Operation, args: { query?: string; topK?: number; knowledgeBaseCode?: string; knowledgeBaseId?: number },
+  async execute(operation: Operation, args: { query?: string; topK?: number; knowledgeBaseId?: string },
     invocation: Invocation, signal: AbortSignal) {
+    if (operation !== "bases" && (typeof args.knowledgeBaseId !== "string" || !/^KB_[A-Za-z0-9]{1,125}$/.test(args.knowledgeBaseId) || "knowledgeBaseCode" in args)) {
+      throw new Error("knowledgeBaseId must be a generated KB_ identifier");
+    }
     if (this.config.transport === "mcp") {
       const rpc = async (method: string, params: unknown) => {
         const id = randomUUID();
@@ -147,22 +150,13 @@ export class WorkloadClient {
       };
       const init = await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "akb-opencode-identity", version: "0.1.0" } });
       if (init.protocolVersion !== "2025-06-18") throw new Error("Unsupported AKB MCP protocol");
-      const { query, topK, knowledgeBaseId, knowledgeBaseCode } = args;
-      const filters = { topK, knowledgeBaseId, knowledgeBaseCode };
+      const { query, topK, knowledgeBaseId } = args;
+      const filters = { topK, knowledgeBaseId };
       const name = operation === "bases" ? "list_knowledge_bases" : operation === "search" ? "knowledge_search" : "knowledge_query";
       return rpc("tools/call", { name, arguments: operation === "bases" ? {} : { ...filters, [operation === "search" ? "query" : "question"]: query } });
     }
     if (operation === "bases") return this.request(invocation, "GET", "/api/v1/external/bases", undefined, signal);
-    let knowledgeBaseId = args.knowledgeBaseId;
-    if (args.knowledgeBaseCode) {
-      const bases = await this.request(invocation, "GET", "/api/v1/external/bases", undefined, signal);
-      if (bases.success !== true || !Array.isArray(bases.data)) throw new Error("AKB base discovery failed");
-      const match = bases.data.find((base: any) => base.baseCode === args.knowledgeBaseCode);
-      if (!match || !Number.isSafeInteger(match.id) || (knowledgeBaseId !== undefined && knowledgeBaseId !== match.id)) {
-        throw new Error("Unknown, unauthorized or mismatched AKB base reference");
-      }
-      knowledgeBaseId = match.id;
-    }
+    const knowledgeBaseId = args.knowledgeBaseId;
     const result = await this.request(invocation, "POST", `/api/v1/external/${operation}`,
       { knowledgeBaseId, question: args.query, topK: args.topK }, signal);
     if (result.success === false) throw new Error("AKB rejected the REST operation");

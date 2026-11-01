@@ -373,7 +373,7 @@ async def call(payload: dict[str, Any], repo: SecretRepo | None) -> dict[str, An
             if payload["request"]["operation"] == "bases":
                 return {
                     "items": [
-                        {"baseCode": item["ref"], "name": item["name"]}
+                        {"knowledgeBaseId": item["ref"], "name": item["name"]}
                         for item in await adapter.list_refs(spec, creds)
                     ]
                 }

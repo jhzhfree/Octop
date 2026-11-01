@@ -94,7 +94,14 @@ interface ToolArgumentRow {
 
 // Supplied by the caller on every retrieval: repeating them here could only
 // disagree with what the actual query asks for.
-const _CONTROLLED_ARGUMENTS = ["query", "question", "topK", "top_k"];
+const _CONTROLLED_ARGUMENTS = [
+  "query",
+  "question",
+  "topK",
+  "top_k",
+  "knowledgeBaseId",
+  "knowledgeBaseCode",
+];
 
 function toArgumentRows(saved: Record<string, string | number | boolean> = {}) {
   return Object.entries(saved).map(([key, value]) => ({
@@ -1790,11 +1797,28 @@ export default function ExternalKnowledgePage() {
             <Space.Compact style={{ width: "100%" }}>
               {/* Any value goes through: a stable code, a numeric id, whatever
                   the selector argument names. The fetched list only suggests. */}
-              <Form.Item name="ref" noStyle>
+              <Form.Item
+                name="ref"
+                noStyle
+                rules={
+                  formKind.startsWith("akb-")
+                    ? [
+                        {
+                          pattern: /^KB_[A-Za-z0-9]{1,125}$/,
+                          message: t("externalKnowledge.refHint"),
+                        },
+                      ]
+                    : undefined
+                }
+              >
                 <AutoComplete
                   style={{ flex: 1 }}
                   filterOption
-                  placeholder="HR-POLICY"
+                  placeholder={
+                    formKind.startsWith("akb-")
+                      ? "KB_…"
+                      : t("externalKnowledge.ref")
+                  }
                   options={refs.map((item) => ({
                     value: item.ref,
                     label: item.name ? `${item.name}（${item.ref}）` : item.ref,
@@ -2069,7 +2093,10 @@ export default function ExternalKnowledgePage() {
             name="selector_argument"
             label={t("externalKnowledge.selector")}
           >
-            <Input placeholder="knowledgeBaseCode" />
+            <Input
+              placeholder="knowledgeBaseId"
+              disabled={formKind.startsWith("akb-")}
+            />
           </Form.Item>
 
           <div hidden={!!editing || !!reusedConnection}>

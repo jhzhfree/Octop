@@ -10,10 +10,10 @@ SOURCES = [
     {
         "provider": "akb",
         "mcp_server": "akb__7",
-        "knowledge_base_ref": "hr-handbook",
-        "selector_argument": "knowledgeBaseCode",
+        "knowledge_base_ref": "KB_HR",
+        "selector_argument": "knowledgeBaseId",
         "read_tools": ["knowledge_query", "knowledge_search"],
-        "forbidden_arguments": ["knowledgeBaseId"],
+        "forbidden_arguments": ["knowledgeBaseCode"],
         "access": "read",
     }
 ]
@@ -39,7 +39,7 @@ def test_scope_injects_approved_selector_for_akb() -> None:
     )
 
     assert error is None
-    assert args == {"question": "休假政策", "knowledgeBaseCode": "hr-handbook"}
+    assert args == {"question": "休假政策", "knowledgeBaseId": "KB_HR"}
 
 
 def test_scope_injects_ragflow_dataset_selector() -> None:
@@ -64,7 +64,7 @@ def test_scope_injects_ragflow_dataset_selector() -> None:
 def test_scope_rejects_a_knowledge_base_outside_the_binding() -> None:
     args, error = enforce_knowledge_source_args(
         "akb__7_knowledge_search",
-        {"query": "薪酬", "knowledgeBaseCode": "payroll-private"},
+        {"query": "薪酬", "knowledgeBaseId": "KB_PAYROLL"},
         SOURCES,
     )
 
@@ -75,7 +75,7 @@ def test_scope_rejects_a_knowledge_base_outside_the_binding() -> None:
 def test_scope_rejects_alternate_selector_argument() -> None:
     args, error = enforce_knowledge_source_args(
         "akb__7_knowledge_query",
-        {"question": "政策", "knowledgeBaseId": 13},
+        {"question": "政策", "knowledgeBaseCode": 13},
         SOURCES,
     )
 

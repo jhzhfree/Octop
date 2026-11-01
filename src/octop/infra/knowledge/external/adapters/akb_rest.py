@@ -29,7 +29,7 @@ from octop.infra.knowledge.external.types import (
     ExternalSourceError,
     ExternalSourceSpec,
     SourceProbeResult,
-    missing_ref,
+    base_argument,
 )
 
 ORIGIN = "akb-rest"
@@ -78,9 +78,8 @@ def _headers(spec: ExternalSourceSpec, creds: dict[str, Any]) -> dict[str, str]:
 
 
 def _ref_headers(spec: ExternalSourceSpec, creds: dict[str, Any]) -> dict[str, str]:
-    if not spec.ref:
-        raise missing_ref(ORIGIN)
-    return {**_headers(spec, creds), "X-Knowledge-Base-Id": spec.ref}
+    identifier = base_argument(spec)["knowledgeBaseId"]
+    return {**_headers(spec, creds), "X-Knowledge-Base-Id": identifier}
 
 
 async def search(
@@ -94,7 +93,7 @@ async def search(
     payload = await post_json(
         _url(spec),
         headers=_ref_headers(spec, creds),
-        payload={"question": query, "topK": capped, "knowledgeBaseId": spec.ref},
+        payload={"question": query, "topK": capped, **base_argument(spec)},
         timeout_seconds=spec.timeout_seconds,
         origin=ORIGIN,
         status_map=_STATUS_MAP,
@@ -121,8 +120,8 @@ async def list_refs(spec: ExternalSourceSpec, creds: dict[str, Any]) -> list[dic
     for item in extract_items(payload, keys=("bases",)):
         if not isinstance(item, dict):
             continue
-        code = item.get("baseCode") or item.get("code") or item.get("id")
-        if not isinstance(code, (str, int)) or str(code).strip() == "":
+        code = item.get("knowledgeBaseId")
+        if not isinstance(code, str) or not code.startswith("KB_"):
             continue
         name = str(item.get("name") or "")
         refs.append({"ref": str(code).strip(), "name": name})

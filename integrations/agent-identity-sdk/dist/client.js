@@ -6,12 +6,12 @@ export function validateRequest(request) {
         return Object.freeze({ operation: "bases" });
     if (typeof request.query !== "string" || request.query.length < 1 || request.query.length > 4000
         || (request.topK !== undefined && (!Number.isInteger(request.topK) || request.topK < 1 || request.topK > 50))
-        || (request.knowledgeBaseId !== undefined && (!Number.isSafeInteger(request.knowledgeBaseId) || request.knowledgeBaseId <= 0))
-        || (request.knowledgeBaseCode !== undefined && (typeof request.knowledgeBaseCode !== "string" || request.knowledgeBaseCode.length < 1 || request.knowledgeBaseCode.length > 128))) {
+        || typeof request.knowledgeBaseId !== "string" || !/^KB_[A-Za-z0-9]{1,125}$/.test(request.knowledgeBaseId)
+        || "knowledgeBaseCode" in request) {
         throw new IdentityError("PROTOCOL_UNSUPPORTED", "Invalid knowledge request");
     }
     return Object.freeze({ operation: request.operation, query: request.query, topK: request.topK,
-        knowledgeBaseId: request.knowledgeBaseId, knowledgeBaseCode: request.knowledgeBaseCode });
+        knowledgeBaseId: request.knowledgeBaseId });
 }
 export class AkbKnowledgeClient {
     credentials;
@@ -183,21 +183,12 @@ export class AkbKnowledgeClient {
                 throw new IdentityError("PROTOCOL_UNSUPPORTED", "Unsupported AKB MCP protocol");
             const name = input.operation === "bases" ? "list_knowledge_bases" : input.operation === "search" ? "knowledge_search" : "knowledge_query";
             const args = input.operation === "bases" ? {} : { topK: input.topK, knowledgeBaseId: input.knowledgeBaseId,
-                knowledgeBaseCode: input.knowledgeBaseCode, [input.operation === "search" ? "query" : "question"]: input.query };
+                [input.operation === "search" ? "query" : "question"]: input.query };
             return rpc("tools/call", { name, arguments: args });
         }
         if (input.operation === "bases")
             return this.restResult(await this.request(proofs, "GET", "/api/v1/external/bases", undefined, signal));
-        let knowledgeBaseId = input.knowledgeBaseId;
-        if (input.knowledgeBaseCode) {
-            const bases = this.restResult(await this.request(proofs, "GET", "/api/v1/external/bases", undefined, signal));
-            if (!Array.isArray(bases))
-                throw new IdentityError("UPSTREAM_UNAVAILABLE", "Invalid AKB base discovery response");
-            const match = bases.find((b) => b.baseCode === input.knowledgeBaseCode);
-            if (!match || !Number.isSafeInteger(match.id) || (knowledgeBaseId !== undefined && match.id !== knowledgeBaseId))
-                throw new IdentityError("AUTHORIZATION_DENIED", "Unknown, unauthorized or mismatched AKB base reference");
-            knowledgeBaseId = match.id;
-        }
+        const knowledgeBaseId = input.knowledgeBaseId;
         return this.restResult(await this.request(proofs, "POST", `/api/v1/external/${input.operation}`, { knowledgeBaseId, question: input.query, topK: input.topK }, signal));
     }
     restResult(result) {

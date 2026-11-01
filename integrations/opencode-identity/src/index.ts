@@ -14,7 +14,7 @@ export const openCodeAdapter: PlatformAdapter<ToolContext> = {
       messageId: context.messageID, workspaceRoot: context.directory, abortSignal: context.abort });
     return { context: execution, async authorize(summary) {
       const approval = context.ask({ permission: `akb_${summary.operation}`, patterns: ["*"], always: ["*"],
-        metadata: { operation: summary.operation, knowledgeBaseId: summary.knowledgeBaseId, knowledgeBaseCode: summary.knowledgeBaseCode } });
+        metadata: { operation: summary.operation, knowledgeBaseId: summary.knowledgeBaseId } });
       await Effect.runPromise(runtimeContext ? approval.pipe(Effect.provide(runtimeContext)) : approval, { signal: context.abort });
     } };
   },
@@ -39,8 +39,7 @@ const plugin: Plugin = async (input, options) => {
   const filters = {
     query: tool.schema.string().min(1).max(4000),
     topK: tool.schema.number().int().min(1).max(50).optional(),
-    knowledgeBaseCode: tool.schema.string().min(1).max(128).optional(),
-    knowledgeBaseId: tool.schema.number().int().positive().optional(),
+    knowledgeBaseId: tool.schema.string().regex(/^KB_[A-Za-z0-9]{1,125}$/),
   };
   const make = (operation: Operation) => tool({
     description: operation === "bases" ? "List AKB bases authorized for the executing Agent" : `AKB ${operation} using the executing Agent's verified identity`,
@@ -55,7 +54,7 @@ const plugin: Plugin = async (input, options) => {
         };
         try {
           const result = await runtime.invoke(context, operation === "bases" ? { operation: "bases" } : {
-            operation, query: args.query!, topK: args.topK, knowledgeBaseId: args.knowledgeBaseId, knowledgeBaseCode: args.knowledgeBaseCode,
+            operation, query: args.query!, topK: args.topK, knowledgeBaseId: args.knowledgeBaseId,
           });
           await audit("completed", result.metadata);
           return { output: JSON.stringify(result.data), metadata: result.metadata };

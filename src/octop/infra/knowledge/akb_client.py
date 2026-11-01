@@ -26,7 +26,7 @@ class AkbError(RuntimeError):
 class AkbConfig:
     base_url: str
     api_key: str
-    knowledge_base_id: int
+    knowledge_base_id: str
     timeout_seconds: float = 10.0
 
     def __post_init__(self) -> None:
@@ -43,8 +43,10 @@ class AkbConfig:
             raise ValueError("AKB endpoint must be an HTTPS origin without credentials")
         if not self.api_key.strip():
             raise ValueError("AKB API key is required")
-        if type(self.knowledge_base_id) is not int or self.knowledge_base_id <= 0:
-            raise ValueError("AKB knowledge base ID must be a positive integer")
+        if not isinstance(self.knowledge_base_id, str) or not re.fullmatch(
+            r"KB_[A-Za-z0-9]{1,125}", self.knowledge_base_id
+        ):
+            raise ValueError("AKB knowledge base ID must be a generated KB_ identifier")
         if not 0 < self.timeout_seconds <= 60:
             raise ValueError("AKB timeout must be between 0 and 60 seconds")
 

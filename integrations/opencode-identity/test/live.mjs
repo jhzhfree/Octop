@@ -27,17 +27,17 @@ try {
     };
     const [a,b] = await Promise.all(agents.slice(0,2).map(agent => invoke(agent, "akb_bases", {})));
     assert.ok(Array.isArray(a) && Array.isArray(b));
-    const onlyA = a.find(base => !b.some(other => other.id === base.id));
-    const onlyB = b.find(base => !a.some(other => other.id === base.id));
+    const onlyA = a.find(base => !b.some(other => other.knowledgeBaseId === base.knowledgeBaseId));
+    const onlyB = b.find(base => !a.some(other => other.knowledgeBaseId === base.knowledgeBaseId));
     assert.ok(onlyA && onlyB, "Each Agent must have at least one independently granted KB");
     for (const [agent,own,other] of [[agents[0],onlyA,onlyB],[agents[1],onlyB,onlyA]]) {
       const query = process.env.AKB_LIVE_QUERY ?? "policy 报销 deployment release approvals";
-      const result = await invoke(agent, "akb_search", { query, knowledgeBaseId: own.id, topK: 3 });
+      const result = await invoke(agent, "akb_search", { query, knowledgeBaseId: own.knowledgeBaseId, topK: 3 });
       assert.ok(Array.isArray(result.candidates) && result.candidates.length > 0, "Own KB must contain indexed matching knowledge");
-      await assert.rejects(invoke(agent, "akb_search", { query, knowledgeBaseId: other.id }));
-      const answer = await invoke(agent, "akb_query", { query, knowledgeBaseId: own.id, topK: 3 });
+      await assert.rejects(invoke(agent, "akb_search", { query, knowledgeBaseId: other.knowledgeBaseId }));
+      const answer = await invoke(agent, "akb_query", { query, knowledgeBaseId: own.knowledgeBaseId, topK: 3 });
       assert.ok(answer && typeof answer === "object", "Query must return a valid AKB result");
-      results.push({ transport, agent, ownBase: own.id, returned: result.candidates.length, crossBaseDenied: true });
+      results.push({ transport, agent, ownBase: own.knowledgeBaseId, returned: result.candidates.length, crossBaseDenied: true });
     }
   }
   console.log(JSON.stringify({ passed: true, results }, null, 2));

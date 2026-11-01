@@ -500,9 +500,9 @@ async def test_digital_worker_profile_and_stage_goals(env, monkeypatch):
                 "provider": "akb",
                 "mcp_server": "akb__1",
                 "knowledge_base_ref": "ops-runbook",
-                "selector_argument": "knowledgeBaseCode",
+                "selector_argument": "knowledgeBaseId",
                 "read_tools": ["knowledge_query", "knowledge_search"],
-                "forbidden_arguments": ["knowledgeBaseId"],
+                "forbidden_arguments": ["knowledgeBaseCode"],
                 "access": "read",
             }
         ],
@@ -529,9 +529,9 @@ async def test_digital_worker_profile_and_stage_goals(env, monkeypatch):
                 "provider": "akb",
                 "mcp_server": "akb__1",
                 "knowledge_base_ref": "ops-runbook",
-                "selector_argument": "knowledgeBaseCode",
+                "selector_argument": "knowledgeBaseId",
                 "read_tools": ["knowledge_query", "knowledge_search"],
-                "forbidden_arguments": ["knowledgeBaseId"],
+                "forbidden_arguments": ["knowledgeBaseCode"],
                 "access": "read",
             }
         ],

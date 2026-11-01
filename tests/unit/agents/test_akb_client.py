@@ -12,13 +12,13 @@ from octop.infra.knowledge.akb_client import AkbClient, AkbConfig, AkbError
 def test_akb_rejects_unsafe_endpoints_and_empty_credentials():
     for url in ("http://akb.example", "https://user:pass@akb.example", "https://akb.example/path"):
         with pytest.raises(ValueError):
-            AkbConfig(url, "secret", 1)
+            AkbConfig(url, "secret", "KB_1")
     with pytest.raises(ValueError):
-        AkbConfig("https://akb.example", "", 1)
+        AkbConfig("https://akb.example", "", "KB_1")
 
 
 def test_akb_search_contract():
-    client = AkbClient(AkbConfig("https://akb.example", "secret", 12))
+    client = AkbClient(AkbConfig("https://akb.example", "secret", "KB_12"))
 
     class Response:
         def __enter__(self):
@@ -37,18 +37,18 @@ def test_akb_search_contract():
             assert request.full_url == "https://akb.example/api/v1/external/search"
             assert request.get_header("X-api-key") == "secret"
             body = json.loads(request.data)
-            assert body["knowledgeBaseId"] == 12
+            assert body["knowledgeBaseId"] == "KB_12"
             assert body["permissionTags"] == ["ops"]
             return Response()
 
     with patch("urllib.request.build_opener", return_value=Opener()):
         result = asyncio.run(client.search("巡检", permission_tags=["ops"]))
     assert result["trace_id"] == "trace-1"
-    assert result["knowledge_base_id"] == 12
+    assert result["knowledge_base_id"] == "KB_12"
 
 
 def test_akb_rejects_invalid_response():
-    client = AkbClient(AkbConfig("https://akb.example", "secret", 12))
+    client = AkbClient(AkbConfig("https://akb.example", "secret", "KB_12"))
 
     class Response:
         def __enter__(self):
