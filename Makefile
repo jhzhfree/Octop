@@ -205,20 +205,20 @@ all: lint-all typecheck-all test
 .PHONY: lint
 lint:
 	@echo "[lint] Ruff check..."
-	$(RUN) ruff check src tests
+	$(RUN) ruff check src tests packages/akb-identity-sdk
 	@echo "[lint] Ruff format check..."
-	$(RUN) ruff format --check src tests
+	$(RUN) ruff format --check src tests packages/akb-identity-sdk
 
 .PHONY: format
 format:
 	@echo "[format] Ruff fix + format..."
-	$(RUN) ruff check --fix src tests
-	$(RUN) ruff format src tests
+	$(RUN) ruff check --fix src tests packages/akb-identity-sdk
+	$(RUN) ruff format src tests packages/akb-identity-sdk
 
 .PHONY: typecheck
 typecheck:
 	@echo "[typecheck] mypy..."
-	$(RUN) mypy src/octop
+	$(RUN) mypy src/octop packages/akb-identity-sdk/src/akb_identity_sdk
 
 .PHONY: test
 test:

@@ -15,6 +15,8 @@ from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit
 
+from akb_identity_sdk import generate_uuid
+
 from octop.infra.db.repos.agents import AgentRepo
 from octop.infra.db.repos.external_knowledge import ExternalSourceRow
 from octop.infra.errors import ErrorCode, OctopError
@@ -167,7 +169,7 @@ def _request(
         "timeoutMs": row.timeout_ms,
         "allowInsecureLoopback": row.allow_insecure_http,
         "allowPrivateHttp": row.allow_insecure_http,
-        "invocation": {"sessionId": "management", "invocationId": str(uuid.uuid4())},
+        "invocation": {"sessionId": "management", "invocationId": generate_uuid()},
     }
 
 
@@ -298,7 +300,7 @@ class AgentIdentityService:
         self, source_id: str, user_id: int, is_admin: bool, external_id: str
     ) -> dict[str, Any]:
         row, _config = self.source(source_id, user_id, is_admin)
-        external_id = external_id or str(uuid.uuid4())
+        external_id = external_id or generate_uuid()
         try:
             if str(uuid.UUID(external_id)) != external_id:
                 raise ValueError()
@@ -383,7 +385,7 @@ class AgentIdentityService:
                 "allowPrivateHttp": row.allow_insecure_http,
                 "invocation": {
                     "sessionId": f"management:{user_id}",
-                    "invocationId": str(uuid.uuid4()),
+                    "invocationId": generate_uuid(),
                 },
             },
             max(30, row.timeout_ms / 1000 * 3 + 10),
@@ -595,7 +597,7 @@ async def execute_as_agent(
                 or identity.trace_id
                 or f"agent:{identity.agent_id}",
                 "traceId": identity.trace_id,
-                "invocationId": identity.invocation_id or str(uuid.uuid4()),
+                "invocationId": identity.invocation_id or generate_uuid(),
             },
             "hostAgentId": identity.agent_id,
             "connectionId": str(creds.get("_connection_id") or spec.binding_id),
@@ -672,7 +674,7 @@ async def list_bases_as_agent(
                 or identity.trace_id
                 or f"agent:{identity.agent_id}",
                 "traceId": identity.trace_id,
-                "invocationId": identity.invocation_id or str(uuid.uuid4()),
+                "invocationId": identity.invocation_id or generate_uuid(),
             },
             "hostAgentId": identity.agent_id,
             "connectionId": str(creds.get("_connection_id") or spec.binding_id),

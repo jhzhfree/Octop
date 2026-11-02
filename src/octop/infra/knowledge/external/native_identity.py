@@ -14,8 +14,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode, urlsplit
 
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
+from akb_identity_sdk import generate_key_pair, generate_uuid
 
 from octop.infra.connectors.crypto import decrypt_credentials, encrypt_credentials
 from octop.infra.db.repos.secrets import SecretRepo
@@ -241,22 +240,15 @@ async def call(payload: dict[str, Any], repo: SecretRepo | None) -> dict[str, An
             )
         return {"keys": keys}
     if op == "generate":
-        external = str(uuid.UUID(payload.get("externalAgentId") or str(uuid.uuid4())))
+        external = str(uuid.UUID(payload.get("externalAgentId") or generate_uuid()))
 
-        def generate() -> str:
-            key = rsa.generate_private_key(public_exponent=65537, key_size=3072)
-            return key.private_bytes(
-                serialization.Encoding.PEM,
-                serialization.PrivateFormat.PKCS8,
-                serialization.NoEncryption(),
-            ).decode()
-
-        pem = await asyncio.to_thread(generate)
+        pair = await asyncio.to_thread(generate_key_pair)
+        pem = pair.private_pem
         prefix = "agent_identity:generated:" + payload["keyScope"] + ":"
         pending = store.repo.names(prefix)
         if len(pending) >= 16:
             raise _failure()
-        reference = str(uuid.uuid4())
+        reference = generate_uuid()
         store.write(
             "generated:" + payload["keyScope"] + ":" + reference, {"pem": pem, "agentId": external}
         )

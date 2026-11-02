@@ -1,0 +1,31 @@
+{
+  "format": 1,
+  "profile": "AGENT_KEY_RS256_V2",
+  "purpose": "public expired interoperability vector; signature verification only; never a live credential",
+  "publicJwk": {
+    "kty": "RSA",
+    "n": "nDbvQY1axrL0KNHY8TOPby0EtqT-yaWkTQ7M73EBFZN3PA7z_iFvp0NApS6LVK_0uPEtnOvTj6kEiDFNu0Y7rdLlTZEL9otB9ptXvqr9JxXKumctQni8w8hmdKTDL7-09SeulkMibaG8kNHodMCUstEA08zedzaFaaK756zGP49aCA56ZsbPr3-mHTbRj7L7Q78d7mFupKcIIbDww7WtglHop1QvHDe0qcxdiPw5PiA3JFbl2fEkquQ9DYFmsmFMDaSGG6x0NXUNNY9I_j65aYni2TOJ57jmFTBVfGUPVRtKrnltgDxWuU2OePlb4TxFthZSeGUuXOqqBpIeKEfdv_ZRuaqWCDjkSJYrRgCkEEyaDaUmmaQ_GVTtZi85kHyzRJgkI6bBGb6Fb_3GirLh24X0M9SmF5UCRP6XYnKcFbMctwtD02s7TW2dOW-X11_ISETgdg8DIqPmQqnLDQ4BnCPE1GHA0MVeOadRKlXpfZ41OiKcyQkhX8QFWsBR-JkB",
+    "e": "AQAB",
+    "kid": "gu93Cz9awQTGpytJCzj-mx_kN-IFjZgVLSAK5QOiqZ8",
+    "alg": "RS256",
+    "use": "sig"
+  },
+  "binding": {
+    "policyId": "17",
+    "applicationPrincipalId": "123",
+    "bindingId": "21",
+    "externalAgentId": "e21cce9c-1b16-4ab8-a76a-bb761df919b8",
+    "runtimeAgentKey": "build",
+    "issuer": "https://issuer.example/agents",
+    "audience": "akb-external-api",
+    "resource": "https://kb.example",
+    "platformId": "opencode",
+    "installationId": "contract-install",
+    "workspaceId": "contract-workspace"
+  },
+  "serviceKey": "synthetic_contract_key_NOT_A_CREDENTIAL",
+  "body": "{\"jsonrpc\":\"2.0\",\"id\":\"contract-1\",\"method\":\"tools/call\",\"params\":{\"name\":\"knowledge_search\",\"arguments\":{\"knowledgeBaseId\":\"KB_CONTRACT\",\"query\":\"中文检索 🔎\",\"topK\":3}}}",
+  "proof": "eyJhbGciOiJSUzI1NiIsInR5cCI6ImFrYi1hZ2VudC1wcm9vZitqd3QiLCJraWQiOiJndTkzQ3o5YXdRVEdweXRKQ3pqLW14X2tOLUlGalpnVkxTQUs1UU9pcVo4In0.eyJ2ZXIiOjIsImlzcyI6Imh0dHBzOi8vaXNzdWVyLmV4YW1wbGUvYWdlbnRzIiwiYXVkIjoiYWtiLWV4dGVybmFsLWFwaSIsInJlc291cmNlIjoiaHR0cHM6Ly9rYi5leGFtcGxlIiwicG9saWN5X2lkIjoiMTciLCJhenAiOiIxMjMiLCJzdWIiOiJhZ2VudDplMjFjY2U5Yy0xYjE2LTRhYjgtYTc2YS1iYjc2MWRmOTE5YjgiLCJwbGF0Zm9ybV9pZCI6Im9wZW5jb2RlIiwiaW5zdGFsbGF0aW9uX2lkIjoiY29udHJhY3QtaW5zdGFsbCIsIndvcmtzcGFjZV9pZCI6ImNvbnRyYWN0LXdvcmtzcGFjZSIsInJ1bnRpbWVfYWdlbnQiOiJidWlsZCIsInRlcm1pbmFsX2FnZW50IjoiYnVpbGQiLCJzZXNzaW9uX2lkIjoiY29udHJhY3Qtc2Vzc2lvbiIsImludm9jYXRpb25faWQiOiJhMjFjY2U5Yy0xYjE2LTRhYjgtYTc2YS1iYjc2MWRmOTE5YjgiLCJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDAzMCwianRpIjoiYjIxY2NlOWMtMWIxNi00YWI4LWE3NmEtYmI3NjFkZjkxOWI4IiwiY3JlZGVudGlhbF9zaGEyNTYiOiI5NWFiZmMwNzBiMTJjMjMzYTBlYzYwYTE2ZGVlNjMzNWE1NTE4OGZlNDBkNDA0M2IyNmQ2MTY5ZjIyMmI4YTBkIiwicmVxdWVzdF9iaW5kaW5nIjp7Im1ldGhvZCI6IlBPU1QiLCJ0YXJnZXQiOiIvZ2F0ZXdheS9hcGkvbWNwIiwiYm9keV9zaGEyNTYiOiIwYTNhNjRiNjNmYWE3OGE1YTMwYmI5NmIxNDYwYjY2YWY4Nzg5ZmJiMjcxZjg3YzY1NjcxODk1Nzk4MGI5MTVhIn19.T0fEnc5pCGgSvzTqDnvj7U-e6kf97EldZT0Un9P16WymeoJOLZnUVePkGXtpqvSVC3c5s67LKBqPJ1924Q8uRjrHVxk1dzoxjPVaUyxjqtAGL1-gxDDuSU-JtjYpkvjL0XIueWV_zeZ2Iz03xlykXWRg_j41C_9I-ma8nhCLxhc8kayGMDcmS2twmmCSyO0SG3fcUOir4NLdyNE5xnsif3qgnrXkLZtmCEK7P4Np9Gbq_h4whwBKY0kg630Zj97rjsHNDxBHRpq4jtd4KcZZadAMuNKQjGPS9QdYp9bzKqUzua0d9ykxskuzesj-K8UAClke23D6iA2BxOpO_HGWiOXWzrw0AoiRwJhn3DAMdX7XR_aSUhNsCVNH-OO7hwadgX7PrHOIPB5AH8w4A-hEJVePc_BGhHWhoPgFv5--d2jNkLL4M9Ptj1b4poxspLTQf-Dd8Q_avhZ7Z3u7IznZCyd9yvFO5uBjsz5Q0vZb5-5ea4WE8fMLish5nHqvz-Ha",
+  "bodySha256": "0a3a64b63faa78a5a30bb96b1460b66af8789fbb271f87c656718957980b915a",
+  "target": "/gateway/api/mcp"
+}

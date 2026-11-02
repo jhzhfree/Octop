@@ -11,6 +11,7 @@ license = { text = "MIT" }
 requires-python = ">=3.12"
 authors = [{name = "octop contributors"}]
 dependencies = [
+    "akb-identity-sdk==0.1.0",
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",
     "pydantic>=2.6,<2.14",
@@ -201,7 +202,7 @@ module = "octop.infra.utils.subprocess_io_win"
 disable_error_code = ["attr-defined"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "packages/akb-identity-sdk/tests"]
 asyncio_mode = "auto"
 markers = [
     "live: tests that hit real LLM / external services (skipped by default)",
@@ -216,3 +217,6 @@ markers = [
 filterwarnings = [
     "ignore::starlette.exceptions.StarletteDeprecationWarning",
 ]
+
+[tool.uv.sources]
+akb-identity-sdk = {path = "packages/akb-identity-sdk", editable = true}

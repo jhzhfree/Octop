@@ -9,6 +9,28 @@ resolution-markers = [
 ]
 
 [[package]]
+name = "akb-identity-sdk"
+version = "0.1.0"
+source = { editable = "packages/akb-identity-sdk" }
+dependencies = [
+    { name = "cryptography" },
+    { name = "pyjwt" },
+]
+
+[package.optional-dependencies]
+test = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "cryptography", specifier = ">=41" },
+    { name = "pyjwt", specifier = ">=2.8,<3" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=8" },
+]
+provides-extras = ["test"]
+
+[[package]]
 name = "acme"
 version = "5.6.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2508,6 +2530,7 @@ name = "octop"
 version = "1.0.2b7"
 source = { editable = "." }
 dependencies = [
+    { name = "akb-identity-sdk" },
     { name = "acme" },
     { name = "apscheduler" },
     { name = "argon2-cffi" },
@@ -2591,6 +2614,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "akb-identity-sdk", editable = "packages/akb-identity-sdk" },
     { name = "acme", specifier = ">=5.6.0" },
     { name = "apscheduler", specifier = ">=3.10,<4" },
     { name = "argon2-cffi", specifier = ">=23.1" },
