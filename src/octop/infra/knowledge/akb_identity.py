@@ -30,6 +30,8 @@ class OctopIdentity:
     trace_id: str = ""
     workload_only: bool = False
     is_admin: bool = False
+    session_id: str = ""
+    invocation_id: str = ""
 
 
 def delegated_identity_enabled() -> bool:

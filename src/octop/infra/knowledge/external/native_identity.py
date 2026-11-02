@@ -20,6 +20,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from octop.infra.connectors.crypto import decrypt_credentials, encrypt_credentials
 from octop.infra.db.repos.secrets import SecretRepo
 from octop.infra.errors import ErrorCode, OctopError
+from octop.infra.knowledge.external.caller import InvocationCaller, caller_scope
 from octop.infra.knowledge.external.http import get_json, validate_endpoint
 from octop.infra.knowledge.external.registry import get_adapter
 from octop.infra.knowledge.external.request_auth import public_jwk, signed_requests
@@ -355,6 +356,10 @@ async def call(payload: dict[str, Any], repo: SecretRepo | None) -> dict[str, An
             "binding": binding,
             "status": status,
             "keyReference": imported["keyReference"],
+            "checks": [
+                {"stage": "connection", "status": "success", "code": ""},
+                {"stage": "identity", "status": "success", "code": ""},
+            ],
             **store.state(owner),
         }
     if op == "execute":
@@ -369,7 +374,19 @@ async def call(payload: dict[str, Any], repo: SecretRepo | None) -> dict[str, An
             store.pem, payload["owner"], str(binding.get("keyReference") or "")
         )
         creds = {"api_key": payload["apiKey"], "auth_type": "agent"}
-        with signed_requests(binding, pem, payload["apiKey"], payload["invocation"]):
+        invocation = payload["invocation"]
+        caller = InvocationCaller(
+            actor_type="agent",
+            connection_id=str(payload.get("connectionId") or spec.binding_id),
+            resource_id=spec.binding_id,
+            session_id=invocation["sessionId"],
+            invocation_id=invocation["invocationId"],
+            trace_id=str(invocation.get("traceId") or ""),
+            host_agent_id=str(payload.get("hostAgentId") or ""),
+            agent_id=binding["externalAgentId"],
+            runtime_agent=binding["runtimeAgentKey"],
+        )
+        with caller_scope(caller), signed_requests(binding, pem, payload["apiKey"], invocation):
             if payload["request"]["operation"] == "bases":
                 return {
                     "items": [

@@ -591,9 +591,14 @@ async def execute_as_agent(
             "allowInsecureLoopback": spec.allow_insecure_http,
             "allowPrivateHttp": spec.allow_insecure_http,
             "invocation": {
-                "sessionId": identity.trace_id or f"agent:{identity.agent_id}",
-                "invocationId": str(uuid.uuid4()),
+                "sessionId": identity.session_id
+                or identity.trace_id
+                or f"agent:{identity.agent_id}",
+                "traceId": identity.trace_id,
+                "invocationId": identity.invocation_id or str(uuid.uuid4()),
             },
+            "hostAgentId": identity.agent_id,
+            "connectionId": str(creds.get("_connection_id") or spec.binding_id),
         },
         max(1, spec.timeout_seconds),
         secret_repo=creds.get("_secret_repo"),
@@ -663,9 +668,14 @@ async def list_bases_as_agent(
             "allowInsecureLoopback": spec.allow_insecure_http,
             "allowPrivateHttp": spec.allow_insecure_http,
             "invocation": {
-                "sessionId": identity.trace_id or f"agent:{identity.agent_id}",
-                "invocationId": str(uuid.uuid4()),
+                "sessionId": identity.session_id
+                or identity.trace_id
+                or f"agent:{identity.agent_id}",
+                "traceId": identity.trace_id,
+                "invocationId": identity.invocation_id or str(uuid.uuid4()),
             },
+            "hostAgentId": identity.agent_id,
+            "connectionId": str(creds.get("_connection_id") or spec.binding_id),
         },
         max(1, spec.timeout_seconds),
         secret_repo=creds.get("_secret_repo"),

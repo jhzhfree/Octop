@@ -95,6 +95,7 @@ def _tool_ctx() -> tuple[int, bool, list[str], str, str, OctopIdentity | None]:
             agent_id=agent_id,
             trace_id=str(cfg.get("octop_trace_id") or ""),
             is_admin=is_admin,
+            session_id=str(cfg.get("thread_id") or cfg.get("session_id") or ""),
         )
     elif agent_id:
         identity = OctopIdentity(
@@ -103,6 +104,7 @@ def _tool_ctx() -> tuple[int, bool, list[str], str, str, OctopIdentity | None]:
             trace_id=str(cfg.get("octop_trace_id") or cfg.get("thread_id") or ""),
             workload_only=True,
             is_admin=is_admin,
+            session_id=str(cfg.get("thread_id") or cfg.get("session_id") or ""),
         )
     return user_id, is_admin, ids, locale, agent_id, identity
 

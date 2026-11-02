@@ -145,6 +145,7 @@ class ExternalKnowledgeService:
                         result[field] = own[field]
             result["agent_identity"] = self.identity_config(row)
             result["auth_type"] = self.auth_type(row)
+            result["_connection_id"] = row.connection_id
             result["_secret_repo"] = self._secret_repo
             return result
         except Exception as exc:  # noqa: BLE001 - never leak key material
@@ -784,12 +785,29 @@ class ExternalKnowledgeService:
             self._record_runtime_verification(row, spec, creds["agent_identity"], "success")
             return result
         try:
-            result = await adapter.search(
-                replace(spec, octop_identity=None),
-                creds,
-                query,
-                top_k=top_k,
+            import uuid
+
+            from octop.infra.knowledge.external.caller import InvocationCaller, caller_scope
+
+            identity = (
+                spec.octop_identity if isinstance(spec.octop_identity, OctopIdentity) else None
             )
+            caller = InvocationCaller(
+                actor_type="service",
+                connection_id=row.connection_id,
+                resource_id=spec.binding_id,
+                session_id=identity.session_id if identity else "management",
+                invocation_id=str(uuid.uuid4()),
+                trace_id=identity.trace_id if identity else "",
+                host_agent_id=identity.agent_id if identity else "",
+            )
+            with caller_scope(caller):
+                result = await adapter.search(
+                    replace(spec, octop_identity=None),
+                    creds,
+                    query,
+                    top_k=top_k,
+                )
         except ExternalSourceError as exc:
             self._repo.record_check(
                 row.connection_id,
