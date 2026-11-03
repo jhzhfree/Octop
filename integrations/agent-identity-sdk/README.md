@@ -1,6 +1,6 @@
-> 0.5.0 新增 `@akb/agent-identity-sdk/terminal`：`generateTrustUUID()`、`generateKeyPair(directory, agentId?)`、`verifyTerminal(options)`，支持 Windows ACL 保护。验证分别检查 REST 状态与 MCP `get_agent_identity`，不将公开配置发现当作验签成功。终端名称通过可选的 `terminal_agent` 签名声明携带；授权仍依据已登记 UUID/公钥/绑定。见 [Windows 终端指南](../opencode-identity/WINDOWS.md)。
+> 0.5.0 新增 `@akb/agent-identity-sdk/terminal`：`generateTrustUUID()`、`generateKeyPair(directory, agentId?)`、`verifyTerminal(options)`，支持 Windows ACL 保护。验证分别检查 REST 状态与 MCP `get_agent_identity`，不将公开配置发现当作验签成功。终端名称通过可选的 `terminal_agent` 签名声明携带；授权仍依据已登记 UUID/公钥/绑定。终端接口见 [API 声明](dist/terminal.d.ts)。插件制作与安装由[外部工程](https://github.com/jhzhfree/opencode-identity)维护。
 
-> 简化第一版：SDK 0.4.0 新增受保护 PEM 导入与简化连接发现，仍使用现有 V2 逐请求签名。独立密钥生成工具位于 `tools/agent-keygen`，可完全脱离 SDK 使用。新的 OpenCode 配置使用 configVersion 3，见适配器 README；旧 configVersion 2 与挑战登记流程保留兼容。
+> 简化第一版：SDK 0.4.0 新增受保护 PEM 导入与简化连接发现，仍使用现有 V2 逐请求签名。独立密钥生成工具位于 `tools/agent-keygen`，可完全脱离 SDK 使用。本 SDK 的 V2 配置与挑战登记流程保留；各平台插件配置由外部适配工程维护。
 >
 > `GET /api/v1/external/identity/configuration?agentId=<UUID>` 只返回公开认证坐标，携带共享 Key，不携带私钥，不能读取知识。真正身份必须由后续签名状态测试验证。配置发现禁止重定向，并校验返回 resource 与配置地址一致。
 
@@ -99,7 +99,7 @@ node dist/cli.js key rotate /var/lib/akb/keys /etc/akb/builder-owner.json
 
 ## 配置刷新与兼容
 
-活动密钥选择在每次调用读取，Service Key 在每个 HTTP 请求读取一次；新旧调用保留各自快照。更改平台绑定/工作区/origin 配置后重启宿主。只支持显式 V2，不自动回退 V1/LEGACY。原 OpenCode 插件保留独立 V1 兼容路径。
+活动密钥选择在每次调用读取，Service Key 在每个 HTTP 请求读取一次；新旧调用保留各自快照。更改平台绑定/工作区/origin 配置后重启宿主。只支持显式 V2，不自动回退 V1/LEGACY。OpenCode 插件及其版本兼容由外部工程维护。
 
 首版只读：bases/search/query。任意 shell/curl 不自动继承身份；用户委托、任务父子权限链、写入及 Memory 不在此版本内。
 
@@ -113,7 +113,7 @@ node dist/cli.js key rotate /var/lib/akb/keys /etc/akb/builder-owner.json
 
 ## Dashboard host bridge (0.3.0)
 
-The optional `akb-agent-identity-bridge` executable provides stdin/stdout IPC for trusted platform hosts such as Octop's dashboard backend. It reuses the same protected key store, registration proofs and AKB client. It is not an HTTP server or a model tool; only the host may supply the owner and runtime identity. Credentials are sent on stdin and never returned. Key selection requires a successful remote identity probe.
+The optional `akb-agent-identity-bridge` executable provides stdin/stdout IPC for third-party trusted platform hosts. Octop now uses the [Python SDK](../../packages/akb-identity-sdk/README.md) and does not require this Node bridge. It reuses the same protected key store, registration proofs and AKB client. It is not an HTTP server or a model tool; only the host may supply the owner and runtime identity. Credentials are sent on stdin and never returned. Key selection requires a successful remote identity probe.
 
 `dist/` is committed so a host does not have to build it, but the bridge still resolves `@akb/agent-keygen` through `node_modules`, and that dependency is a local `file:` path rather than a registry package. Install it once per clone before the bridge is used:
 
@@ -122,7 +122,7 @@ cd integrations/agent-identity-sdk
 npm install --omit=dev
 ```
 
-`npm ci` (full checkout with dev dependencies) covers this too. Without the dependency Node exits with `ERR_MODULE_NOT_FOUND` before the bridge runs, and the host reports the signing component as unavailable rather than the real cause; Octop logs the bridge's own stderr.
+`npm ci` (full checkout with dev dependencies) covers this too. Without the dependency Node exits with `ERR_MODULE_NOT_FOUND` before the bridge runs. This installation is for third-party Node hosts, not an Octop deployment prerequisite.
 
 See [dashboard setup and deployment](../agent-identity-spec/DASHBOARD-SETUP.md) for host installation, UI enrollment, security boundaries and frontend rebuild instructions.
 

@@ -1,6 +1,6 @@
 # 跨 Agent 平台身份插件设计
 
-状态：已落实于 SDK 0.3.2 / OpenCode 插件 0.2.1 和 AKB V75。本文保留模块设计说明；实际可构建代码见 [SDK](../agent-identity-sdk/README.md)。SDK 尚未发布公共 npm，现有 OpenCode 插件支持显式 V2，并保留 V1 兼容。
+状态：本目录保留通用身份协议、公共向量和 SDK 接入规范。OpenCode 插件制作代码已迁出 Octop，由[外部工程](https://github.com/jhzhfree/opencode-identity)维护。Octop 调用身份认证使用 [Python SDK](../../packages/akb-identity-sdk/README.md)，现有 [Node SDK](../agent-identity-sdk/README.md)继续保留。
 
 ## 目标和关键决定
 
@@ -90,13 +90,13 @@ SDK SemVer 与协议版本独立。V2 客户端不得自动回退 V1、LEGACY �
 
 ## 本次文档验证
 
-可使用现有插件的 TypeScript 编译器对接口和示例进行无输出类型检查：
+可使用Node SDK 的 TypeScript 编译器对接口和示例进行无输出类型检查：
 
 ```sh
-node ../opencode-identity/node_modules/typescript/bin/tsc --noEmit --strict --target ES2022 --module NodeNext --moduleResolution NodeNext --lib ES2022,DOM contracts.ts examples/platform-adapter.ts
+node ../agent-identity-sdk/node_modules/typescript/bin/tsc --noEmit --strict --target ES2022 --module NodeNext --moduleResolution NodeNext --lib ES2022,DOM contracts.ts examples/platform-adapter.ts
 node verify-design.mjs
 ```
 
-本目录提供规范与公共向量；实现位于相邻 agent-identity-sdk/opencode-identity，AKB 配套为 V75。未发布 npm 包。
+本目录提供规范与公共向量；通用 Node 实现位于相邻 agent-identity-sdk。SDK 未发布公共 npm。
 
-独立项目与交付边界见 [PROJECT-DELIVERY.md](PROJECT-DELIVERY.md)。TGZ 可通过 `test-packages.mjs <SDK绝对路径.tgz> <插件绝对路径.tgz>` 在无相邻源码的临时宿主中验收安装、加载及四份随包配置。
+独立项目与交付边界见 [PROJECT-DELIVERY.md](PROJECT-DELIVERY.md)。TGZ 可通过 `test-packages.mjs <SDK绝对路径.tgz>` 在无相邻源码的临时宿主中验收 SDK 安装、模块加载及两份随包配置。

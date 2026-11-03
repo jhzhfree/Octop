@@ -4,7 +4,7 @@
 
 1. AKB 管理员创建平台连接，选择平台类型、AKB 对外根地址、可读知识库，并保存共享服务 Key。新连接使用 SERVICE_SCOPE：该连接下所有 Agent 继承平台范围。
 2. Octop 创建 AKB REST/MCP 外部知识连接，填写同一个根地址和共享服务 Key。
-3. 在身份抽屉选择系统 Agent，生成宿主密钥。Octop 调用 SDK bridge，bridge 复用独立本地工具 `@akb/agent-keygen`；只返回公钥、Agent UUID 和受连接作用域约束的密钥引用，私钥不进入浏览器。
+3. 在身份抽屉选择系统 Agent，生成宿主密钥。Octop 调用 Python 身份 SDK，私钥保存在原加密 SecretRepo 中；只返回公钥、Agent UUID 和受连接作用域约束的密钥引用，私钥不进入浏览器。
 4. 在 AKB 为该连接登记 Agent UUID 和 public.jwk。回到 Octop 保存并测试，身份映射与检索挂载在同一数据库事务中完成。
 5. 测试检索，随后在对应系统 Agent 的对话中使用知识工具。一个连接可以绑定多名 Agent，但每名 Agent 使用独立密钥和 UUID。
 
@@ -31,15 +31,7 @@ V78 已将旧 V2 的 simple_mode 全部置为 TRUE，因此仅看当前值不能
 
 ## 安装和接口
 
-宿主需要 Node.js 22+。源码构建：
-
-```sh
-cd integrations/agent-identity-sdk
-npm ci
-npm run build
-```
-
-SDK TGZ 已包含运行期密钥工具。wheel/容器需安装 SDK TGZ，并设置 `OCTOP_AGENT_IDENTITY_SDK_BRIDGE` 为绝对 bridge.js 路径。根地址使用 HTTPS；显式 HTTP 开关只用于 loopback 开发。
+Octop 使用 [Python SDK](../../packages/akb-identity-sdk/README.md)和原生异步 HTTP，不需要安装 Node bridge 或 OpenCode 插件。源码开发使用 `uv sync`，本地路径依赖会安装 SDK；独立 wheel 部署先安装 SDK wheel，见 [SDK 交付说明](../../docs/akb-identity-sdk.md)。根地址使用 HTTPS；内网 IP HTTP 需显式开启。
 
 - Octop 状态：GET /api/external-knowledge/sources/{id}/identity
 - 宿主生成：POST .../identity/generate
@@ -49,4 +41,4 @@ SDK TGZ 已包含运行期密钥工具。wheel/容器需安装 SDK TGZ，并设�
 
 确认请求示例：`{"authorizationMode":"AGENT_INTERSECTION","platformType":"octop","reason":"根据升级前授权记录核对"}`。
 
-SDK、OpenCode 插件及离线工具可以分别打包，不需要启动 Octop。真实部署仍需验证对应 OS 的密钥权限、反向代理原始路径以及 REST/MCP 请求。
+通用 SDK 与离线工具可独立打包，不需要启动 Octop；OpenCode 插件由[外部工程](https://github.com/jhzhfree/opencode-identity)制作和交付。真实部署仍需验证对应 OS 的密钥权限、反向代理原始路径以及 REST/MCP 请求。

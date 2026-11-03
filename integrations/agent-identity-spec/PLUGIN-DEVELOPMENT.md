@@ -1,6 +1,6 @@
 # 第三方 Agent 平台插件开发文档
 
-适用：Agent Identity SDK 0.3.2、AKB V75 Agent Proof V2。实现位于相邻 agent-identity-sdk；当前以单包稳定子入口交付，未发布公共 npm，可本地构建 TGZ 安装。OpenCode 插件支持 V1/V2 显式配置。
+适用：Agent Identity SDK 0.3.2、AKB V75 Agent Proof V2。实现位于相邻 agent-identity-sdk；当前以单包稳定子入口交付，未发布公共 npm，可本地构建 TGZ 安装。OpenCode 插件制作代码已迁至[外部工程](https://github.com/jhzhfree/opencode-identity)，本目录只保留平台无关 SDK 契约。
 
 ## 1. 最小交付范围
 
@@ -123,47 +123,9 @@ registerTool("akb_search", businessSchema, (args, host) =>
 
 query 长度 1–4000，topK 为 1–50 整数，库编码长度 1–128，库 ID 为安全正整数；`akb_bases` 参数为空。未知字段应拒绝或明确丢弃，绝不用于身份、路由、Header 或签名控制。ID/编码同时存在时必须指向同一授权库。
 
-## 6. OpenCode 1.14.30 适配注意事项
+## 6. 平台适配的维护边界
 
-已核验原有插件 SDK：`context.agent` 是执行 Agent 配置名；`context.directory` 是项目执行目录；`context.ask()` 返回 Effect，不能按普通 Promise await。
-
-适配器的关键实现应保留现有已验证做法：
-
-```ts
-import { Effect, Fiber } from "effect";
-
-const adapter = {
-  capture(context) {
-    // 必须在任何 await 之前、仍处于宿主工具执行 fiber 时捕获。
-    const runtimeContext = Fiber.getCurrent()?.context;
-    const execution = Object.freeze({
-      platformId: "opencode",
-      runtimeAgentKey: context.agent,
-      sessionId: context.sessionID,
-      messageId: context.messageID,
-      workspaceRoot: context.directory,
-      abortSignal: context.abort,
-    });
-    return {
-      context: execution,
-      async authorize(summary) {
-        const effect = context.ask({
-          permission: `akb_${summary.operation}`,
-          patterns: ["*"], always: ["*"], metadata: { operation: summary.operation },
-        });
-        await Effect.runPromise(
-          runtimeContext ? effect.pipe(Effect.provide(runtimeContext)) : effect,
-          { signal: context.abort },
-        );
-      },
-    };
-  },
-};
-```
-
-Effect 与 OpenCode 依赖留在平台适配包，不进入 core。此版本不要以 worktree 替代 directory，非 Git 项目 worktree 可能为 `/`。新平台版本需重新验证上下文和审批语义，不能仅更新包版本号。
-
-由于以上示例依赖宿主 fiber，工具入口必须直接调用 `runtime.invoke(context, request)`；Runtime 要在自身首次 await 前调用 capture。将 invoke 包进异步队列后才 capture，可能丢失宿主运行上下文。
+平台专属工具注册、宿主上下文和审批 API 在外部适配工程中维护，不属于 Octop。OpenCode 的版本支持、制作及安装流程见[外部工程](https://github.com/jhzhfree/opencode-identity)。通用 SDK 继续通过 `capture` / `authorize` 接收可信宿主上下文；不得改为由模型参数提供 Agent 身份。
 
 ## 7. 配置与密钥初始化
 
@@ -181,7 +143,7 @@ bootstrap 管理流程：
 
 普通插件启动只加载已登记身份。不能在首次业务调用时静默生成 Agent、请求管理员权限或自动注册。密钥丢失时应明确报错并走恢复流程。
 
-SDK CLI 已实现 identity create、agent init、key rotate（仅 stage）、key export-public、key prove-registration、key select、doctor；完整参数见 SDK README。原插件 CLI 保留 V1 keygen/jwks。
+SDK CLI 已实现 identity create、agent init、key rotate（仅 stage）、key export-public、key prove-registration、key select、doctor；完整参数见 SDK README。平台插件 CLI 由外部适配工程维护。
 
 ## 8. 通用 Runtime 的必要行为
 
@@ -245,4 +207,4 @@ REST 客户端支持库发现、search、query；按库编码发现时仍使用�
 
 ### 管理界面与宿主 IPC
 
-Octop 已接入通用 SDK 0.3.0 的受信宿主 stdin/stdout 桥接；平台插件仍可以直接使用 SDK，不依赖 Octop。页面登记、部署和边界说明见 [DASHBOARD-SETUP.md](./DASHBOARD-SETUP.md)。桥接不得注册为模型工具或开放网络端口；平台服务负责验证管理操作所有权和从宿主运行上下文捕获调用身份。
+Octop 当前通过独立 Python SDK 和原生 HTTP 调用 AKB，不依赖 Node bridge。通用 Node SDK 仍保留可选的受信宿主 stdin/stdout 桥接，供第三方宿主使用；平台插件可直接使用 SDK，不依赖 Octop。页面登记、部署和边界说明见 [DASHBOARD-SETUP.md](./DASHBOARD-SETUP.md)。桥接不得注册为模型工具或开放网络端口；平台服务负责验证管理操作所有权和从宿主运行上下文捕获调用身份。

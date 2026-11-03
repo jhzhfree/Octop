@@ -1,4 +1,4 @@
-name: Agent identity SDK and OpenCode plugin
+name: Agent identity SDK
 on:
   push:
     paths: ["tools/agent-keygen/**", "integrations/**", ".github/workflows/agent-identity.yml"]
@@ -18,11 +18,9 @@ jobs:
         working-directory: tools/agent-keygen
       - run: npm ci && npm test && npm pack
         working-directory: integrations/agent-identity-sdk
-      - run: npm ci && npm test && npm pack
-        working-directory: integrations/opencode-identity
       - run: node verify-design.mjs
         working-directory: integrations/agent-identity-spec
-      - run: node test-packages.mjs "$(realpath ../agent-identity-sdk/akb-agent-identity-sdk-*.tgz)" "$(realpath ../opencode-identity/akb-opencode-identity-*.tgz)"
+      - run: node test-packages.mjs "$(realpath ../agent-identity-sdk/akb-agent-identity-sdk-*.tgz)"
         working-directory: integrations/agent-identity-spec
       - uses: actions/upload-artifact@v4
         with:
@@ -31,4 +29,3 @@ jobs:
           path: |
             tools/agent-keygen/akb-agent-keygen-*.tgz
             integrations/agent-identity-sdk/akb-agent-identity-sdk-*.tgz
-            integrations/opencode-identity/akb-opencode-identity-*.tgz
