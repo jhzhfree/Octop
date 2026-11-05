@@ -12,7 +12,7 @@ import {
 import { LayoutGrid, List, RefreshCw } from "lucide-react";
 import type { CronJobSpecOutput } from "../../../api/types";
 import { useTranslation } from "react-i18next";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { setPendingPrefillText } from "../../Chat/hooks/chatStore";
 import {
   createColumns,
@@ -249,6 +249,11 @@ function CronJobsPage() {
   if (!activeAgentId || !canManageJobs) {
     return (
       <PageShell
+        actions={
+          <Link to="/tasks/enterprise-assistant">
+            {t("enterpriseAssistant.title")}
+          </Link>
+        }
         title={t("pageShell.tasks.title")}
         subtitle={t("pageShell.tasks.subtitle")}
         agentScoped
@@ -270,6 +275,11 @@ function CronJobsPage() {
 
   return (
     <PageShell
+      actions={
+        <Link to="/tasks/enterprise-assistant">
+          {t("enterpriseAssistant.title")}
+        </Link>
+      }
       title={t("pageShell.tasks.title")}
       subtitle={t("pageShell.tasks.subtitle")}
       agentScoped

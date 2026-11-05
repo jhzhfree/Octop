@@ -50,6 +50,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Offline installations may vendor this extra; it is never downloaded at runtime.
+enterprise-ssh = ["paramiko>=3.5,<5"]
 # PEP 621 extras — kept so `pip install -e ".[dev]"` keeps working for
 # legacy / CI flows. `uv sync` reads `[dependency-groups].dev` below.
 dev = [

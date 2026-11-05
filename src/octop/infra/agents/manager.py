@@ -3617,12 +3617,14 @@ class AgentManager:
             extract_original_plugin_label,
             sanitize_plugin_tool_names,
         )
+        from octop.infra.enterprise_assistant.tools import build_assistant_tools  # noqa: PLC0415
 
+        enterprise_tools = build_assistant_tools(self._repos) if not team_host else []
         sanitize_plugin_tool_names(
             plugin_tools,
             reserved={
                 str(getattr(t, "name", ""))
-                for t in [*(cron_tools or []), *knowledge_tools, *mobile_tools]
+                for t in [*(cron_tools or []), *knowledge_tools, *mobile_tools, *enterprise_tools]
             },
         )
         self._plugin_tool_labels[row.agent_id] = {
@@ -3681,6 +3683,7 @@ class AgentManager:
         merged_tools: list[Any] = []
         if cron_tools:
             merged_tools.extend(cron_tools)
+        merged_tools.extend(enterprise_tools)
         merged_tools.extend(knowledge_tools)
         merged_tools.extend(mobile_tools)
         merged_tools.extend(plugin_tools)

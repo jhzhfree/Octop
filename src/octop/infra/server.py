@@ -255,6 +255,7 @@ class OctopServer:
         self.subagent_catalog: SubagentCatalog | None = None
         self.plugin_manager: PluginManager | None = None
         self.wizard_tokens = WizardTokenStore(ttl_seconds=300)
+        self._enterprise_task: asyncio.Task[None] | None = None
         self._started = False
         self._started_at: int | None = None
         self._sso_service: SsoService | None = None
@@ -593,6 +594,15 @@ class OctopServer:
 
         resume_pending_index_jobs(self.services)
 
+        from octop.infra.enterprise_assistant.service import (
+            worker as enterprise_worker,  # noqa: PLC0415
+        )
+
+        self._enterprise_task = asyncio.create_task(
+            enterprise_worker(lambda: self.services.repos if self.services is not None else None),
+            name="enterprise-assistant",
+        )
+
         # Resume Bridge links that opted into auto-reconnect (best-effort).
         async def _resume_bridges() -> None:
             with suppress(Exception):
@@ -636,6 +646,11 @@ class OctopServer:
         try:
             from octop.infra.connectors.gateway import agently_auth
 
+            if self._enterprise_task is not None:
+                self._enterprise_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await self._enterprise_task
+                self._enterprise_task = None
             await agently_auth.close()
             if self.app_runtime is not None:
                 rt = self.app_runtime

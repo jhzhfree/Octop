@@ -643,7 +643,10 @@
     "generate_image": "生成图片",
     "generate_video": "生成视频",
     "bilibili_search_anime": "搜索番剧",
-    "search_arxiv": "查询 arXiv 论文"
+    "search_arxiv": "查询 arXiv 论文",
+    "enterprise_work_status": "查看企业任务与证据",
+    "enterprise_work_run": "执行已配置企业任务",
+    "enterprise_report_draft": "整理待确认周报"
   },
   "plugins": {
     "arxiv_search": {
@@ -941,5 +944,11 @@
       "bind_failed": "目录服务拒绝了绑定 DN 或密码",
       "search_failed": "目录服务拒绝了用户检索"
     }
+  },
+  "enterprise_assistant": {
+    "report_title": "周报草稿（基于已采集事实）",
+    "source": "来源执行：{run_id}；采集时间：{at}",
+    "no_items": "本次查询未返回待办。",
+    "review_notes": "待你补充确认：本周完成情况、问题与风险、下周计划。以上为配置范围内的最近采集快照，不能据此推断未采集的工作；请审核内容和发送目标。"
   }
 }
