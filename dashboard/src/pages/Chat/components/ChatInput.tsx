@@ -834,7 +834,7 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
               onPaste={handlePaste}
               placeholder={t(
                 "chatWelcome.inputPlaceholder",
-                "Message Octop...",
+                "Message AI-TAgent...",
               )}
               rows={1}
               disabled={disabled}

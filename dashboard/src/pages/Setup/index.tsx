@@ -259,10 +259,10 @@ export default function SetupPage() {
               <img
                 src={
                   isDark
-                    ? "/logo_horizontal_white.png"
-                    : "/logo_horizontal_dark.png"
+                    ? "/ai-tagent-wordmark-light.svg"
+                    : "/ai-tagent-wordmark-dark.svg"
                 }
-                alt="Octop"
+                alt="AI-TAgent · 轻智能体系统"
                 className={styles.wizardHeaderLogo}
               />
               <div className={styles.wizardHeaderBrandText}>

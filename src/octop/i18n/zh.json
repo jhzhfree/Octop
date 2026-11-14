@@ -667,8 +667,8 @@
     "pptx": "PPT 演示",
     "file_reader": "文件读取",
     "news": "资讯获取",
-    "octop-assistant": "Octop 助手",
-    "octop_assistant": "Octop 助手",
+    "octop-assistant": "AI-TAgent 助手",
+    "octop_assistant": "AI-TAgent 助手",
     "daily-hot-news": "每日热点",
     "stock-info": "股票信息",
     "cvm-ai-doctor": "CVM AI 诊断",
@@ -950,5 +950,15 @@
     "source": "来源执行：{run_id}；采集时间：{at}",
     "no_items": "本次查询未返回待办。",
     "review_notes": "待你补充确认：本周完成情况、问题与风险、下周计划。以上为配置范围内的最近采集快照，不能据此推断未采集的工作；请审核内容和发送目标。"
+  },
+  "planningDialogue": {
+    "unavailable": "任命的智能体或其默认模型不可用。",
+    "timeout": "规划请求超时，未保存任何计划。",
+    "failed": "模型请求失败，未保存任何计划。",
+    "invalid": "模型返回的规划格式无效，未保存任何计划。",
+    "changed": "规划期间目标已变更，请刷新后继续。",
+    "inactive": "需要已激活的数字员工和目标。",
+    "rate_limited": "规划请求过于频繁，请稍后再试；未保存任何计划。",
+    "busy": "您已有规划请求正在运行，或规划服务当前繁忙。请稍后再试；未保存任何计划。"
   }
 }

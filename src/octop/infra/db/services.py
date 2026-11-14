@@ -35,6 +35,7 @@ from octop.infra.db.repos.usage import UsageRepo
 from octop.infra.db.repos.user_policies import UserPolicyRepo
 from octop.infra.db.repos.users import UserRepo
 from octop.infra.db.repos.voice_providers import VoiceProviderRepo
+from octop.infra.db.repos.worker_knowledge_mappings import WorkerKnowledgeMappingRepo
 from octop.infra.utils.paths import PathLayout
 
 
@@ -67,6 +68,7 @@ class RepoBundle:
     organization_repo: OrganizationRepo
     enterprise_scene_repo: EnterpriseSceneRepo
     digital_worker_repo: DigitalWorkerRepo
+    worker_knowledge_mapping_repo: WorkerKnowledgeMappingRepo
     voice_provider_repo: VoiceProviderRepo
     care_push_repo: CarePushRepo
     proactive_care_config_repo: ProactiveCareConfigRepo
@@ -101,6 +103,7 @@ class RepoBundle:
             organization_repo=OrganizationRepo(db),
             enterprise_scene_repo=EnterpriseSceneRepo(db),
             digital_worker_repo=DigitalWorkerRepo(db),
+            worker_knowledge_mapping_repo=WorkerKnowledgeMappingRepo(db),
             voice_provider_repo=VoiceProviderRepo(db),
             care_push_repo=CarePushRepo(db),
             proactive_care_config_repo=ProactiveCareConfigRepo(db),

@@ -22,8 +22,8 @@ interface HeaderProps {
 export default function Header({ onToggle, isMobile }: HeaderProps) {
   const { isDark } = useTheme();
   const mobileLogoSrc = isDark
-    ? "/logo_horizontal_white.png"
-    : "/logo_horizontal_dark.png";
+    ? "/ai-tagent-wordmark-light.svg"
+    : "/ai-tagent-wordmark-dark.svg";
 
   if (!isMobile) return null;
 
@@ -79,7 +79,7 @@ export default function Header({ onToggle, isMobile }: HeaderProps) {
         )}
         <img
           src={mobileLogoSrc}
-          alt="octop"
+          alt="AI-TAgent · 轻智能体系统"
           style={{
             height: 36,
             width: "auto",

@@ -429,8 +429,8 @@ export default function Sidebar({
 
   const isRailCollapsed = collapsed && !isMobile;
   const wordmarkSrc = isDark
-    ? "/logo_horizontal_white.png"
-    : "/logo_horizontal_dark.png";
+    ? "/ai-tagent-wordmark-light.svg"
+    : "/ai-tagent-wordmark-dark.svg";
 
   const selectMinimalPane = useCallback(
     (pane: MinimalNavPane, opts?: { expand?: boolean }) => {
@@ -493,7 +493,7 @@ export default function Sidebar({
     <>
       <img
         src={isRailCollapsed ? "/pwa-192.png" : wordmarkSrc}
-        alt="Octop"
+        alt="AI-TAgent · 轻智能体系统"
         style={{
           height: isRailCollapsed ? 32 : isMobile ? 38 : 36,
           width: isRailCollapsed ? 32 : "auto",

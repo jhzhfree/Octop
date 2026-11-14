@@ -467,6 +467,8 @@ class AgentManager:
         self._reclaim_pending: set[str] = set()
         self._reclaim_holds: dict[str, asyncio.Event] = {}
         self._reclaim_task: asyncio.Task[None] | None = None
+        self._reclaim_sweep_task: asyncio.Task[None] | None = None
+        self._reclaim_stopping = False
         self._reclaim_wake: asyncio.Event | None = None
         self._reload_dirty: set[str] = set()
         self._reload_worker_running: dict[str, bool] = {}
@@ -551,6 +553,7 @@ class AgentManager:
         return self._teams
 
     async def boot(self) -> None:
+        self._reclaim_stopping = False
         self._tool_guard_rules.ensure_seeded()
         providers = self._providers.build_harness_configs()
         self._harness_manager = HarnessAgentManager(
@@ -609,13 +612,23 @@ class AgentManager:
                 )
 
     async def shutdown(self) -> None:
+        self._reclaim_stopping = True
         self._reclaim_pending.clear()
-        reclaim_task = self._reclaim_task
+        tasks = (getattr(self, "_reclaim_sweep_task", None), self._reclaim_task)
+        for task in tasks:
+            if task is not None and not task.done():
+                task.cancel()
+        for task in tasks:
+            if task is not None:
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    logger.exception("Store reclaim task failed during shutdown")
+        self._reclaim_sweep_task = None
         self._reclaim_task = None
-        if reclaim_task is not None and not reclaim_task.done():
-            reclaim_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await reclaim_task
+        self._reclaim_pending.clear()
         await self.memory_slim.close()
         async with self._lock:
             if self._harness_manager:
@@ -1421,13 +1434,20 @@ class AgentManager:
         rebuild runs once no turn is in progress, and again after restart
         if the file still holds a large freelist.
         """
+        if getattr(self, "_reclaim_stopping", False):
+            return
         self._reclaim_pending.add(agent_id)
         self._ensure_reclaim_task()
 
     def schedule_idle_reclaim_sweep(self) -> None:
         """Queue loaded stores whose freelist is already large enough to compact."""
+        if getattr(self, "_reclaim_stopping", False):
+            return
+        task = getattr(self, "_reclaim_sweep_task", None)
+        if task is not None and not task.done():
+            return
         try:
-            asyncio.get_running_loop().create_task(
+            self._reclaim_sweep_task = asyncio.get_running_loop().create_task(
                 self._sweep_bloated_stores(), name="store-reclaim-sweep"
             )
         except RuntimeError:
@@ -1439,7 +1459,9 @@ class AgentManager:
         while True:
             if self._try_acquire_reclaim(agent_id):
                 try:
-                    done = await asyncio.to_thread(self._compact_agent_database_sync, agent_id)
+                    done = await self._await_reclaim_thread(
+                        self._compact_agent_database_sync, agent_id
+                    )
                 finally:
                     self._release_reclaim(agent_id)
                 if done:
@@ -1472,6 +1494,8 @@ class AgentManager:
             event.set()
 
     def _ensure_reclaim_task(self) -> None:
+        if getattr(self, "_reclaim_stopping", False):
+            return
         if self._reclaim_wake is None:
             self._reclaim_wake = asyncio.Event()
         self._reclaim_wake.set()
@@ -1484,8 +1508,28 @@ class AgentManager:
             return
         self._reclaim_task = loop.create_task(self._reclaim_pending_loop(), name="store-reclaim")
 
+    @staticmethod
+    async def _await_reclaim_thread(fn: Callable[..., Any], *args: Any) -> Any:
+        """Cancellation must not release resources still owned by a running thread."""
+        worker = asyncio.create_task(asyncio.to_thread(fn, *args))
+        try:
+            return await asyncio.shield(worker)
+        except asyncio.CancelledError:
+            # A thread cannot be cancelled. Drain it even if shutdown is cancelled
+            # again; only then may its caller release holds or close the database.
+            while not worker.done():
+                try:
+                    await asyncio.shield(worker)
+                except asyncio.CancelledError:
+                    continue
+                except Exception:
+                    break
+            if not worker.cancelled():
+                worker.exception()  # Consume a worker failure; preserve cancellation.
+            raise
+
     async def _sweep_bloated_stores(self) -> None:
-        queued = await asyncio.to_thread(self._queue_bloated_sqlite_stores)
+        queued = await self._await_reclaim_thread(self._queue_bloated_sqlite_stores)
         if queued:
             self._ensure_reclaim_task()
 
@@ -1524,7 +1568,9 @@ class AgentManager:
                     if not self._try_acquire_reclaim(agent_id):
                         continue
                     try:
-                        done = await asyncio.to_thread(self._compact_agent_database_sync, agent_id)
+                        done = await self._await_reclaim_thread(
+                            self._compact_agent_database_sync, agent_id
+                        )
                     except Exception:
                         logger.warning("idle compact failed agent=%s", agent_id, exc_info=True)
                         done = False

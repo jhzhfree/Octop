@@ -35,6 +35,23 @@ export function parseApiError(error: unknown): ParsedApiError | null {
             : undefined,
       };
     }
+    if (
+      body.detail &&
+      typeof body.detail === "object" &&
+      !Array.isArray(body.detail)
+    ) {
+      const detail = body.detail as { code?: unknown; message?: unknown };
+      if (
+        typeof detail.code === "string" ||
+        typeof detail.message === "string"
+      ) {
+        return {
+          code: typeof detail.code === "string" ? detail.code : undefined,
+          message:
+            typeof detail.message === "string" ? detail.message : undefined,
+        };
+      }
+    }
     if (typeof body.detail === "string" && body.detail.trim()) {
       return { message: body.detail };
     }

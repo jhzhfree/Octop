@@ -286,7 +286,39 @@ export interface DigitalWorkerKnowledgeDiagnostics {
   sources: DigitalWorkerKnowledgeDiagnostic[];
 }
 
+export interface PlanningDialogueMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface PlanningDialogueResponse {
+  reply: string;
+  draft: Pick<DigitalWorkerPlan, "title" | "approach" | "steps"> | null;
+  model_ref: string;
+}
+
 export const organizationsApi = {
+  planningDialogue: (
+    organizationId: string,
+    workerId: string,
+    goalId: string,
+    body: {
+      messages: PlanningDialogueMessage[];
+      worker_version: number;
+      previous_draft?: PlanningDialogueResponse["draft"];
+    },
+    signal?: AbortSignal,
+  ) =>
+    request<PlanningDialogueResponse>(
+      "/organizations/" +
+        encodeURIComponent(organizationId) +
+        "/digital-workers/" +
+        encodeURIComponent(workerId) +
+        "/goals/" +
+        encodeURIComponent(goalId) +
+        "/planning-dialogue",
+      { method: "POST", body: JSON.stringify(body), signal },
+    ),
   list: () => request<OrganizationRecord[]>("/organizations"),
   create: (body: OrganizationWriteBody) =>
     request<OrganizationRecord>("/organizations", {

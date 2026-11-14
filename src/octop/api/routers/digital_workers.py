@@ -7,7 +7,7 @@ from collections.abc import Callable
 from datetime import date
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from octop.api.deps import current_user, get_server
@@ -16,7 +16,14 @@ from octop.infra.connectors.probe import probe_connector
 from octop.infra.connectors.service import ConnectorService
 from octop.infra.digital_workers import DigitalWorkerError, DigitalWorkerService
 from octop.infra.digital_workers.memory import WorkerMemoryService
+from octop.infra.digital_workers.planning import (
+    PlanningDialogueRequest,
+    PlanningDialogueResponse,
+    WorkerPlanningService,
+)
+from octop.infra.digital_workers.planning_limits import PlanningLimitError
 from octop.infra.knowledge.diagnostics import credential_rotation_state
+from octop.infra.utils.locale import resolve_request_locale
 
 router = APIRouter()
 
@@ -716,3 +723,43 @@ async def review_capability_proposal(
             organization_id, worker_id, proposal_id, **body.model_dump()
         )
     )
+
+
+@router.post(
+    "/organizations/{organization_id}/digital-workers/{worker_id}/goals/{goal_id}/planning-dialogue",
+    summary="Clarify a work plan with the assigned Agent model",
+    description="Requires organization management and Agent access. Sends goal context and supplied dialogue to the Agent default model. No tools, persistence, execution or authorization changes; returned drafts require explicit review and saving. Process-local admission limits return 429 with Retry-After; these are not monetary or distributed budgets.",
+    response_model=PlanningDialogueResponse,
+)
+async def planning_dialogue(
+    organization_id: str,
+    worker_id: str,
+    goal_id: str,
+    body: PlanningDialogueRequest,
+    request: Request,
+    user: Any = Depends(current_user),
+    server: Any = Depends(get_server),
+) -> PlanningDialogueResponse:
+    services = getattr(server, "services", None)
+    if services is None:
+        raise HTTPException(status_code=503, detail="database is not ready")
+    runtime = getattr(server, "app_runtime", None)
+    try:
+        return await WorkerPlanningService(services.repos, user).dialogue(
+            organization_id,
+            worker_id,
+            goal_id,
+            body,
+            registry=getattr(runtime, "agent_registry", None),
+            locale=resolve_request_locale(request),
+        )
+    except PlanningLimitError as exc:
+        raise HTTPException(
+            status_code=exc.status,
+            detail={"code": exc.code, "message": exc.message},
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from exc
+    except DigitalWorkerError as exc:
+        raise HTTPException(
+            status_code=exc.status, detail={"code": exc.code, "message": exc.message}
+        ) from exc

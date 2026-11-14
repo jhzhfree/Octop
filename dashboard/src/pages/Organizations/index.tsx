@@ -54,6 +54,10 @@ import {
   type DigitalWorkerKnowledgeDiagnostics,
 } from "../../api/modules/organizations";
 
+import DigitalTwinPlanning from "./DigitalTwinPlanning";
+import PlanReadiness from "./PlanReadiness";
+import PlanningDialogue from "./PlanningDialogue";
+
 type ModalKind =
   | "organization"
   | "department"
@@ -2043,6 +2047,38 @@ export default function OrganizationsPage() {
                             <Button onClick={() => setSelectedGoal(undefined)}>
                               {t("common.close")}
                             </Button>
+                            {canManage &&
+                              selectedWorker.status === "active" &&
+                              selectedGoal.status === "active" &&
+                              organizationId && (
+                                <PlanningDialogue
+                                  key={`dialogue-${organizationId}-${selectedWorker.worker_id}-${selectedWorker.version}-${selectedGoal.goal_id}-${selectedGoal.updated_at}`}
+                                  organizationId={organizationId}
+                                  workerId={selectedWorker.worker_id}
+                                  workerVersion={selectedWorker.version}
+                                  goalId={selectedGoal.goal_id}
+                                  goalTitle={selectedGoal.title}
+                                  onDraft={(draft) => {
+                                    setEditingPlan(undefined);
+                                    planForm.resetFields();
+                                    planForm.setFieldsValue(draft);
+                                    setPlanModalOpen(true);
+                                  }}
+                                />
+                              )}
+                            {canManage && selectedGoal.status === "active" && (
+                              <DigitalTwinPlanning
+                                key={`${organizationId}-${selectedWorker.worker_id}-${selectedGoal.goal_id}`}
+                                goalTitle={selectedGoal.title}
+                                successCriteria={selectedGoal.success_criteria}
+                                onDraft={(draft) => {
+                                  setEditingPlan(undefined);
+                                  planForm.resetFields();
+                                  planForm.setFieldsValue(draft);
+                                  setPlanModalOpen(true);
+                                }}
+                              />
+                            )}
                             {canManage && selectedGoal.status === "active" && (
                               <Button
                                 type="primary"
@@ -2080,6 +2116,13 @@ export default function OrganizationsPage() {
                                     </li>
                                   ))}
                                 </ol>
+                                <PlanReadiness
+                                  worker={selectedWorker}
+                                  goal={selectedGoal}
+                                  plan={plan}
+                                  scenes={scenes}
+                                  runs={sceneRuns}
+                                />
                               </div>
                             ),
                           }}
