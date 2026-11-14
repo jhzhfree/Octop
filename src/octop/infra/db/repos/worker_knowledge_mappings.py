@@ -25,6 +25,17 @@ class WorkerKnowledgeMappingRepo:
             ).fetchone()
         return dict(row) if row else None
 
+    def list_page(
+        self, organization_id: str, worker_id: str, *, limit: int, offset: int
+    ) -> list[dict[str, Any]]:
+        with self._db.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM worker_knowledge_source_mappings "
+                "WHERE organization_id=? AND worker_id=? ORDER BY id DESC LIMIT ? OFFSET ?",
+                (organization_id, worker_id, limit, offset),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def create_draft(self, values: dict[str, Any], actor_id: int) -> str | None:
         """Atomically insert once; stale source/worker versions cannot be persisted."""
         mapping_id = new_ulid()

@@ -960,5 +960,11 @@
     "inactive": "An active digital worker and active goal are required.",
     "rate_limited": "Planning request frequency exceeded. Wait before trying again; no plan was saved.",
     "busy": "A planning request is already running for you, or planning capacity is busy. Try later; no plan was saved."
+  },
+  "knowledgeMappingApi": {
+    "forbidden": "You cannot manage knowledge mappings in this context.",
+    "notFound": "Knowledge mapping or worker not found.",
+    "conflict": "The mapping or its bindings changed. Refresh before trying again.",
+    "unavailable": "Knowledge mapping management is unavailable."
   }
 }

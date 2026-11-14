@@ -22,6 +22,17 @@ def capability_json(source: dict[str, Any]) -> str:
 
 
 class WorkerKnowledgeMappingService(DigitalWorkerService):
+    def _require_manager(self, organization_id: str) -> None:
+        # Check membership first so this service cannot disclose organization
+        # existence to outsiders. Do not alter the shared worker API contract.
+        if not self.actor.is_admin:
+            member = self.repos.organization_repo.get_member(organization_id, self.actor.id)
+            if member is None or member["role"] not in {"owner", "manager"}:
+                raise DigitalWorkerError(
+                    "ORGANIZATION_FORBIDDEN", "organization manager required", 403
+                )
+        super()._require_manager(organization_id)
+
     def _context(self, organization_id: str, worker_id: str) -> dict[str, Any]:
         self._require_manager(organization_id)
         worker = self._worker(organization_id, worker_id)
@@ -100,6 +111,28 @@ class WorkerKnowledgeMappingService(DigitalWorkerService):
             "connection_revision": source.revision,
             "resource_revision": source.resource_revision,
         }
+
+    def list_mappings(
+        self, organization_id: str, worker_id: str, *, limit: int = 50, offset: int = 0
+    ) -> list[dict[str, Any]]:
+        self._require_manager(organization_id)
+        self._worker(organization_id, worker_id)
+        if not 1 <= limit <= 100 or offset < 0:
+            raise ValueError("invalid mapping pagination")
+        rows = self.repos.worker_knowledge_mapping_repo.list_page(
+            organization_id, worker_id, limit=limit, offset=offset
+        )
+        # This endpoint reports persisted state only. Freshness is deliberately
+        # unknown until the caller explicitly inspects an individual mapping.
+        return [
+            {
+                **row,
+                "local_snapshot_current": None,
+                "retrieval_enabled": False,
+                "authorization_status": "delegated_user_acl_unverified",
+            }
+            for row in rows
+        ]
 
     def create_draft(
         self,
