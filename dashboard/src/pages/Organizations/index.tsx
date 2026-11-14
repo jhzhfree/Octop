@@ -58,6 +58,7 @@ import DigitalTwinPlanning from "./DigitalTwinPlanning";
 import PlanReadiness from "./PlanReadiness";
 import ServerPlanReadiness from "./ServerPlanReadiness";
 import DeliveryAcceptance from "./DeliveryAcceptance";
+import OrganizationProgress from "./OrganizationProgress";
 import PlanningDialogue from "./PlanningDialogue";
 import KnowledgeMappings from "./KnowledgeMappings";
 
@@ -1644,6 +1645,16 @@ export default function OrganizationsPage() {
             </Space>
           </Space>
         </Card>
+
+        {organizationId && chart?.organization.organization_id === organizationId && (
+          <Card>
+            <OrganizationProgress
+              key={organizationId}
+              organizationId={organizationId}
+              canManage={canManage}
+            />
+          </Card>
+        )}
 
         {loading ? (
           <Spin />

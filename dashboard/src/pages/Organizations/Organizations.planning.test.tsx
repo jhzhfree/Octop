@@ -6,6 +6,7 @@ import { organizationsApi } from "../../api/modules/organizations";
 import { externalKnowledgeApi } from "../../api/modules/externalKnowledge";
 import { workerKnowledgeMappingsApi } from "../../api/modules/workerKnowledgeMappings";
 import OrganizationsPage from "./index";
+import { organizationProgressApi } from "../../api/modules/organizationProgress";
 import { useCurrentUser } from "../../hooks/useCurrentUser";
 import { deliveryAcceptanceApi } from "../../api/modules/deliveryAcceptance";
 import { deliveryAcceptanceMessages } from "./deliveryAcceptanceMessages";
@@ -66,6 +67,13 @@ vi.mock("../../api/modules/deliveryAcceptance", async (importOriginal) => ({
     typeof import("../../api/modules/deliveryAcceptance")
   >()),
   deliveryAcceptanceApi: { review: vi.fn(), decide: vi.fn() },
+}));
+
+vi.mock("../../api/modules/organizationProgress", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("../../api/modules/organizationProgress")
+  >()),
+  organizationProgressApi: { read: vi.fn() },
 }));
 
 const organization = {
@@ -534,3 +542,78 @@ describe(
     );
   },
 );
+
+describe("organization progress integration", { timeout: 15000 }, () => {
+  it("loads the actual organization only explicitly and clears errors when switching", async () => {
+    const other = {
+      ...organization,
+      organization_id: "org2",
+      name: "Other organization",
+    };
+    vi.mocked(organizationsApi.list).mockResolvedValue([organization, other]);
+    vi.mocked(organizationsApi.chart).mockImplementation(async (id) => ({
+      organization: id === "org2" ? other : organization,
+      positions: [],
+      departments: [],
+      members: [],
+    }));
+    vi.mocked(organizationProgressApi.read).mockRejectedValue(
+      new Error("403 private error"),
+    );
+    const user = userEvent.setup();
+    render(<OrganizationsPage />);
+    const load = await screen.findByRole("button", { name: "Load progress" });
+    expect(organizationProgressApi.read).not.toHaveBeenCalled();
+    await user.click(load);
+    expect(organizationProgressApi.read).toHaveBeenCalledExactlyOnceWith(
+      "org1",
+      expect.any(Number),
+      expect.any(Number),
+    );
+    const [, start, end] = vi.mocked(organizationProgressApi.read).mock
+      .calls[0];
+    expect(end - start).toBe(30 * 86400);
+    expect(
+      await screen.findByText(/Unavailable: access may be denied/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Run records:/)).not.toBeInTheDocument();
+    expect(screen.queryByText("403 private error")).not.toBeInTheDocument();
+    await user.click(
+      screen.getByRole("combobox", {
+        name: en.organizations.selectOrganization,
+      }),
+    );
+    await user.click(await screen.findByText("Other organization"));
+    await screen.findByRole("button", { name: "Load progress" });
+    expect(
+      screen.queryByText(/Unavailable: access may be denied/),
+    ).not.toBeInTheDocument();
+    expect(organizationProgressApi.read).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: "Load progress" }));
+    await waitFor(() =>
+      expect(organizationProgressApi.read).toHaveBeenLastCalledWith(
+        "org2",
+        expect.any(Number),
+        expect.any(Number),
+      ),
+    );
+  });
+  it("does not request progress for an ordinary member", async () => {
+    vi.mocked(organizationsApi.chart).mockResolvedValue({
+      organization: { ...organization, member_role: "member" },
+      positions: [],
+      departments: [],
+      members: [],
+    });
+    render(<OrganizationsPage />);
+    expect(
+      await screen.findByText(
+        "Organization manager permission required; no data requested.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Load progress" }),
+    ).not.toBeInTheDocument();
+    expect(organizationProgressApi.read).not.toHaveBeenCalled();
+  });
+});
