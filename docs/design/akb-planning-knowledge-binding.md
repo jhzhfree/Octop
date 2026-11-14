@@ -158,3 +158,32 @@ AKB 权限不能由 Octop 的 `is_admin`、共享标志或签名成功推断。
 - 通用 MCP 静态身份若不能通过这些测试，入口必须不可用；先补可信逐请求传播，不把验收降为仅 Agent ACL。
 
 上述为待实施和待验收要求；当前没有真实双用户、撤权或分离 IdP 端到端通过的结论。建议先完成显式映射及假检索合约，再实施实际知识增强。
+
+## 10. 当前基线认证边界复核（2026-11-14）
+
+核对 AKB `0fbf45ad762a8182d6217bd024ced55085e36180` 和 Octop
+`ca3fa57fd78d174eeec088a100c056b5a4b6ea69` 后，须补充以下实现事实：
+
+1. Octop `external/agent_identity.py::execute_as_agent` 使用 Agent SDK 的 V2
+   工作负载签名，不传递当前用户断言。不能仅添加 `X-Octop-Identity` 就宣称完成委托。
+2. AKB `ExternalAccessService.authenticate` 的 workload 分支提前返回，但其调用的
+   `WorkloadIdentityService.authenticateStored` **已拒绝**同时携带
+   `X-Octop-Identity` 或 `Authorization` 的请求；discovery 也拒绝用户断言。
+   这不是已证实的“用户断言被静默忽略”漏洞，不应重复修补或者移除此拒绝。
+3. 非 workload 的 Agent/API Key + Octop assertion 是另一条已有用户委托路径。
+   不能为复用该路径，未经批准就将规划来源切换成服务身份。不同 IdP 仍需可信、显式、
+   可撤销的主体绑定；相同邮箱、用户名、Agent ID 或本地管理员标志不是绑定证明。
+4. AKB `RetrievalAuthorizationService.effectiveTags` 对非 workload 凭据的
+   `CLIENT` 模式返回客户端标签；`SHADOW` 在请求超出授权时只记录并返回请求标签。
+   所以知识库 grant 交集、有效签名和存在 delegated principal **都不足以证明内容 ACL**。
+   未来启用门槛还须验证服务端 `ENFORCE`、文档/片段过滤、缺少标签授权默认拒绝，
+   并覆盖同一 KB 内 A/B 可见内容不同、撤权及缓存隔离。不能将工作负载路径的强制标签
+   交集误当作其已具备当前用户身份。
+
+本轮交付是可执行的关闭边界回归，不新增授权开关、检索入口或假身份绑定。
+`tests/unit/digital_workers/test_planning_knowledge_boundary.py` 通过实际 ASGI 路由验证：
+知识 mapping、身份、凭据、工具和启用字段注入均在模型/SDK/来源调用前被拒绝；
+管理员不豁免请求 schema，普通成员仍被组织权限拒绝；对话文本提出读取知识的要求也
+不会触发检索。模型为本地假对象，当前用户依赖为测试注入，不代表 JWT、真实 AKB、
+跨 IdP 或双用户 ACL 联调通过。未来实现知识规划时须将本回归更新为专用入口的强制
+用户授权契约，而不是增加默认 False、可被调用方遗漏的安全标志。
