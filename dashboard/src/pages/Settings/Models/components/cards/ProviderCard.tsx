@@ -51,7 +51,7 @@ export function ProviderCard({
   const isOnnx = isOnnxProviderRow(provider);
   const isLocalRuntime = isOllama || isOnnx;
 
-  const hasApiKey = !!provider.api_key && provider.api_key.length > 0;
+  const hasApiKey = !!provider.has_api_key;
   const statusReady = hasApiKey;
   const statusLabel = hasApiKey
     ? t("models.authorized")
@@ -137,13 +137,7 @@ export function ProviderCard({
     }
   };
 
-  // Mask api_key for display: show first 4 + last 4, mask middle.
-  const maskedKey = (() => {
-    if (!provider.api_key) return null;
-    const k = provider.api_key;
-    if (k.length <= 10) return "•".repeat(k.length);
-    return `${k.slice(0, 4)}${"•".repeat(6)}${k.slice(-4)}`;
-  })();
+  const maskedKey = hasApiKey ? "••••••••" : null;
 
   // Try lookup by name, lowercase name, then fall back to custom logo.
   // Provider names like "DeepSeek" → "deepseek", "Tencent Cloud Coding Plan" → try both.

@@ -98,7 +98,7 @@ export function ProviderConfigModal({
   const [form] = Form.useForm<ProviderConfigForm>();
   const [draftModels, setDraftModels] = useState<ProviderModel[]>([]);
 
-  const hasApiKey = !!provider.api_key && provider.api_key.length > 0;
+  const hasApiKey = !!provider.has_api_key;
   const isOllama = looksLikeOllamaProvider(provider);
   const isOnnx = isOnnxProviderRow(provider);
   const [downloadedIds, setDownloadedIds] = useState<string[]>([]);
@@ -691,8 +691,8 @@ export function ProviderConfigModal({
       if (values.kind !== provider.kind) payload.kind = values.kind;
       if ((values.base_url ?? "") !== (provider.base_url ?? ""))
         payload.base_url = values.base_url?.trim() || null;
-      if (values.api_key !== undefined && values.api_key !== "")
-        payload.api_key = values.api_key.trim();
+      const replacementKey = values.api_key?.trim();
+      if (replacementKey) payload.api_key = replacementKey;
       if ((values.note ?? "") !== (provider.note ?? ""))
         payload.note = values.note?.trim() || null;
       if (
@@ -832,7 +832,8 @@ export function ProviderConfigModal({
           ? await testProviderDraft({
               name: provider.name,
               kind: provider.kind,
-              api_key: draftApiKey || provider.api_key || undefined,
+              api_key: draftApiKey || undefined,
+              provider_id: provider.id,
               base_url: draftBaseUrl || provider.base_url,
               model_id: modelId,
               embedding,
@@ -914,8 +915,8 @@ export function ProviderConfigModal({
       }
       const draftApiKey = (values.api_key as string | undefined)?.trim();
       const draftBaseUrl = (values.base_url as string | undefined)?.trim();
-      const apiKey = draftApiKey || provider.api_key || "";
-      if (!apiKey) {
+      const apiKey = draftApiKey || "";
+      if (!apiKey && !hasApiKey) {
         message.warning(t("models.pleaseEnterApiKey"));
         return;
       }
@@ -923,7 +924,8 @@ export function ProviderConfigModal({
       setFetchingModels(true);
       const result = await fetchProviderModels({
         kind: "openai",
-        api_key: apiKey,
+        api_key: apiKey || undefined,
+        provider_id: provider.id,
         base_url: draftBaseUrl || provider.base_url,
         name: provider.name,
       });

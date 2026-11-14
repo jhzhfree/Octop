@@ -3,6 +3,7 @@ import { request } from "../../../api/request";
 export interface TestProviderDraftParams {
   name: string;
   kind: string;
+  provider_id?: number;
   api_key?: string;
   base_url?: string | null;
   model_id: string;
@@ -24,6 +25,7 @@ export async function testProviderDraft(
     body: JSON.stringify({
       name: params.name,
       kind: params.kind,
+      provider_id: params.provider_id,
       api_key: params.api_key?.trim() || null,
       base_url: params.base_url?.trim() || null,
       model_id: params.model_id,
@@ -35,6 +37,7 @@ export async function testProviderDraft(
 
 export interface FetchProviderModelsParams {
   kind: string;
+  provider_id?: number;
   api_key?: string;
   base_url?: string | null;
   extra_json?: string | null;
@@ -59,6 +62,7 @@ export async function fetchProviderModels(
     method: "POST",
     body: JSON.stringify({
       kind: params.kind,
+      provider_id: params.provider_id,
       api_key: params.api_key?.trim() || null,
       base_url: params.base_url?.trim() || null,
       extra_json: params.extra_json ?? null,

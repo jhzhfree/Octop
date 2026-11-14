@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
 from octop.api.deps import current_user, get_server, require_permission
+from octop.i18n import tr
 from octop.infra.agents.providers.codex_apply import (
     CODEX_PROVIDER_NAME,
     apply_codex_credentials,
@@ -25,7 +26,11 @@ from octop.infra.agents.providers.codex_oauth import (
     poll_device_token,
     request_device_code,
 )
-from octop.infra.agents.providers.model_flags import is_local_runtime_provider
+from octop.infra.agents.providers.model_flags import (
+    is_local_runtime_provider,
+    is_ollama_local_provider,
+    is_onnx_local_provider,
+)
 from octop.infra.agents.providers.presets import load_provider_presets
 from octop.infra.agents.providers.probe import (
     fetch_openai_compatible_models,
@@ -89,6 +94,7 @@ class ProviderTestBody(BaseModel):
 
 
 class ProviderTestDraftBody(BaseModel):
+    provider_id: int | None = None
     name: str
     kind: str
     api_key: str | None = None
@@ -99,6 +105,7 @@ class ProviderTestDraftBody(BaseModel):
 
 
 class ProviderFetchModelsBody(BaseModel):
+    provider_id: int | None = None
     kind: str
     api_key: str | None = None
     base_url: str | None = None
@@ -139,7 +146,14 @@ def _row_to_dict(r: Any) -> dict[str, Any]:
         "name": r.name,
         "kind": r.kind,
         "base_url": r.base_url,
-        "api_key": r.api_key,
+        "has_api_key": bool(r.api_key),
+        "local_runtime": (
+            "onnx"
+            if is_onnx_local_provider(r.name, provider_api_key=r.api_key)
+            else "ollama"
+            if is_ollama_local_provider(r.name, provider_api_key=r.api_key)
+            else None
+        ),
         "models": models,
         "note": r.note,
         "enabled": bool(r.enabled),
@@ -261,7 +275,7 @@ async def admin_patch_provider(
         provider_id,
         kind=body.kind,
         base_url=body.base_url,
-        api_key=body.api_key,
+        api_key=(body.api_key or "").strip() if "api_key" in body.model_fields_set else None,
         extra_json=extra_json,
         models_json=models_json,
         note=body.note,
@@ -310,14 +324,31 @@ async def admin_delete_provider(
         await server.app_runtime.agent_registry.on_provider_changed(provider_name=name)
 
 
+def _draft_credentials(
+    body: ProviderTestDraftBody | ProviderFetchModelsBody, server: Any
+) -> tuple[str, str | None, str | None]:
+    """Never reuse stored credentials against a client-selected destination."""
+    if body.api_key or body.provider_id is None:
+        return (body.api_key or "").strip(), body.base_url, body.extra_json
+    row = server.services.provider_repo.get(body.provider_id)
+    if row is None:
+        raise OctopError(ErrorCode.NOT_FOUND, "provider not found")
+    if body.kind != row.kind or (body.base_url or "").strip() != (row.base_url or "").strip():
+        raise OctopError(
+            ErrorCode.FORBIDDEN, "enter a new API key for a changed provider destination"
+        )
+    return row.api_key or "", row.base_url, row.extra_json
+
+
 @admin_router.post("/test-draft", summary="Test unsaved provider draft")
 async def admin_test_provider_draft(
     body: ProviderTestDraftBody,
     request: Request,
     _: Any = Depends(require_permission("providers")),
+    server: Any = Depends(get_server),
 ) -> dict[str, Any]:
     """Probe connectivity for a provider draft before it is saved."""
-    api_key = (body.api_key or "").strip()
+    api_key, base_url, extra_json = _draft_credentials(body, server)
     if not api_key:
         return {"ok": False, "error": "api_key is required"}
     model_id = body.model_id.strip()
@@ -327,9 +358,9 @@ async def admin_test_provider_draft(
         name=body.name.strip() or "draft",
         kind=body.kind,
         api_key=api_key,
-        base_url=(body.base_url or "").strip() or None,
+        base_url=(base_url or "").strip() or None,
         model_id=model_id,
-        extra_json=body.extra_json,
+        extra_json=extra_json,
         embedding=body.embedding,
     )
     return await probe_provider_row(
@@ -345,6 +376,7 @@ async def admin_fetch_provider_models(
     body: ProviderFetchModelsBody,
     request: Request,
     _: Any = Depends(require_permission("providers")),
+    server: Any = Depends(get_server),
 ) -> dict[str, Any]:
     """Fetch remote model ids via OpenAI-compatible ``GET /models`` (openai kind only)."""
     if body.kind != "openai":
@@ -352,12 +384,12 @@ async def admin_fetch_provider_models(
             "ok": False,
             "error": "fetch models is only supported for openai-compatible providers",
         }
-    api_key = (body.api_key or "").strip()
+    api_key, base_url, extra_json = _draft_credentials(body, server)
     if not api_key:
         return {"ok": False, "error": "api_key is required"}
-    draft = SimpleNamespace(extra_json=body.extra_json)
+    draft = SimpleNamespace(extra_json=extra_json)
     return await fetch_openai_compatible_models(
-        base_url=(body.base_url or "").strip() or None,
+        base_url=(base_url or "").strip() or None,
         api_key=api_key,
         extra_headers=provider_headers(draft) or None,
         locale=resolve_request_locale(request),
@@ -406,11 +438,17 @@ async def _run_codex_device_poll(
             f"codex_oauth.pending.{state_id}",
             json.dumps({"status": "error", "error": "登录超时，请重新开始", "user_id": user_id}),
         )
-    except Exception as exc:
-        logger.exception("codex device oauth poll failed")
+    except Exception:
+        logger.warning("codex device oauth poll failed")
         settings.set(
             f"codex_oauth.pending.{state_id}",
-            json.dumps({"status": "error", "error": str(exc), "user_id": user_id}),
+            json.dumps(
+                {
+                    "status": "error",
+                    "error": tr("stream_errors.provider_probe_failed", "zh"),
+                    "user_id": user_id,
+                }
+            ),
         )
 
 
@@ -469,6 +507,9 @@ async def codex_oauth_pending(
     flow_user = payload.get("user_id")
     if flow_user is not None and flow_user != user.id:
         raise OctopError(ErrorCode.FORBIDDEN, "not your oauth session")
+    if payload.get("status") == "error":
+        # Older pending rows may contain raw upstream exception text.
+        payload["error"] = tr("stream_errors.provider_probe_failed", "zh")
     return cast(dict[str, Any], payload)
 
 
@@ -482,7 +523,7 @@ async def codex_oauth_logout(
     delete_codex_token(server.services.paths)
     row = server.services.provider_repo.get_by_name(CODEX_PROVIDER_NAME)
     if row is not None:
-        server.services.provider_repo.update(row.id, api_key=None)
+        server.services.provider_repo.update(row.id, api_key="")
         if server.app_runtime is not None:
             await server.app_runtime.agent_registry.on_provider_changed(
                 provider_name=CODEX_PROVIDER_NAME,

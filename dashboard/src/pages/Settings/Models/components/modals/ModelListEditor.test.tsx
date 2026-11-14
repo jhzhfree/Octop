@@ -11,7 +11,7 @@ function renderEditor(models: ProviderModel[]) {
     name: "mindie",
     kind: "openai",
     base_url: "http://10.0.0.8/v1",
-    api_key: "sk-test",
+    has_api_key: true,
     models,
     note: null,
     enabled: true,

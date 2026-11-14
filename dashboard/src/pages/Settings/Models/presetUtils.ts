@@ -199,7 +199,9 @@ function providerNameKey(name: string | null | undefined): string {
 export function isOnnxProviderRow(provider: {
   name: string;
   api_key?: string | null;
+  local_runtime?: "onnx" | "ollama" | null;
 }): boolean {
+  if (provider.local_runtime === "onnx") return true;
   if (localPresetApiKey(provider) === "onnx") return true;
   const n = providerNameKey(provider.name);
   return n === "onnx" || n === "onnx (local)";
@@ -223,7 +225,9 @@ export function isOllamaProviderRow(provider: {
   name: string;
   base_url?: string | null;
   api_key?: string | null;
+  local_runtime?: "onnx" | "ollama" | null;
 }): boolean {
+  if (provider.local_runtime === "ollama") return true;
   if (isOnnxProviderRow(provider)) return false;
   if (localPresetApiKey(provider) === "ollama") return true;
   const n = providerNameKey(provider.name);
@@ -234,6 +238,7 @@ export function looksLikeOllamaProvider(provider: {
   name: string;
   base_url?: string | null;
   api_key?: string | null;
+  local_runtime?: "onnx" | "ollama" | null;
 }): boolean {
   return isOllamaProviderRow(provider) || isOllamaRuntimeUrl(provider.base_url);
 }
@@ -242,6 +247,7 @@ export function isLocalProviderRow(provider: {
   name: string;
   base_url?: string | null;
   api_key?: string | null;
+  local_runtime?: "onnx" | "ollama" | null;
 }): boolean {
   return isOnnxProviderRow(provider) || isOllamaProviderRow(provider);
 }

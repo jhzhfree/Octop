@@ -160,11 +160,17 @@ def _embeddings_url(base_url: str | None) -> str:
 
 
 def _friendly_probe_error(exc: BaseException | str, *, locale: str) -> str:
-    """Map raw provider exceptions / HTTP bodies to localized guidance when known."""
-    from octop.i18n.domains.stream import exception_display_message, stream_error_message
+    """Never expose upstream bodies or exceptions, which may echo credentials."""
+    from octop.i18n import tr
+    from octop.i18n.domains.stream import classify_stream_error_message, exception_display_message
 
-    raw = exception_display_message(exc)
-    return stream_error_message(raw, locale) or raw
+    category = classify_stream_error_message(exception_display_message(exc))
+    if isinstance(exc, (TimeoutError, ConnectionError, httpx.TimeoutException, httpx.NetworkError)):
+        category = "octop:stream_errors.timeout_network"
+    # The classifier returns only fixed keys, never interpolate upstream text.
+    if category is not None:
+        return tr(category.removeprefix("octop:"), locale)
+    return tr("stream_errors.provider_probe_failed", locale)
 
 
 async def _probe_embedding_endpoint(
@@ -188,12 +194,7 @@ async def _probe_embedding_endpoint(
                 json={"model": model_id, "input": [_EMBEDDING_PROBE_TEXT]},
             )
     except Exception as exc:
-        logger.info(
-            "embedding probe failed for %s: %r (%s)",
-            getattr(row, "name", "?"),
-            exc,
-            type(exc).__name__,
-        )
+        logger.info("provider request failed (details withheld)")
         return {"ok": False, "error": _friendly_probe_error(exc, locale=locale)}
 
     if response.status_code >= 400:
@@ -257,12 +258,7 @@ async def probe_provider_row(
         chat = build_probe_chat_model(row, model_id=mid)
         result = await asyncio.wait_for(chat.ainvoke("ping"), timeout=30.0)
     except Exception as exc:
-        logger.info(
-            "provider probe failed for %s: %r (%s)",
-            getattr(row, "name", "?"),
-            exc,
-            type(exc).__name__,
-        )
+        logger.info("provider request failed (details withheld)")
         return {"ok": False, "error": _friendly_probe_error(exc, locale=locale)}
     latency_ms = int((time.perf_counter() - started) * 1000)
     _ = getattr(result, "content", None)
@@ -292,12 +288,7 @@ async def fetch_openai_compatible_models(
         async with httpx.AsyncClient(timeout=_FETCH_MODELS_TIMEOUT_S) as client:
             response = await client.get(url, headers=headers)
     except Exception as exc:
-        logger.info(
-            "provider fetch-models failed for %s: %r (%s)",
-            url,
-            exc,
-            type(exc).__name__,
-        )
+        logger.info("provider request failed (details withheld)")
         return {"ok": False, "error": _friendly_probe_error(exc, locale=locale)}
 
     if response.status_code >= 400:

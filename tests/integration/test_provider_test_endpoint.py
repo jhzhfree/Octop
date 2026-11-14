@@ -33,7 +33,8 @@ async def test_provider_test_failure(env_with_provider_record: Any) -> None:
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["ok"] is False
-    assert "auth failed" in body["error"]
+    assert "auth failed" not in body["error"]
+    assert "凭据" in body["error"]
 
 
 async def test_provider_test_missing_provider(env_with_provider_record: Any) -> None:

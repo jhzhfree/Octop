@@ -67,7 +67,9 @@ export interface ProviderRow {
   name: string;
   kind: string;
   base_url: string | null;
-  api_key: string | null;
+  api_key?: string | null; // legacy client fixtures only; never returned by API
+  has_api_key?: boolean;
+  local_runtime?: "onnx" | "ollama" | null;
   models: ProviderModel[];
   note: string | null;
   enabled: boolean;
