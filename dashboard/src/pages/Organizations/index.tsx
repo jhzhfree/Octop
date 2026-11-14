@@ -57,6 +57,7 @@ import {
 import DigitalTwinPlanning from "./DigitalTwinPlanning";
 import PlanReadiness from "./PlanReadiness";
 import ServerPlanReadiness from "./ServerPlanReadiness";
+import DeliveryAcceptance from "./DeliveryAcceptance";
 import PlanningDialogue from "./PlanningDialogue";
 import KnowledgeMappings from "./KnowledgeMappings";
 
@@ -2287,6 +2288,22 @@ export default function OrganizationsPage() {
                                 <Typography.Paragraph type="danger">
                                   {run.error_summary}
                                 </Typography.Paragraph>
+                              )}
+                              {currentUser && Number.isSafeInteger(currentUser.id) && (
+                                <DeliveryAcceptance
+                                  currentUserId={currentUser.id}
+                                  target={{
+                                    organizationId: run.organization_id,
+                                    runId: run.run_id,
+                                  }}
+                                  canReview={
+                                    canManage &&
+                                    run.status === "succeeded" &&
+                                    run.requested_by !== currentUser.id &&
+                                    (currentUser.role === "admin" ||
+                                      run.approved_by === currentUser.id)
+                                  }
+                                />
                               )}
                               {run.status === "succeeded" &&
                                 (currentUser?.role === "admin" ||

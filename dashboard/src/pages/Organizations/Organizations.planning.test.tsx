@@ -6,6 +6,9 @@ import { organizationsApi } from "../../api/modules/organizations";
 import { externalKnowledgeApi } from "../../api/modules/externalKnowledge";
 import { workerKnowledgeMappingsApi } from "../../api/modules/workerKnowledgeMappings";
 import OrganizationsPage from "./index";
+import { useCurrentUser } from "../../hooks/useCurrentUser";
+import { deliveryAcceptanceApi } from "../../api/modules/deliveryAcceptance";
+import { deliveryAcceptanceMessages } from "./deliveryAcceptanceMessages";
 import { inspectServerReadiness } from "../../api/modules/planReadiness";
 import { serverReadinessMessages } from "./serverReadinessMessages";
 
@@ -28,7 +31,7 @@ vi.mock("../../api/modules/planReadiness", async (importOriginal) => ({
 vi.mock("../../hooks/useServerTimezone", () => ({
   useServerTimezone: () => "UTC",
 }));
-vi.mock("../../hooks/useCurrentUser", () => ({ useCurrentUser: () => null }));
+vi.mock("../../hooks/useCurrentUser", () => ({ useCurrentUser: vi.fn() }));
 vi.mock("../../api/modules/organizations", () => ({
   organizationsApi: {
     list: vi.fn(),
@@ -58,6 +61,13 @@ vi.mock("../../api/modules/workerKnowledgeMappings", () => ({
   },
 }));
 
+vi.mock("../../api/modules/deliveryAcceptance", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("../../api/modules/deliveryAcceptance")
+  >()),
+  deliveryAcceptanceApi: { review: vi.fn(), decide: vi.fn() },
+}));
+
 const organization = {
   organization_id: "org1",
   owner_user_id: 1,
@@ -70,6 +80,7 @@ const organization = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(useCurrentUser).mockReturnValue(null);
   vi.mocked(externalKnowledgeApi.list).mockResolvedValue([]);
   vi.mocked(workerKnowledgeMappingsApi.list).mockResolvedValue({
     items: [],
@@ -385,3 +396,141 @@ describe("organization guided planning integration", { timeout: 15000 }, () => {
     expect(externalKnowledgeApi.list).not.toHaveBeenCalled();
   });
 });
+
+describe(
+  "organization delivery acceptance integration",
+  { timeout: 15000 },
+  () => {
+    // Real auth.me_payload fixture; authApi.me/provider preserve numeric id.
+    const reviewer = {
+      id: 2,
+      username: "reviewer",
+      role: "user",
+      display_name: null,
+      locale: "zh",
+      permissions: [],
+      sso_linked: false,
+      sso_kind: null,
+      sso_identities: [],
+      has_password: true,
+    };
+    const review = {
+      run_id: "run1",
+      answer: "Verified summary",
+      evidence_sha256: "a".repeat(64),
+      snapshot_sha256: "b".repeat(64),
+      evidence_length: 16,
+      acceptance: null,
+    };
+    async function openRun() {
+      vi.mocked(organizationsApi.sceneRuns).mockResolvedValue([
+        {
+          run_id: "run1",
+          organization_id: "org1",
+          scene_id: "scene1",
+          position_id: "position1",
+          agent_id: "agent1",
+          scene_name: "Completed research",
+          scene_version: 1,
+          prompt_snapshot: "Research",
+          mcp_servers: [],
+          requested_by: 1,
+          approved_by: 2,
+          status: "succeeded",
+          decision_note: "",
+          cron_id: null,
+          error_summary: null,
+          created_at: 0,
+          updated_at: 0,
+        },
+      ]);
+      const user = userEvent.setup();
+      const view = render(<OrganizationsPage />);
+      await user.click(
+        await screen.findByRole("tab", { name: en.organizations.scenes }),
+      );
+      const row = (await screen.findByText("Completed research")).closest("tr");
+      await user.click(
+        within(row!).getByRole("button", { name: "Expand row" }),
+      );
+      return { user, ...view };
+    }
+    it("reads only after opening and sends only after a second confirmation", async () => {
+      vi.mocked(useCurrentUser).mockReturnValue(reviewer);
+      vi.mocked(deliveryAcceptanceApi.review).mockResolvedValue(review);
+      vi.mocked(deliveryAcceptanceApi.decide).mockRejectedValue(
+        new Error("403"),
+      );
+      const { user } = await openRun();
+      expect(deliveryAcceptanceApi.review).not.toHaveBeenCalled();
+      await user.click(
+        screen.getByRole("button", {
+          name: deliveryAcceptanceMessages.en.open,
+        }),
+      );
+      expect(deliveryAcceptanceApi.review).toHaveBeenCalledExactlyOnceWith({
+        organizationId: "org1",
+        runId: "run1",
+      });
+      await user.click(
+        await screen.findByRole("button", {
+          name: deliveryAcceptanceMessages.en.accept,
+        }),
+      );
+      expect(deliveryAcceptanceApi.decide).not.toHaveBeenCalled();
+      await user.click(
+        screen.getByRole("button", {
+          name: deliveryAcceptanceMessages.en.confirm,
+        }),
+      );
+      expect(deliveryAcceptanceApi.decide).toHaveBeenCalledExactlyOnceWith(
+        { organizationId: "org1", runId: "run1" },
+        "accepted",
+        review,
+      );
+      expect(
+        await screen.findByText(deliveryAcceptanceMessages.en.failed),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(review.answer)).not.toBeInTheDocument();
+    });
+    it("drops pending confirmation on authentication changes without submitting", async () => {
+      vi.mocked(useCurrentUser).mockReturnValue(reviewer);
+      vi.mocked(deliveryAcceptanceApi.review).mockResolvedValue(review);
+      const { user, rerender } = await openRun();
+      await user.click(
+        screen.getByRole("button", {
+          name: deliveryAcceptanceMessages.en.open,
+        }),
+      );
+      await user.click(
+        await screen.findByRole("button", {
+          name: deliveryAcceptanceMessages.en.accept,
+        }),
+      );
+      vi.mocked(useCurrentUser).mockReturnValue({ ...reviewer, id: 3 });
+      rerender(<OrganizationsPage />);
+      expect(
+        screen.queryByRole("button", {
+          name: deliveryAcceptanceMessages.en.confirm,
+        }),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByText(review.answer)).not.toBeInTheDocument();
+      expect(deliveryAcceptanceApi.decide).not.toHaveBeenCalled();
+      expect(deliveryAcceptanceApi.review).toHaveBeenCalledTimes(1);
+    });
+    it.each([null, { ...reviewer, id: 1 }, { ...reviewer, id: 3 }])(
+      "does not expose acceptance to missing, self or unrelated identities: %j",
+      async (identity) => {
+        vi.mocked(useCurrentUser).mockReturnValue(identity);
+        await openRun();
+        expect(
+          screen.queryByRole("button", {
+            name: deliveryAcceptanceMessages.en.open,
+          }),
+        ).not.toBeInTheDocument();
+        expect(deliveryAcceptanceApi.review).not.toHaveBeenCalled();
+        expect(deliveryAcceptanceApi.decide).not.toHaveBeenCalled();
+      },
+    );
+  },
+);

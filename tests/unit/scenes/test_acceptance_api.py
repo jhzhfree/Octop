@@ -1,0 +1,130 @@
+"""Router boundary tests with ASGI, real acceptance DB and offline evidence adapter."""
+
+from types import SimpleNamespace
+
+import httpx
+import pytest
+from fastapi import FastAPI
+from tests.unit.scenes.test_acceptance import setup  # noqa: F401
+
+from octop.api.deps import current_user, get_server
+from octop.api.routers import scene_acceptance as api
+
+BASE = "/organizations/o/scene-runs/r/acceptance"
+
+
+@pytest.fixture
+def api_env(request, monkeypatch):
+    db, _, _, run = request.getfixturevalue("setup")
+    user = SimpleNamespace(id=2)
+    calls = []
+
+    async def evidence(**kwargs):
+        calls.append(kwargs)
+        return "server controlled summary"
+
+    monkeypatch.setattr(api, "scene_run_evidence", evidence)
+    monkeypatch.setattr(
+        api,
+        "EnterpriseSceneService",
+        lambda repos, actor: SimpleNamespace(
+            actor=actor,
+            _require_manager=lambda org: None,
+            get_run_evidence_access=lambda org, rid: run.copy(),
+        ),
+    )
+    server = SimpleNamespace(
+        services=SimpleNamespace(db=db, repos=object(), thread_message_repo=object()),
+        app_runtime=SimpleNamespace(
+            cron_manager=object(),
+            gateway=SimpleNamespace(thread_registry=object()),
+            agent_registry=object(),
+        ),
+    )
+    app = FastAPI()
+    app.include_router(api.router)
+    app.dependency_overrides[current_user] = lambda: user
+    app.dependency_overrides[get_server] = lambda: server
+    return app, user, calls
+
+
+async def test_api_review_decide_and_retry(api_env):
+    app, _, calls = api_env
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        preview = await client.get(BASE + "/review")
+        assert preview.status_code == 200
+        assert preview.headers["cache-control"] == "no-store"
+        data = preview.json()
+        assert data["answer"] == "server controlled summary"
+        assert data["acceptance"] is None
+        body = {
+            "decision": "accepted",
+            "expected_evidence_sha256": data["evidence_sha256"],
+            "expected_snapshot_sha256": data["snapshot_sha256"],
+        }
+        decision = await client.post(BASE, json=body)
+        assert decision.status_code == 200
+        assert decision.json()["reviewer_id"] == 2
+        assert "answer" not in decision.json()
+        assert (await client.post(BASE, json=body)).json() == decision.json()
+        changed = await client.post(BASE, json=body | {"decision": "changes_requested"})
+        assert changed.status_code == 409
+        assert all(call["run"]["run_id"] == "r" for call in calls)
+        assert len(calls) == 4
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [{"answer": "forged"}, {"reviewer_id": 4}, {"is_admin": True}, {"completion_percentage": 100}],
+)
+async def test_client_cannot_supply_evidence_or_authority(api_env, extra):
+    app, _, calls = api_env
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            BASE,
+            json={
+                "decision": "accepted",
+                "expected_evidence_sha256": "a" * 64,
+                "expected_snapshot_sha256": "b" * 64,
+            }
+            | extra,
+        )
+        assert response.status_code == 422
+        assert not calls
+
+
+@pytest.mark.parametrize("reviewer", [1, 3])
+async def test_api_forbidden_never_loads_evidence(api_env, reviewer):
+    app, user, calls = api_env
+    user.id = reviewer
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.get(BASE + "/review")
+        assert response.status_code == 403
+        assert response.json()["detail"]["code"] == "ACCEPTANCE_FORBIDDEN"
+        assert not calls
+
+
+async def test_forged_hash_and_cross_org_rejected(api_env):
+    app, _, calls = api_env
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            BASE,
+            json={
+                "decision": "accepted",
+                "expected_evidence_sha256": "a" * 64,
+                "expected_snapshot_sha256": "b" * 64,
+            },
+        )
+        assert response.status_code == 409
+        calls.clear()
+        response = await client.get(BASE.replace("/o/", "/other/") + "/review")
+        assert response.status_code == 404
+        assert not calls
