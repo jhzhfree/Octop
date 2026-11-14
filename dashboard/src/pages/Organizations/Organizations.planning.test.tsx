@@ -3,6 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../../locales/en.json";
 import { organizationsApi } from "../../api/modules/organizations";
+import { externalKnowledgeApi } from "../../api/modules/externalKnowledge";
+import { workerKnowledgeMappingsApi } from "../../api/modules/workerKnowledgeMappings";
 import OrganizationsPage from "./index";
 
 vi.mock("react-i18next", async () => {
@@ -38,6 +40,18 @@ vi.mock("../../api/modules/organizations", () => ({
   },
 }));
 
+vi.mock("../../api/modules/externalKnowledge", () => ({
+  externalKnowledgeApi: { list: vi.fn() },
+}));
+vi.mock("../../api/modules/workerKnowledgeMappings", () => ({
+  workerKnowledgeMappingsApi: {
+    list: vi.fn(),
+    create: vi.fn(),
+    revoke: vi.fn(),
+    inspect: vi.fn(),
+  },
+}));
+
 const organization = {
   organization_id: "org1",
   owner_user_id: 1,
@@ -50,6 +64,12 @@ const organization = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(externalKnowledgeApi.list).mockResolvedValue([]);
+  vi.mocked(workerKnowledgeMappingsApi.list).mockResolvedValue({
+    items: [],
+    offset: 0,
+    limit: 10,
+  });
   vi.mocked(organizationsApi.list).mockResolvedValue([organization]);
   vi.mocked(organizationsApi.chart).mockResolvedValue({
     organization,
@@ -257,6 +277,34 @@ describe("organization guided planning integration", { timeout: 15000 }, () => {
     expect(organizationsApi.createDigitalWorkerPlan).not.toHaveBeenCalled();
   });
 
+  it("opens selected worker knowledge mappings read-only until a separate confirmation", async () => {
+    const user = await openPlans();
+    expect(workerKnowledgeMappingsApi.list).not.toHaveBeenCalled();
+    expect(externalKnowledgeApi.list).not.toHaveBeenCalled();
+    await user.click(
+      screen.getByRole("button", { name: en.knowledgeMappings.title }),
+    );
+    expect(
+      await screen.findByText(en.knowledgeMappings.empty),
+    ).toBeInTheDocument();
+    expect(screen.getByText(en.knowledgeMappings.boundary)).toBeInTheDocument();
+    expect(workerKnowledgeMappingsApi.list).toHaveBeenCalledWith(
+      "org1",
+      "worker1",
+      0,
+    );
+    expect(externalKnowledgeApi.list).toHaveBeenCalledTimes(1);
+    expect(
+      screen.getByRole("button", { name: en.knowledgeMappings.create }),
+    ).toBeDisabled();
+    const panel = screen.getByRole("dialog");
+    await user.click(
+      within(panel).getByText(en.knowledgeMappings.close, { selector: "span" }),
+    );
+    expect(workerKnowledgeMappingsApi.create).not.toHaveBeenCalled();
+    expect(workerKnowledgeMappingsApi.revoke).not.toHaveBeenCalled();
+  });
+
   it("does not show planning for organization members", async () => {
     vi.mocked(organizationsApi.chart).mockResolvedValue({
       organization: { ...organization, member_role: "member" },
@@ -271,5 +319,10 @@ describe("organization guided planning integration", { timeout: 15000 }, () => {
     expect(
       screen.queryByRole("button", { name: en.planningDialogue.open }),
     ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: en.knowledgeMappings.title }),
+    ).not.toBeInTheDocument();
+    expect(workerKnowledgeMappingsApi.list).not.toHaveBeenCalled();
+    expect(externalKnowledgeApi.list).not.toHaveBeenCalled();
   });
 });

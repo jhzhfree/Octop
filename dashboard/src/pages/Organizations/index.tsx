@@ -57,6 +57,7 @@ import {
 import DigitalTwinPlanning from "./DigitalTwinPlanning";
 import PlanReadiness from "./PlanReadiness";
 import PlanningDialogue from "./PlanningDialogue";
+import KnowledgeMappings from "./KnowledgeMappings";
 
 type ModalKind =
   | "organization"
@@ -1886,6 +1887,16 @@ export default function OrganizationsPage() {
                             version: selectedWorker.capability_version,
                           })}
                         </Typography.Paragraph>
+                        {canManage && organizationId && (
+                          <div style={{ marginBottom: 16 }}>
+                            <KnowledgeMappings
+                              key={selectedWorker.worker_id}
+                              organizationId={organizationId}
+                              worker={selectedWorker}
+                              canManage={canManage}
+                            />
+                          </div>
+                        )}
                         <Space wrap style={{ marginBottom: 16 }}>
                           {selectedWorker.capabilities.skills.map((value) => (
                             <Tag key={`skill-${value}`}>{value}</Tag>
