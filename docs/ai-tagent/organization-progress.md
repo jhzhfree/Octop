@@ -1,6 +1,6 @@
 # R5：组织运行进展汇总（领域基础）
 
-本阶段只观察数据库已保存的运行及人工验收状态，尚不代表已接入 HTTP/UI。它不是业务目标完成率，也不证明外部模型、AKB 或生产服务已联通。
+本阶段只观察数据库已保存的运行及人工验收状态。HTTP 路由已在主应用挂载，组织页面已接入汇总组件；这只是代码整合状态，不等于真实用户 ACL、浏览器或 PostgreSQL 已验收。它不是业务目标完成率，也不证明外部模型、AKB 或生产服务已联通。
 
 ## 数据口径
 
@@ -36,24 +36,13 @@
 
 依赖 R4 `scene_run_acceptances` 迁移 034；必须在 R4 之后发布。未实现对历史删除记录的永久统计，父资源删除可能减少历史结果。
 
-## 独立 HTTP / UI 接入（组合入口由主线程接入）
+## HTTP / UI 接入状态
 
-已实现 `api/routers/organization_progress.py` 与
-`dashboard/src/pages/Organizations/OrganizationProgress.tsx`，尚不自动注册。
-在 `api/app.py` 的其他 `/api` 路由注册处添加：
-
-```python
-from octop.api.routers import organization_progress
-app.include_router(organization_progress.router, prefix="/api", tags=["Organizations"])
-```
-
-在组织详情页已有当前组织 ID 和管理权限判断的分支中添加：
-
-```tsx
-import OrganizationProgress from "./OrganizationProgress";
-// 放在组织详情中，使用该页真实变量；不要固定赋予管理权限。
-<OrganizationProgress organizationId={organizationId} canManage={canManage} />
-```
+`api/routers/organization_progress.py` 已在 `api/app.py` 通过
+`_RouterMount(organization_progress.router, "/api", ["organizations"])` 注册。
+`dashboard/src/pages/Organizations/index.tsx` 在当前组织 ID 与已加载组织一致时挂载
+`OrganizationProgress`，传入真实 `organizationId`、组织 owner/manager 派生的
+`canManage`，并以组织 ID 为 key 隔离切换状态。组件入口筛选不能替代后端授权。
 
 `GET /api/organizations/{organization_id}/progress?start=<epoch>&end=<epoch>`
 返回 `as_of`（读取开始时刻，不是状态同步时间）、半开创建时间窗口、

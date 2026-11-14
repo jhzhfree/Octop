@@ -1,16 +1,10 @@
 # 人工交付摘要验收界面
 
-独立组件 `dashboard/src/pages/Organizations/DeliveryAcceptance.tsx` 配合 `deliveryAcceptance.ts` 客户端。当前未接主页面，后续在成功运行条目的操作区集成：
+组件 `dashboard/src/pages/Organizations/DeliveryAcceptance.tsx` 配合 `dashboard/src/api/modules/deliveryAcceptance.ts` 客户端，已在组织主页面 `dashboard/src/pages/Organizations/index.tsx` 的运行条目中接入。
 
-```tsx
-<DeliveryAcceptance
-  currentUserId={currentUserId}
-  target={{ organizationId, runId: run.run_id }}
-  canReview={canManage && run.status === "succeeded" && run.requested_by !== currentUserId && (isAdmin || run.approved_by === currentUserId)}
-/>
-```
+页面仅在当前用户 ID 为安全整数时传入真实 `currentUser.id`，目标取自运行记录的 organization_id / run_id。入口条件为当前组织 owner/manager、运行 succeeded、非原请求者，并且当前用户是平台 admin 或原批准者。前端筛选不是授权，GET/POST 服务端仍验证当前权限；当前页面的 `canManage` 只取组织 owner/manager，不能把服务端支持平台 admin 理解为页面必然向非成员 admin 展示入口。
 
-实际字段和身份须使用现有页面的真实上下文；前端筛选不是授权，GET/POST 服务端再次验证当前权限。必须传入真实数值 currentUserId；组件内部对组织、运行、权限和用户 ID 变化强制重新挂载，销毁旧证据与待确认状态，往返切换也不恢复；未经授权者不应看到入口。组件只有显式打开才取证，不预取。
+组件内部对组织、运行、权限和用户 ID 变化强制重新挂载，销毁旧证据与待确认状态，往返切换也不恢复；未经授权者不显示入口。组件只有显式打开才取证，不预取。以上为代码接入状态，真实登录、用户 ACL 与浏览器流程尚不能据此声称已验收。
 
 ## 行为
 

@@ -4,7 +4,7 @@
 
 执行 `succeeded` 仅表明 Cron/模型执行成功，不代表业务目标完成。独立验收记录缺省为 pending；人工可决定 accepted 或 changes_requested。记录不可修改，一个 run 仅一条记录；修订交付必须创建新 run，不自动重跑、不调用模型/工具、不写入 AKB、不改变目标完成度。
 
-本轮提供领域服务、仓储、SQLite/PostgreSQL 迁移、独立 API 路由及离线测试。主应用挂载与 UI 由整合方完成，整合契约见 delivery-acceptance-api.md；未经挂载和验收不声称用户端闭环已上线。
+当前已提供领域服务、仓储、SQLite/PostgreSQL 迁移、API 路由及离线测试。API 已挂载至主应用 `/api`，组织页面已接入人工交付摘要验收组件，接入契约见 delivery-acceptance-api.md。代码挂载不等于真实登录、用户 ACL、浏览器或 PostgreSQL 验收，不据此声称生产用户端闭环已上线。
 
 ## 接入契约
 
@@ -33,6 +33,6 @@ snapshot_sha256 绑定 run、组织、scene_version、plan_id、运行时 plan_s
 
 ## 验证
 
-仅运行 `tests/unit/scenes/test_acceptance.py` 的离线定向测试：执行成功仍 pending、自审及无证据权限 manager 拒绝、禁用/移除/降级审核人拒绝、跨组织与状态/快照变化拒绝、同请求幂等、并发一胜、审计失败回滚、证据变化/缺失拒绝、管理员审核及 changes_requested 分离语义。
+领域离线定向测试 `tests/unit/scenes/test_acceptance.py` 覆盖：执行成功仍 pending、自审及无证据权限 manager 拒绝、禁用/移除/降级审核人拒绝、跨组织与状态/快照变化拒绝、同请求幂等、并发一胜、审计失败回滚、证据变化/缺失拒绝、管理员审核及 changes_requested 分离语义。
 
-PostgreSQL 迁移提供相同约束，必须在真实 PostgreSQL 进行迁移及并发/撤权集成测试后才声称该数据库已验证；SQLite 测试不能替代 PostgreSQL 验证。五轮内可以安全交付此保守领域底座，API/UI 以及真实 PostgreSQL 的验收不可冒报。
+PostgreSQL 迁移提供相同约束，必须在真实 PostgreSQL 进行迁移及并发/撤权集成测试后才声称该数据库已验证；SQLite 测试不能替代 PostgreSQL 验证。API/UI 已完成代码整合，但真实登录、用户 ACL、浏览器以及真实 PostgreSQL 的验收不可冒报。

@@ -1,16 +1,16 @@
 # 人工交付验收 API 契约
 
-独立路由已实现，使用现有 current_user/get_server 依赖。挂载到主应用后方可通过 `/api` 使用；本轮不改 app.py/UI。
+路由已在 `src/octop/api/app.py` 注册到 `/api`，使用现有 current_user/get_server 依赖；组织页面也已接入交付摘要验收组件。此处确认的是代码整合状态，不代表真实登录、用户 ACL、浏览器或 PostgreSQL 已验收。
 
-## 主应用整合片段
+## 主应用挂载状态
 
-在 `src/octop/api/app.py` 的 router 导入列表加入 `scene_acceptance`，并在现有企业场景挂载附近加入：
+`src/octop/api/app.py` 已导入 `scene_acceptance`，并包含以下挂载：
 
 ```python
 _RouterMount(scene_acceptance.router, "/api", ["scene-acceptance"]),
 ```
 
-先应用 034 迁移。仓储直接使用 `server.services.db`，无需 RepoBundle 新字段。
+部署时仍须先应用 034 迁移。仓储直接使用 `server.services.db`，无需 RepoBundle 新字段。
 
 ## 阅读摘要
 
@@ -61,4 +61,4 @@ UI 展示“交付摘要人工验收”，提示摘要可能被截断，不代�
 
 ## 验证边界
 
-定向 API 测试使用最小 FastAPI + HTTPX ASGI、真实 SQLite 验收事务、替换为离线证据源；覆盖服务端取证、幂等、冲突、禁止额外字段/伪造权限、哈希过期、自审、无证据权限管理者、跨组织拒绝。当前认证依赖在测试中覆盖为固定身份，完整登录/主应用挂载须在整合后另测。不涉及外部服务、模型或遥测。
+定向 API 测试使用最小 FastAPI + HTTPX ASGI、真实 SQLite 验收事务、替换为离线证据源；覆盖服务端取证、幂等、冲突、禁止额外字段/伪造权限、哈希过期、自审、无证据权限管理者、跨组织拒绝。当前认证依赖在测试中覆盖为固定身份，主应用挂载已通过代码核对；完整登录、实际用户 ACL 和浏览器端到端行为仍须单独验收。不涉及外部服务、模型或遥测。
