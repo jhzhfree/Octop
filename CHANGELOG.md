@@ -9,6 +9,7 @@
 - Separate connection identity management from resource mounts; version resource checks, preserve concurrent edits, and support resumable key rotation (schema 031).
 
 ### 新增
+- 组织运行待办：按待审批、失败、待验收和需修改分类分页查看运行编号与时间，提供下一步提示，不自动执行或审批
 - 企业场景定义不可变版本、并发编辑冲突检测、运行版本引用及版本历史查看
 - 企业工作助手专家模板与场景编排技能：提供设备巡检、故障报告、技术调研、培训和进度跟踪样例；场景 YAML 为配置参考，运行仍使用现有 Cron 和 MCP/Connector 能力
 - 仓库工程开发规范文档，覆盖模块边界、数据库/API、权限安全、Agent、前端和测试门禁

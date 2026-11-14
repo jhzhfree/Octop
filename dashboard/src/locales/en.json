@@ -7345,5 +7345,28 @@
     "confirm": "Confirm change",
     "cancel": "Cancel",
     "search": "Filter sources by name or ID"
+  },
+  "runQueue": {
+    "title": "Organization run follow-ups",
+    "notice": "Read-only queue, newest inserted runs first. State may lag. No automatic retry, approval, acceptance, or goal completion.",
+    "forbidden": "Manager permission is required to read the follow-up queue.",
+    "category": "Follow-up category",
+    "refresh": "Refresh first page",
+    "next": "Next page",
+    "empty": "No matching runs.",
+    "error": "Queue unavailable: access denied or service unavailable.",
+    "categories": {
+      "awaiting_approval": "Awaiting approval",
+      "failed": "Execution failed",
+      "unreviewed_success": "Awaiting human acceptance",
+      "changes_requested": "Delivery changes requested"
+    },
+    "actions": {
+      "awaiting_approval": "Next: review the request in its scene run record. Requesters cannot approve their own request.",
+      "failed": "Next: inspect the failure in its scene run record before deciding whether to request another run.",
+      "unreviewed_success": "Next: open human acceptance in its scene run record and review delivery evidence.",
+      "changes_requested": "Next: check the goal requirements, revise an editable plan or create a new plan, then request a new run. The previous acceptance record remains unchanged."
+    },
+    "asOf": "Read at"
   }
 }

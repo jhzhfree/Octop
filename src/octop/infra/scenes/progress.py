@@ -37,3 +37,28 @@ class OrganizationProgressService:
             "external_systems_verified": False,
             **self.repo.summarize(organization_id, self.user_id, start, end),
         }
+
+    def queue(
+        self, organization_id: str, *, category: str, limit: int = 20, before: int | None = None
+    ) -> dict[str, Any]:
+        if category not in {
+            "awaiting_approval",
+            "failed",
+            "unreviewed_success",
+            "changes_requested",
+        }:
+            raise ValueError("invalid queue category")
+        if type(limit) is not int or not 1 <= limit <= 50:
+            raise ValueError("limit must be between 1 and 50")
+        if before is not None and (type(before) is not int or not 1 <= before <= 2**63 - 1):
+            raise ValueError("invalid queue cursor")
+        return {
+            "organization_id": organization_id,
+            "category": category,
+            "as_of": int(time.time()),
+            "execution_authorized": False,
+            "persisted_state_may_lag": True,
+            **self.repo.queue(
+                organization_id, self.user_id, category=category, limit=limit, before=before
+            ),
+        }

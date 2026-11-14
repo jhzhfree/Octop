@@ -78,3 +78,41 @@ class OrganizationProgressRepo:
             "counts": {"execution": execution, "delivery": delivery},
             "inconsistent_records": inconsistent,
         }
+
+    def queue(
+        self, organization_id: str, user_id: int, *, category: str, limit: int, before: int | None
+    ) -> dict[str, Any]:
+        # Predicates are selected by the service, never interpolated from a request.
+        predicates = {
+            "awaiting_approval": "r.status='awaiting_approval' AND a.decision IS NULL",
+            "failed": "r.status='failed' AND a.decision IS NULL",
+            "unreviewed_success": "r.status='succeeded' AND a.decision IS NULL",
+            "changes_requested": "r.status='succeeded' AND a.decision='changes_requested'",
+        }
+        predicate = predicates[category]
+        with self.db.connect() as conn:
+            self._authorize(conn, organization_id, user_id)
+            rows = conn.execute(
+                "SELECT r.id,r.run_id,r.status,r.created_at,a.decision "
+                "FROM enterprise_scene_runs r LEFT JOIN scene_run_acceptances a "
+                "ON a.run_id=r.run_id AND a.organization_id=r.organization_id "
+                "WHERE r.organization_id=? AND "
+                + predicate
+                + (" AND r.id<?" if before is not None else "")
+                + " ORDER BY r.id DESC LIMIT ?",
+                (organization_id, *((before,) if before is not None else ()), limit + 1),
+            ).fetchall()
+            self._authorize(conn, organization_id, user_id)
+        page = rows[:limit]
+        return {
+            "items": [
+                {
+                    "run_id": row["run_id"],
+                    "status": row["status"],
+                    "created_at": row["created_at"],
+                    "decision": row["decision"],
+                }
+                for row in page
+            ],
+            "next_before": int(page[-1]["id"]) if len(rows) > limit else None,
+        }

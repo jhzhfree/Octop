@@ -59,6 +59,7 @@ import PlanReadiness from "./PlanReadiness";
 import ServerPlanReadiness from "./ServerPlanReadiness";
 import DeliveryAcceptance from "./DeliveryAcceptance";
 import OrganizationProgress from "./OrganizationProgress";
+import RunQueue from "./RunQueue";
 import PlanningDialogue from "./PlanningDialogue";
 import KnowledgeMappings from "./KnowledgeMappings";
 
@@ -1648,6 +1649,7 @@ export default function OrganizationsPage() {
 
         {organizationId && chart?.organization.organization_id === organizationId && (
           <Card>
+            <RunQueue organizationId={organizationId} canManage={canManage} />
             <OrganizationProgress
               key={organizationId}
               organizationId={organizationId}

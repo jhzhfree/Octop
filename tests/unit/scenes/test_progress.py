@@ -190,3 +190,113 @@ def test_huge_timestamp_rejected_before_sql(setup):
     _, _, service = setup
     with pytest.raises(ValueError):
         service.inspect("o", start=10**30, end=10**30 + 1)
+
+
+def test_queue_categories_and_no_side_effects(setup):
+    db, _, service = setup
+    expected = {
+        "awaiting_approval": ["r6"],
+        "failed": ["r5"],
+        "changes_requested": ["r2"],
+        "unreviewed_success": ["end", "old", "r3"],
+    }
+    for category, ids in expected.items():
+        data = service.queue("o", category=category)
+        assert [item["run_id"] for item in data["items"]] == ids
+        assert data["execution_authorized"] is False
+        assert data["next_before"] is None
+        assert all(
+            set(item) == {"run_id", "status", "created_at", "decision"} for item in data["items"]
+        )
+    with db.connect() as c:
+        assert c.execute("SELECT COUNT(*) FROM enterprise_scene_runs").fetchone()[0] == 10
+
+
+def test_queue_keyset_pagination_and_new_insert(setup):
+    db, _, service = setup
+    first = service.queue("o", category="unreviewed_success", limit=1)
+    assert first["items"][0]["run_id"] == "end"
+    with db.connect() as c:
+        c.execute("INSERT INTO enterprise_scene_runs VALUES(11,'new','o','succeeded',NULL,110)")
+    second = service.queue("o", category="unreviewed_success", limit=1, before=first["next_before"])
+    third = service.queue("o", category="unreviewed_success", limit=1, before=second["next_before"])
+    assert second["items"][0]["run_id"] == "old"
+    assert third["items"][0]["run_id"] == "r3"
+    assert third["next_before"] is None
+
+
+def test_queue_org_and_current_membership(setup):
+    db, repo, service = setup
+    with pytest.raises(ProgressAccessError):
+        service.queue("other", category="failed")
+    with pytest.raises(ProgressAccessError):
+        OrganizationProgressService(repo, 2).queue("o", category="failed")
+    with db.connect() as c:
+        c.execute("DELETE FROM organization_members WHERE user_id=1")
+    with pytest.raises(ProgressAccessError):
+        service.queue("o", category="failed")
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"category": "accepted"},
+        {"category": "failed", "limit": 51},
+        {"category": "failed", "limit": True},
+        {"category": "failed", "before": 0},
+        {"category": "failed", "before": 2**63},
+    ],
+)
+def test_queue_invalid_arguments(setup, kwargs):
+    with pytest.raises(ValueError):
+        setup[2].queue("o", **kwargs)
+
+
+def test_queue_rechecks_disabled_admin_and_revocation(setup, monkeypatch):
+    db, repo, service = setup
+    with db.connect() as c:
+        c.execute("UPDATE users SET disabled=1 WHERE id=3")
+    with pytest.raises(ProgressAccessError):
+        OrganizationProgressService(repo, 3).queue("o", category="failed")
+    original = repo._authorize
+    calls = 0
+
+    def authorize(conn, org, user):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            conn.execute("DELETE FROM organization_members WHERE user_id=1")
+        original(conn, org, user)
+
+    monkeypatch.setattr(repo, "_authorize", authorize)
+    with pytest.raises(ProgressAccessError):
+        service.queue("o", category="failed")
+
+
+def test_queue_http_contract(setup):
+    from types import SimpleNamespace
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from octop.api.deps import current_user, get_server
+    from octop.api.routers.organization_progress import router
+
+    db, _, _ = setup
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[current_user] = lambda: SimpleNamespace(id=1)
+    app.dependency_overrides[get_server] = lambda: SimpleNamespace(services=SimpleNamespace(db=db))
+    with TestClient(app) as client:
+        path = "/organizations/o/run-queue?category=unreviewed_success"
+        response = client.get(path + "&limit=1")
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == "no-store"
+        assert response.json()["items"][0]["run_id"] == "end"
+        assert client.get(path + "&before=10&limit=1").json()["items"][0]["run_id"] == "old"
+        assert client.get(path.replace("/o/", "/other/")).status_code == 403
+        for suffix in ["&limit=51", "&before=0", "&before=9223372036854775808"]:
+            assert client.get(path + suffix).status_code == 422
+        assert client.get(path.replace("unreviewed_success", "accepted")).status_code == 422
+        app.dependency_overrides[get_server] = lambda: SimpleNamespace(services=None)
+        assert client.get(path).status_code == 503
