@@ -13,6 +13,9 @@ from typing import Any
 
 from octop.infra.knowledge.akb_identity import OctopIdentity, issue_assertion
 from octop.infra.knowledge.external.adapters._auth import auth_headers
+from octop.infra.knowledge.external.authorization_capabilities import (
+    parse_akb_authorization_capabilities,
+)
 from octop.infra.knowledge.external.http import (
     drop_api_prefix,
     post_json,
@@ -310,6 +313,7 @@ async def probe(spec: ExternalSourceSpec, creds: dict[str, Any]) -> SourceProbeR
             protocol_version=negotiated,
             server_info=server_info,
             capabilities=capabilities,
+            authorization_support=parse_akb_authorization_capabilities(capabilities),
             instructions=instructions,
         )
     refs: list[dict[str, str]] = []
@@ -328,5 +332,6 @@ async def probe(spec: ExternalSourceSpec, creds: dict[str, Any]) -> SourceProbeR
         protocol_version=negotiated,
         server_info=server_info,
         capabilities=capabilities,
+        authorization_support=parse_akb_authorization_capabilities(capabilities),
         instructions=instructions,
     )

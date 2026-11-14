@@ -693,6 +693,7 @@ class ExternalKnowledgeService:
             "protocol_version": result.protocol_version,
             "server_info": result.server_info,
             "capabilities": result.capabilities,
+            "authorization_support": result.authorization_support,
             "instructions": result.instructions,
         }
 

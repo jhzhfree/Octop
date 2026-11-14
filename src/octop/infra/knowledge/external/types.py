@@ -84,6 +84,8 @@ class SourceProbeResult:
     # What each discovered tool accepts. The edit form renders a tool's own
     # schema instead of guessing which arguments an arbitrary MCP tool takes.
     tool_schemas: list[dict[str, Any]] = field(default_factory=list)
+    # Diagnostic only; never grants retrieval or verifies current-user ACL.
+    authorization_support: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
