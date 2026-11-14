@@ -42,6 +42,7 @@ vi.mock("../../api/modules/organizations", () => ({
     digitalWorkers: vi.fn(),
     digitalWorkerMemoryCandidates: vi.fn(),
     digitalWorkerGoals: vi.fn(),
+    updateDigitalWorkerGoal: vi.fn(),
     digitalWorkerCapabilityProposals: vi.fn(),
     digitalWorkerAuthorizedResources: vi.fn(),
     digitalWorkerPlans: vi.fn(),
@@ -615,5 +616,49 @@ describe("organization progress integration", { timeout: 15000 }, () => {
       screen.queryByRole("button", { name: "Load progress" }),
     ).not.toBeInTheDocument();
     expect(organizationProgressApi.read).not.toHaveBeenCalled();
+  });
+});
+
+describe("goal completion integration", { timeout: 15000 }, () => {
+  it("requires confirmation and updates the selected goal so active planning disappears", async () => {
+    vi.mocked(organizationsApi.updateDigitalWorkerGoal).mockResolvedValue({
+      goal_id: "goal1",
+      worker_id: "worker1",
+      title: "Weekly market review",
+      description: "",
+      success_criteria: "Three cited sources",
+      status: "completed",
+      period_start: null,
+      period_end: null,
+      created_by: 1,
+      created_at: 0,
+      updated_at: 1,
+    });
+    const user = await openPlans();
+    await user.click(
+      screen.getByRole("button", { name: en.organizations.completeGoal }),
+    );
+    expect(organizationsApi.updateDigitalWorkerGoal).not.toHaveBeenCalled();
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Three cited sources")).toBeInTheDocument();
+    await user.click(
+      within(dialog).getByRole("button", { name: en.goalLifecycle.confirm }),
+    );
+    await waitFor(() =>
+      expect(organizationsApi.updateDigitalWorkerGoal).toHaveBeenCalledWith(
+        "org1",
+        "worker1",
+        "goal1",
+        { status: "completed" },
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: en.organizations.completeGoal }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByRole("button", { name: en.organizations.addPlan }),
+    ).not.toBeInTheDocument();
   });
 });

@@ -7368,5 +7368,24 @@
       "changes_requested": "Next: check the goal requirements, revise an editable plan or create a new plan, then request a new run. The previous acceptance record remains unchanged."
     },
     "asOf": "Read at"
+  },
+  "runDetails": {
+    "title": "Run details",
+    "notice": "Persisted metadata only; status may lag. Opening details does not synchronize, start, retry, approve or accept work. No prompts, evidence or error content are returned.",
+    "error": "Unable to load this run. Close and reopen to retry.",
+    "run": "Run ID",
+    "scene": "Scene",
+    "status": "Run status",
+    "created": "Created",
+    "worker": "Digital worker",
+    "goal": "Goal",
+    "plan": "Plan ID"
+  },
+  "goalLifecycle": {
+    "confirmTitle": "Confirm goal completion",
+    "confirm": "Mark completed",
+    "noCriteria": "No success criteria recorded",
+    "notice": "Check the success criteria before completing this goal. This records your decision; it does not verify deliveries, stop running tasks or write knowledge.",
+    "failed": "The status could not be updated. Please retry."
   }
 }

@@ -116,3 +116,17 @@ class OrganizationProgressRepo:
             ],
             "next_before": int(page[-1]["id"]) if len(rows) > limit else None,
         }
+
+    def detail(self, organization_id: str, user_id: int, run_id: str) -> dict[str, Any] | None:
+        with self.db.connect() as conn:
+            self._authorize(conn, organization_id, user_id)
+            row = conn.execute(
+                "SELECT r.run_id,r.organization_id,r.scene_id,r.scene_name,r.scene_version,"
+                "r.plan_id,r.status,r.created_at,r.updated_at,a.decision "
+                "FROM enterprise_scene_runs r LEFT JOIN scene_run_acceptances a "
+                "ON a.run_id=r.run_id AND a.organization_id=r.organization_id "
+                "WHERE r.organization_id=? AND r.run_id=?",
+                (organization_id, run_id),
+            ).fetchone()
+            self._authorize(conn, organization_id, user_id)
+        return dict(row) if row is not None else None

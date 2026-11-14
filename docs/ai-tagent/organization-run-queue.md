@@ -30,3 +30,27 @@ UI 切换组织、权限或分类会清空旧结果并丢弃旧响应；重复�
 后续产品项：目标完成确认、目标选中状态同步、待办直接定位到场景运行详情。当前不为这些后续项扩大权限或启用外部能力。
 
 本轮执行结果：`uv run --frozen pytest tests/unit/scenes/test_progress.py -q` 30 通过；`tests/unit/i18n` 80 通过；改动的 3 个源文件定向 mypy 通过；Ruff/ESLint/Prettier 检查通过。RunQueue、OrganizationProgress、DeliveryAcceptance 与 Organizations.planning 四个前端文件覆盖 42 项，初次发现重复无权限文案导致单一文本选择器失败，改用明确队列文案后该文件 12 项重跑全部通过，其余文件已通过。jsdom 仍输出现有伪元素样式支持警告，不等于浏览器验证。
+
+## Follow-up: minimal details and explicit goal completion
+
+Clicking a run number now opens persisted metadata through
+`GET /organizations/{organization_id}/run-queue/{run_id}`. This uses the same
+current manager/owner or platform-admin check as the queue, before and after
+reading. SQL and response schemas exclude prompts, error text, requester/reviewer
+identities, evidence and full plan snapshots. Unlike the legacy scene-run detail
+route, this route does not reconcile Cron status. A queued row remains queued;
+refreshing may still show lagging persisted state. It does not approve or execute
+work. No detail requests occur until an explicit click; closing or switching
+organization discards delayed results.
+
+Active goal completion now shows the target and success criteria for confirmation.
+Cancel leaves the goal unchanged; repeated submission is suppressed and failed
+updates can be retried. The successful API result updates both the list and the
+selected goal, removing active planning controls. Goal/plan reads and scene-run
+polling discard old-context responses. Organization/worker scope uses a monotonic
+generation, including A → B → A switching.
+
+This is UI confirmation, not automated verification of success criteria. It does
+not cancel in-flight tasks or write knowledge. Cross-client goal status races are
+not solved by this change; the existing backend has no goal-status CAS contract.
+No real database, browser E2E or external service integration is claimed.

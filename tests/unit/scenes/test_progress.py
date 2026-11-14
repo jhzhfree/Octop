@@ -300,3 +300,80 @@ def test_queue_http_contract(setup):
         assert client.get(path.replace("unreviewed_success", "accepted")).status_code == 422
         app.dependency_overrides[get_server] = lambda: SimpleNamespace(services=None)
         assert client.get(path).status_code == 503
+
+
+def test_minimal_detail_http_contract(setup):
+    from types import SimpleNamespace
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from octop.api.deps import current_user, get_server
+    from octop.api.routers.organization_progress import router
+
+    db, _, service = setup
+    with db.connect() as c:
+        for column, kind, value in [
+            ("scene_id", "TEXT", "scene"),
+            ("scene_name", "TEXT", "Example"),
+            ("scene_version", "INTEGER", 1),
+            ("updated_at", "INTEGER", 104),
+            ("prompt_snapshot", "TEXT", "PRIVATE PROMPT"),
+            ("error_summary", "TEXT", "PRIVATE ERROR"),
+        ]:
+            c.execute(f"ALTER TABLE enterprise_scene_runs ADD COLUMN {column} {kind}")
+            c.execute(f"UPDATE enterprise_scene_runs SET {column}=?", (value,))
+    assert service.detail("o", "other") is None
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[current_user] = lambda: SimpleNamespace(id=1)
+    app.dependency_overrides[get_server] = lambda: SimpleNamespace(services=SimpleNamespace(db=db))
+    with TestClient(app) as client:
+        response = client.get("/organizations/o/run-queue/r4")
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == "no-store"
+        assert response.json()["status"] == "queued"
+        assert set(response.json()) == {
+            "run_id",
+            "organization_id",
+            "scene_id",
+            "scene_name",
+            "scene_version",
+            "plan_id",
+            "status",
+            "created_at",
+            "updated_at",
+            "decision",
+            "as_of",
+            "persisted_state_may_lag",
+        }
+        assert "PRIVATE" not in response.text
+        assert client.get("/organizations/o/run-queue/other").status_code == 404
+        assert client.get("/organizations/other/run-queue/other").status_code == 403
+        app.dependency_overrides[current_user] = lambda: SimpleNamespace(id=2)
+        assert client.get("/organizations/o/run-queue/r4").status_code == 403
+        with db.connect() as c:
+            c.execute("UPDATE users SET disabled=1 WHERE id=3")
+        app.dependency_overrides[current_user] = lambda: SimpleNamespace(id=3)
+        assert client.get("/organizations/o/run-queue/r4").status_code == 403
+
+
+def test_detail_rechecks_revocation(setup, monkeypatch):
+    _, repo, service = setup
+    original = repo._authorize
+    calls = 0
+
+    def authorize(conn, org, user):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            conn.execute("DELETE FROM organization_members WHERE user_id=1")
+        original(conn, org, user)
+
+    # Return no matching row without needing the additional production columns.
+    with setup[0].connect() as c:
+        for column in ["scene_id", "scene_name", "scene_version", "updated_at"]:
+            c.execute(f"ALTER TABLE enterprise_scene_runs ADD COLUMN {column} TEXT")
+    monkeypatch.setattr(repo, "_authorize", authorize)
+    with pytest.raises(ProgressAccessError):
+        service.detail("o", "missing")

@@ -31,7 +31,7 @@ import {
   message,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useServerTimezone } from "../../hooks/useServerTimezone";
 import { useCurrentUser } from "../../hooks/useCurrentUser";
@@ -60,6 +60,7 @@ import ServerPlanReadiness from "./ServerPlanReadiness";
 import DeliveryAcceptance from "./DeliveryAcceptance";
 import OrganizationProgress from "./OrganizationProgress";
 import RunQueue from "./RunQueue";
+import GoalStatusAction from "./GoalStatusAction";
 import PlanningDialogue from "./PlanningDialogue";
 import KnowledgeMappings from "./KnowledgeMappings";
 
@@ -141,11 +142,29 @@ export default function OrganizationsPage() {
   const selectedWorkerId = selectedWorker?.worker_id;
   const selectedGoalId = selectedGoal?.goal_id;
 
+  const loadSequence = useRef(0);
+  const context = useRef({ key: "", generation: 0 });
+  const contextKey = `${organizationId}:${selectedWorkerId}:${chart?.organization.member_role}:${currentUser?.id}`;
+  if (context.current.key !== contextKey)
+    context.current = {
+      key: contextKey,
+      generation: context.current.generation + 1,
+    };
+  useEffect(
+    () => () => {
+      loadSequence.current++;
+      context.current.generation++;
+    },
+    [],
+  );
+
   const load = useCallback(
     async (preferredId?: string) => {
+      const seq = ++loadSequence.current;
       setLoading(true);
       try {
         const rows = await organizationsApi.list();
+        if (seq !== loadSequence.current) return;
         setOrganizations(rows);
         const selected =
           rows.find(
@@ -160,6 +179,7 @@ export default function OrganizationsPage() {
               organizationsApi.sceneRuns(selected.organization_id),
               organizationsApi.digitalWorkers(selected.organization_id),
             ]);
+          if (seq !== loadSequence.current) return;
           setChart(nextChart);
           setScenes(nextScenes);
           setSceneRuns(nextRuns);
@@ -180,9 +200,10 @@ export default function OrganizationsPage() {
           setWorkerPlans([]);
         }
       } catch {
-        message.error(t("organizations.loadFailed"));
+        if (seq === loadSequence.current)
+          message.error(t("organizations.loadFailed"));
       } finally {
-        setLoading(false);
+        if (seq === loadSequence.current) setLoading(false);
       }
     },
     [organizationId, t],
@@ -193,46 +214,70 @@ export default function OrganizationsPage() {
   }, [load]);
   useEffect(() => {
     if (!organizationId) return;
+    let active = true;
     const timer = window.setInterval(() => {
       void organizationsApi
         .sceneRuns(organizationId)
-        .then(setSceneRuns)
+        .then((rows) => {
+          if (active) setSceneRuns(rows);
+        })
         .catch(() => undefined);
     }, 5000);
-    return () => window.clearInterval(timer);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
   }, [organizationId]);
   useEffect(() => {
-    if (!organizationId || !selectedWorkerId) {
-      setWorkerGoals([]);
-      setCapabilityProposals([]);
-      setAuthorizedWorkerResources({ skills: [], knowledge_bases: [] });
-      return;
-    }
+    let active = true;
+    setWorkerGoals([]);
+    setSelectedGoal(undefined);
+    setWorkerPlans([]);
+    setCapabilityProposals([]);
+    setAuthorizedWorkerResources({ skills: [], knowledge_bases: [] });
+    if (!organizationId || !selectedWorkerId) return;
     setCapabilityProposalRunId(undefined);
     void organizationsApi
       .digitalWorkerGoals(organizationId, selectedWorkerId)
-      .then(setWorkerGoals)
-      .catch(() => message.error(t("organizations.operationFailed")));
+      .then((rows) => {
+        if (active) setWorkerGoals(rows);
+      })
+      .catch(() => {
+        if (active) message.error(t("organizations.operationFailed"));
+      });
     void organizationsApi
       .digitalWorkerCapabilityProposals(organizationId, selectedWorkerId)
-      .then(setCapabilityProposals)
-      .catch(() => message.error(t("organizations.operationFailed")));
+      .then((rows) => {
+        if (active) setCapabilityProposals(rows);
+      })
+      .catch(() => {
+        if (active) message.error(t("organizations.operationFailed"));
+      });
     void organizationsApi
       .digitalWorkerAuthorizedResources(organizationId, selectedWorkerId)
-      .then(setAuthorizedWorkerResources)
-      .catch(() =>
-        setAuthorizedWorkerResources({ skills: [], knowledge_bases: [] }),
-      );
+      .then((rows) => {
+        if (active) setAuthorizedWorkerResources(rows);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
   }, [organizationId, selectedWorkerId, t]);
   useEffect(() => {
-    if (!organizationId || !selectedWorkerId || !selectedGoalId) {
-      setWorkerPlans([]);
-      return;
-    }
+    let active = true;
+    setWorkerPlans([]);
+    if (!organizationId || !selectedWorkerId || !selectedGoalId) return;
     void organizationsApi
       .digitalWorkerPlans(organizationId, selectedWorkerId, selectedGoalId)
-      .then(setWorkerPlans)
-      .catch(() => message.error(t("organizations.operationFailed")));
+      .then((rows) => {
+        if (active) setWorkerPlans(rows);
+      })
+      .catch(() => {
+        if (active) message.error(t("organizations.operationFailed"));
+      });
+    return () => {
+      active = false;
+    };
   }, [organizationId, selectedWorkerId, selectedGoalId, t]);
 
   const canManage =
@@ -440,24 +485,22 @@ export default function OrganizationsPage() {
   }
 
   async function changeGoalStatus(goal: DigitalWorkerGoal) {
-    if (!organizationId || !selectedWorker) return;
-    const status = goal.status === "draft" ? "active" : "completed";
-    try {
-      await organizationsApi.updateDigitalWorkerGoal(
-        organizationId,
-        selectedWorker.worker_id,
-        goal.goal_id,
-        { status },
-      );
-      setWorkerGoals(
-        await organizationsApi.digitalWorkerGoals(
-          organizationId,
-          selectedWorker.worker_id,
-        ),
-      );
-    } catch {
-      message.error(t("organizations.operationFailed"));
-    }
+    if (!organizationId || !selectedWorker || !canManage)
+      throw new Error("Unavailable goal");
+    const scope = context.current.generation;
+    const updated = await organizationsApi.updateDigitalWorkerGoal(
+      organizationId,
+      selectedWorker.worker_id,
+      goal.goal_id,
+      { status: goal.status === "draft" ? "active" : "completed" },
+    );
+    if (scope !== context.current.generation) return;
+    setWorkerGoals((rows) =>
+      rows.map((row) => (row.goal_id === goal.goal_id ? updated : row)),
+    );
+    setSelectedGoal((current) =>
+      current?.goal_id === goal.goal_id ? updated : current,
+    );
   }
 
   function openPlanModal(plan?: DigitalWorkerPlan) {
@@ -1239,16 +1282,13 @@ export default function OrganizationsPage() {
           >
             {t("organizations.managePlans")}
           </Button>
-          {canManage &&
-            (goal.status === "draft" || goal.status === "active") && (
-              <Button onClick={() => void changeGoalStatus(goal)}>
-                {t(
-                  goal.status === "draft"
-                    ? "organizations.activateGoal"
-                    : "organizations.completeGoal",
-                )}
-              </Button>
-            )}
+          {canManage && (
+            <GoalStatusAction
+              key={`${organizationId}:${selectedWorkerId}:${goal.goal_id}:${goal.status}`}
+              goal={goal}
+              onChange={() => changeGoalStatus(goal)}
+            />
+          )}
         </Space>
       ),
     },
@@ -1567,6 +1607,8 @@ export default function OrganizationsPage() {
                 label: item.name,
               }))}
               onChange={(value) => {
+                loadSequence.current++;
+                setChart(undefined);
                 setOrganizationId(value);
                 setSelectedWorker(undefined);
                 setSelectedGoal(undefined);
@@ -1647,16 +1689,17 @@ export default function OrganizationsPage() {
           </Space>
         </Card>
 
-        {organizationId && chart?.organization.organization_id === organizationId && (
-          <Card>
-            <RunQueue organizationId={organizationId} canManage={canManage} />
-            <OrganizationProgress
-              key={organizationId}
-              organizationId={organizationId}
-              canManage={canManage}
-            />
-          </Card>
-        )}
+        {organizationId &&
+          chart?.organization.organization_id === organizationId && (
+            <Card>
+              <RunQueue organizationId={organizationId} canManage={canManage} />
+              <OrganizationProgress
+                key={organizationId}
+                organizationId={organizationId}
+                canManage={canManage}
+              />
+            </Card>
+          )}
 
         {loading ? (
           <Spin />
@@ -2152,7 +2195,8 @@ export default function OrganizationsPage() {
                                 {canManage && (
                                   <ServerPlanReadiness
                                     target={{
-                                      organizationId: selectedWorker.organization_id,
+                                      organizationId:
+                                        selectedWorker.organization_id,
                                       workerId: selectedWorker.worker_id,
                                       goalId: selectedGoal.goal_id,
                                       planId: plan.plan_id,
@@ -2302,22 +2346,23 @@ export default function OrganizationsPage() {
                                   {run.error_summary}
                                 </Typography.Paragraph>
                               )}
-                              {currentUser && Number.isSafeInteger(currentUser.id) && (
-                                <DeliveryAcceptance
-                                  currentUserId={currentUser.id}
-                                  target={{
-                                    organizationId: run.organization_id,
-                                    runId: run.run_id,
-                                  }}
-                                  canReview={
-                                    canManage &&
-                                    run.status === "succeeded" &&
-                                    run.requested_by !== currentUser.id &&
-                                    (currentUser.role === "admin" ||
-                                      run.approved_by === currentUser.id)
-                                  }
-                                />
-                              )}
+                              {currentUser &&
+                                Number.isSafeInteger(currentUser.id) && (
+                                  <DeliveryAcceptance
+                                    currentUserId={currentUser.id}
+                                    target={{
+                                      organizationId: run.organization_id,
+                                      runId: run.run_id,
+                                    }}
+                                    canReview={
+                                      canManage &&
+                                      run.status === "succeeded" &&
+                                      run.requested_by !== currentUser.id &&
+                                      (currentUser.role === "admin" ||
+                                        run.approved_by === currentUser.id)
+                                    }
+                                  />
+                                )}
                               {run.status === "succeeded" &&
                                 (currentUser?.role === "admin" ||
                                   currentUser?.id === run.requested_by ||

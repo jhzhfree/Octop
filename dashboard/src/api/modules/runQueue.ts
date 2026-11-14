@@ -57,7 +57,28 @@ export function validRunQueue(
     )
   );
 }
+export interface RunQueueDetail {
+  organization_id: string;
+  run_id: string;
+  scene_id: string;
+  scene_name: string;
+  scene_version: number;
+  plan_id: string | null;
+  status: "awaiting_approval" | "rejected" | "queued" | "succeeded" | "failed";
+  created_at: number;
+  updated_at: number;
+  decision: "accepted" | "changes_requested" | null;
+  as_of: number;
+  persisted_state_may_lag: true;
+}
 export const runQueueApi = {
+  detail: (org: string, runId: string) =>
+    request<RunQueueDetail>(
+      `/organizations/${encodeURIComponent(org)}/run-queue/${encodeURIComponent(
+        runId,
+      )}`,
+      { cache: "no-store" },
+    ),
   read: (org: string, category: QueueCategory, before?: number) =>
     request<RunQueue>(
       `/organizations/${encodeURIComponent(

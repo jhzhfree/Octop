@@ -133,3 +133,47 @@ def organization_run_queue(
         raise HTTPException(
             status_code=422, detail=str(exc), headers={"Cache-Control": "no-store"}
         ) from exc
+
+
+class RunQueueDetail(BaseModel):
+    run_id: str
+    organization_id: str
+    scene_id: str
+    scene_name: str
+    scene_version: int
+    plan_id: str | None
+    status: Literal["awaiting_approval", "rejected", "queued", "succeeded", "failed"]
+    created_at: int
+    updated_at: int
+    decision: Literal["accepted", "changes_requested"] | None
+    as_of: int
+    persisted_state_may_lag: Literal[True] = True
+
+
+@router.get(
+    "/organizations/{organization_id}/run-queue/{run_id}",
+    response_model=RunQueueDetail,
+    summary="Read minimal persisted run metadata for organization managers",
+    description="No prompts, errors, identities, evidence or snapshots. Does not reconcile or dispatch runs.",
+)
+def organization_run_detail(
+    organization_id: str,
+    run_id: str,
+    response: Response,
+    user: Any = Depends(current_user),
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    response.headers["Cache-Control"] = "no-store"
+    headers = {"Cache-Control": "no-store"}
+    if getattr(server, "services", None) is None:
+        raise HTTPException(status_code=503, detail="database is not ready", headers=headers)
+    service = OrganizationProgressService(OrganizationProgressRepo(server.services.db), user.id)
+    try:
+        result = service.detail(organization_id, run_id)
+    except ProgressAccessError as exc:
+        raise HTTPException(
+            status_code=403, detail="organization manager access required", headers=headers
+        ) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="run not found", headers=headers)
+    return result

@@ -1,3 +1,4 @@
+import RunDetails from "./RunDetails";
 import { useEffect, useRef, useState } from "react";
 import { Alert, Button, Space, Typography } from "antd";
 import { useServerTimezone } from "../../hooks/useServerTimezone";
@@ -31,6 +32,7 @@ function QueueSession({
 }) {
   const { t } = useTranslation();
   const timeZone = useServerTimezone();
+  const [detailRun, setDetailRun] = useState<string>();
   const [category, setCategory] = useState<QueueCategory>("unreviewed_success");
   const [data, setData] = useState<Queue>();
   const [loading, setLoading] = useState(false);
@@ -66,6 +68,14 @@ function QueueSession({
   };
   return (
     <Space direction="vertical">
+      {canManage && detailRun && (
+        <RunDetails
+          key={`${organizationId}:${detailRun}`}
+          organizationId={organizationId}
+          runId={detailRun}
+          onClose={() => setDetailRun(undefined)}
+        />
+      )}
       <Typography.Title level={5}>{t("runQueue.title")}</Typography.Title>
       <Alert type="info" message={t("runQueue.notice")} />
       {!canManage ? (
@@ -76,6 +86,7 @@ function QueueSession({
             aria-label={t("runQueue.category")}
             value={category}
             onChange={(event) => {
+              setDetailRun(undefined);
               sequence.current++;
               busy.current = false;
               setLoading(false);
@@ -109,8 +120,10 @@ function QueueSession({
                 <ul>
                   {data.items.map((item) => (
                     <li key={item.run_id}>
-                      <code>{item.run_id}</code> ·{" "}
-                      {t(`runQueue.categories.${category}`)} ·{" "}
+                      <Button onClick={() => setDetailRun(item.run_id)}>
+                        {item.run_id}
+                      </Button>{" "}
+                      · {t(`runQueue.categories.${category}`)} ·{" "}
                       {formatServerDateTime(item.created_at, timeZone)}
                     </li>
                   ))}

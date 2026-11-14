@@ -62,3 +62,9 @@ class OrganizationProgressService:
                 organization_id, self.user_id, category=category, limit=limit, before=before
             ),
         }
+
+    def detail(self, organization_id: str, run_id: str) -> dict[str, Any] | None:
+        row = self.repo.detail(organization_id, self.user_id, run_id)
+        if row is None:
+            return None
+        return {**row, "as_of": int(time.time()), "persisted_state_may_lag": True}
