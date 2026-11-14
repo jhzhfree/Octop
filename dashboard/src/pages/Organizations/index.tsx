@@ -56,6 +56,7 @@ import {
 
 import DigitalTwinPlanning from "./DigitalTwinPlanning";
 import PlanReadiness from "./PlanReadiness";
+import ServerPlanReadiness from "./ServerPlanReadiness";
 import PlanningDialogue from "./PlanningDialogue";
 import KnowledgeMappings from "./KnowledgeMappings";
 
@@ -2134,6 +2135,18 @@ export default function OrganizationsPage() {
                                   scenes={scenes}
                                   runs={sceneRuns}
                                 />
+                                {canManage && (
+                                  <ServerPlanReadiness
+                                    target={{
+                                      organizationId: selectedWorker.organization_id,
+                                      workerId: selectedWorker.worker_id,
+                                      goalId: selectedGoal.goal_id,
+                                      planId: plan.plan_id,
+                                      workerVersion: selectedWorker.version,
+                                      planVersion: plan.version,
+                                    }}
+                                  />
+                                )}
                               </div>
                             ),
                           }}

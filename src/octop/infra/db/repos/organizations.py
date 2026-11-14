@@ -316,6 +316,18 @@ class OrganizationRepo:
             )
         return int(cur.rowcount or 0) > 0
 
+    def has_agent_assignment(self, organization_id: str, position_id: str, agent_id: str) -> bool:
+        """Scoped existence lookup without materializing an organization's roster."""
+        with self._db.connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM organization_assignments a "
+                "JOIN organization_positions p ON p.position_id = a.position_id "
+                "WHERE p.organization_id = ? AND a.position_id = ? "
+                "AND a.subject_type = 'agent' AND a.subject_id = ? LIMIT 1",
+                (organization_id, position_id, agent_id),
+            ).fetchone()
+        return row is not None
+
     def list_assignments(self, organization_id: str) -> list[dict[str, Any]]:
         with self._db.connect() as conn:
             rows = conn.execute(

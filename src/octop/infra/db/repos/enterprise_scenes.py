@@ -93,6 +93,16 @@ class EnterpriseSceneRepo:
             ).fetchall()
         return [_decode(row) for row in rows]
 
+    def has_enabled_for_worker(self, organization_id: str, position_id: str, agent_id: str) -> bool:
+        """Bounded existence check; does not load prompts or unrelated scenes."""
+        with self._db.connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM enterprise_scenes WHERE organization_id = ? "
+                "AND position_id = ? AND agent_id = ? AND enabled = 1 LIMIT 1",
+                (organization_id, position_id, agent_id),
+            ).fetchone()
+        return row is not None
+
     def list_versions(self, scene_id: str) -> list[dict[str, Any]]:
         with self._db.connect() as conn:
             rows = conn.execute(

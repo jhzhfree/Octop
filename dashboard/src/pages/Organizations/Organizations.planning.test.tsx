@@ -6,6 +6,8 @@ import { organizationsApi } from "../../api/modules/organizations";
 import { externalKnowledgeApi } from "../../api/modules/externalKnowledge";
 import { workerKnowledgeMappingsApi } from "../../api/modules/workerKnowledgeMappings";
 import OrganizationsPage from "./index";
+import { inspectServerReadiness } from "../../api/modules/planReadiness";
+import { serverReadinessMessages } from "./serverReadinessMessages";
 
 vi.mock("react-i18next", async () => {
   const { createInstance } = await import("i18next");
@@ -17,8 +19,12 @@ vi.mock("react-i18next", async () => {
     interpolation: { escapeValue: false },
   });
   const t = instance.t.bind(instance);
-  return { useTranslation: () => ({ t }) };
+  return { useTranslation: () => ({ t, i18n: instance }) };
 });
+vi.mock("../../api/modules/planReadiness", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../api/modules/planReadiness")>()),
+  inspectServerReadiness: vi.fn(),
+}));
 vi.mock("../../hooks/useServerTimezone", () => ({
   useServerTimezone: () => "UTC",
 }));
@@ -274,6 +280,59 @@ describe("organization guided planning integration", { timeout: 15000 }, () => {
     expect(
       within(readiness).getByText(en.planReadiness.noRuns),
     ).toBeInTheDocument();
+    expect(organizationsApi.createDigitalWorkerPlan).not.toHaveBeenCalled();
+    expect(inspectServerReadiness).not.toHaveBeenCalled();
+    const serverPanel = screen.getByRole("region", {
+      name: serverReadinessMessages.en.title,
+    });
+    vi.mocked(inspectServerReadiness).mockResolvedValueOnce({
+      organization_id: "org1",
+      worker_id: "worker1",
+      goal_id: "goal1",
+      plan_id: "plan1",
+      worker_version: 1,
+      capability_version: 1,
+      plan_version: 1,
+      goal_updated_at: 0,
+      observed_at: "2026-11-14T12:00:00Z",
+      execution_authorized: false,
+      scope: "local_observation_not_atomic",
+      checks: [{ code: "runtime_approval", status: "unknown" }],
+    });
+    await user.click(
+      within(serverPanel).getByRole("button", {
+        name: serverReadinessMessages.en.inspect,
+      }),
+    );
+    expect(inspectServerReadiness).toHaveBeenCalledExactlyOnceWith({
+      organizationId: "org1",
+      workerId: "worker1",
+      goalId: "goal1",
+      planId: "plan1",
+      workerVersion: 1,
+      planVersion: 1,
+    });
+    expect(
+      await within(serverPanel).findByText("2026-11-14T12:00:00Z"),
+    ).toBeInTheDocument();
+    expect(
+      within(serverPanel).getByText(serverReadinessMessages.en.unknown),
+    ).toBeInTheDocument();
+    vi.mocked(inspectServerReadiness).mockRejectedValueOnce(new Error("409"));
+    await user.click(
+      within(serverPanel).getByRole("button", {
+        name: serverReadinessMessages.en.inspect,
+      }),
+    );
+    expect(
+      await within(serverPanel).findByText(serverReadinessMessages.en.failed),
+    ).toBeInTheDocument();
+    expect(
+      within(serverPanel).queryByText("2026-11-14T12:00:00Z"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(serverPanel).queryByText(serverReadinessMessages.en.unknown),
+    ).not.toBeInTheDocument();
     expect(organizationsApi.createDigitalWorkerPlan).not.toHaveBeenCalled();
   });
 
