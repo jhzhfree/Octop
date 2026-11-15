@@ -307,6 +307,7 @@ async def create_goal(
 @router.patch(
     "/organizations/{organization_id}/digital-workers/{worker_id}/goals/{goal_id}",
     summary="Update a virtual worker goal",
+    description="Compares the server-validated goal snapshot at write time. Concurrent changes return 409; reload before retrying. The account audit commits with the mutation.",
 )
 async def update_goal(
     organization_id: str,
@@ -328,6 +329,7 @@ async def update_goal(
     "/organizations/{organization_id}/digital-workers/{worker_id}/goals/{goal_id}",
     status_code=204,
     summary="Delete a draft virtual worker goal",
+    description="Deletes only the validated draft snapshot. Concurrent activation or edits return 409; deletion and account audit commit together.",
 )
 async def delete_goal(
     organization_id: str,

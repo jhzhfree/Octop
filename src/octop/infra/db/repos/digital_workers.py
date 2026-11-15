@@ -109,6 +109,14 @@ class _CapabilityReviewConflict(Exception):
     pass
 
 
+class GoalMutationError(Exception):
+    """A guarded goal write lost its snapshot or current authorization."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
 class DigitalWorkerRepo:
     def __init__(self, db: DatabasePool) -> None:
         self._db = db
@@ -363,6 +371,89 @@ class DigitalWorkerRepo:
                 (*values, now_ts(), goal_id),
             )
         return self.get_goal(goal_id)
+
+    def mutate_goal(
+        self,
+        *,
+        organization_id: str,
+        expected: dict[str, Any],
+        actor_id: int,
+        updates: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        """CAS the validated server snapshot; persist the account audit atomically.
+
+        None means deletion. No client actor/expected snapshot enters this method
+        through the goal API. Low-level update_goal remains available for fixtures.
+        """
+        goal_id, worker_id = expected["goal_id"], expected["worker_id"]
+        columns = (
+            "title",
+            "description",
+            "success_criteria",
+            "period_start",
+            "period_end",
+            "status",
+        )
+        conditions = ["goal_id = ?", "worker_id = ?"]
+        bindings: list[Any] = [goal_id, worker_id]
+        for column in columns:
+            value = expected[column]
+            conditions.append(f"{column} IS NULL" if value is None else f"{column} = ?")
+            if value is not None:
+                bindings.append(value)
+        # Persisted identity is part of the write predicate, not a stale admin flag.
+        authority_sql = (
+            "SELECT 1 FROM digital_workers w JOIN users u ON u.id=? "
+            "LEFT JOIN organization_members m ON m.organization_id=w.organization_id "
+            "AND m.user_id=u.id WHERE w.worker_id=? AND w.organization_id=? "
+            "AND u.disabled=0 AND (u.role='admin' OR m.role IN ('owner','manager'))"
+        )
+        authority_args = (actor_id, worker_id, organization_id)
+        where = " AND ".join(conditions) + f" AND EXISTS ({authority_sql})"
+        bindings.extend(authority_args)
+        with self._db.transaction() as conn:
+            if updates is None:
+                if expected["status"] != "draft":
+                    raise GoalMutationError("conflict")
+                cur = conn.execute(f"DELETE FROM digital_worker_goals WHERE {where}", bindings)
+                result = None
+            else:
+                fields = [(key, value) for key, value in updates.items() if key in columns]
+                assignments = [f"{key} = ?" for key, _ in fields] + ["updated_at = ?"]
+                values = [value for _, value in fields] + [
+                    now_ts() if fields else expected["updated_at"]
+                ]
+                cur = conn.execute(
+                    f"UPDATE digital_worker_goals SET {', '.join(assignments)} WHERE {where}",
+                    (*values, *bindings),
+                )
+                row = conn.execute(
+                    "SELECT * FROM digital_worker_goals WHERE goal_id=?", (goal_id,)
+                ).fetchone()
+                result = _dict(row) if row else None
+            if int(cur.rowcount or 0) != 1:
+                if conn.execute(authority_sql, authority_args).fetchone() is None:
+                    raise GoalMutationError("forbidden")
+                raise GoalMutationError("conflict")
+            conn.execute(
+                "INSERT INTO audit_log(ts,actor,action,target,payload) VALUES(?,?,?,?,?)",
+                (
+                    now_ts(),
+                    str(actor_id),
+                    "digital_worker.goal_delete"
+                    if updates is None
+                    else "digital_worker.goal_update",
+                    goal_id,
+                    json.dumps(
+                        {
+                            "organization_id": organization_id,
+                            "from_status": expected["status"],
+                            "to_status": result["status"] if result else None,
+                        }
+                    ),
+                ),
+            )
+            return result
 
     def delete_goal(self, goal_id: str) -> bool:
         with self._db.transaction() as conn:

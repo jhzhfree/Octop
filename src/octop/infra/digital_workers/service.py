@@ -6,6 +6,7 @@ import json
 import re
 from typing import Any
 
+from octop.infra.db.repos.digital_workers import GoalMutationError
 from octop.infra.db.services import RepoBundle
 from octop.infra.users.identity import User
 from octop.infra.utils.ulid import new_ulid
@@ -252,10 +253,8 @@ class DigitalWorkerService:
             raise DigitalWorkerError(
                 "DIGITAL_WORKER_GOAL_PERIOD_INVALID", "goal period is invalid", 422
             )
-        updated = self.repos.digital_worker_repo.update_goal(goal_id, normalized)
-        if updated is None:
-            raise DigitalWorkerError("DIGITAL_WORKER_GOAL_NOT_FOUND", "worker goal not found", 404)
-        self._audit("digital_worker.goal_update", goal_id)
+        updated = self._mutate_goal(organization_id, current, normalized)
+        assert updated is not None
         return updated
 
     def delete_goal(self, organization_id: str, worker_id: str, goal_id: str) -> None:
@@ -268,8 +267,26 @@ class DigitalWorkerService:
             raise DigitalWorkerError(
                 "DIGITAL_WORKER_GOAL_LOCKED", "only draft goals can be deleted", 409
             )
-        self.repos.digital_worker_repo.delete_goal(goal_id)
-        self._audit("digital_worker.goal_delete", goal_id)
+        self._mutate_goal(organization_id, goal, None)
+
+    def _mutate_goal(
+        self, organization_id: str, expected: dict[str, Any], updates: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        try:
+            return self.repos.digital_worker_repo.mutate_goal(
+                organization_id=organization_id,
+                expected=expected,
+                actor_id=self.actor.id,
+                updates=updates,
+            )
+        except GoalMutationError as exc:
+            if exc.reason == "forbidden":
+                raise DigitalWorkerError(
+                    "ORGANIZATION_FORBIDDEN", "organization manager required", 403
+                ) from exc
+            raise DigitalWorkerError(
+                "DIGITAL_WORKER_GOAL_STATUS_INVALID", "goal changed; reload before retrying", 409
+            ) from exc
 
     def _goal(self, organization_id: str, worker_id: str, goal_id: str) -> dict[str, Any]:
         self._worker(organization_id, worker_id)
