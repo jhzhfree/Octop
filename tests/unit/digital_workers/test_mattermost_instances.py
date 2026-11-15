@@ -402,7 +402,10 @@ def test_upgrade_from_real_v39_and_repeat_preserves_data(tmp_path, monkeypatch):
         run_migrations(db)
         run_migrations(db)
         with db.connect() as c:
-            assert c.execute("SELECT version FROM _schema_version").fetchone()[0] == 40
+            assert (
+                c.execute("SELECT version FROM _schema_version").fetchone()[0]
+                == migrate.schema_baseline_version()
+            )
             assert (
                 c.execute("SELECT value FROM settings WHERE key='mm-upgrade-sentinel'").fetchone()[
                     0

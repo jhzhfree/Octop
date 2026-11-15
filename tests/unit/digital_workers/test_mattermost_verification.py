@@ -1,6 +1,7 @@
 """All requests terminate in MockTransport; no instance or PAT is used."""
 
 import json
+import socket
 
 import httpx
 import pytest
@@ -283,3 +284,43 @@ async def test_permission_callback_requires_literal_true(value):
     )
     assert result.result == "access_changed"
     assert not calls
+
+
+@pytest.fixture(autouse=True)
+def prohibit_network(monkeypatch):
+    def forbidden(*args, **kwargs):
+        raise AssertionError("network forbidden in offline verification tests")
+
+    monkeypatch.setattr(socket.socket, "connect", forbidden)
+    monkeypatch.setattr(socket.socket, "connect_ex", forbidden)
+    monkeypatch.setattr(socket, "create_connection", forbidden)
+    monkeypatch.setattr(socket, "getaddrinfo", forbidden)
+
+
+@pytest.mark.asyncio
+async def test_kernel_rejects_live_transport_before_any_work(monkeypatch):
+    class DerivedMock(httpx.MockTransport):
+        pass
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("client or transport must not be used")
+
+    async def forbidden_scope(scope):
+        raise AssertionError("scope callback must not be called")
+
+    monkeypatch.setattr(httpx, "AsyncClient", forbidden)
+    for transport in (None, object(), httpx.AsyncHTTPTransport(), DerivedMock(forbidden)):
+        try:
+            with pytest.raises(ValueError, match="^offline transport required$"):
+                await observe_bot_identity(
+                    target(), scope_is_current=forbidden_scope, transport=transport
+                )
+        finally:
+            if isinstance(transport, httpx.AsyncHTTPTransport):
+                await transport.aclose()
+
+
+@pytest.mark.asyncio
+async def test_kernel_cannot_default_to_live_transport():
+    with pytest.raises(TypeError, match="transport"):
+        await observe_bot_identity(target(), scope_is_current=current)

@@ -1,7 +1,7 @@
 """Unwired read-only verification kernel, not an authorization or public API.
 
-Only deployment-owned configuration may construct a target. A production adapter
-must implement the scope/revocation callback before this can be exposed to users.
+Only deployment-owned configuration may construct a target. Live transport is
+blocked at this lowest-level entry point until secret/executor isolation exists.
 """
 
 from __future__ import annotations
@@ -90,7 +90,7 @@ async def observe_bot_identity(
     target: TrustedMattermostTarget,
     *,
     scope_is_current: Callable[[VerificationScope], Awaitable[bool]],
-    transport: httpx.MockTransport | None = None,
+    transport: httpx.MockTransport,
 ) -> IdentityObservation:
     """Fixed GET /me only; no writes, credential discovery, or authorization grant.
 
@@ -99,7 +99,12 @@ async def observe_bot_identity(
     credential/config revocation. It runs before sending and after receiving.
     A positive result is a time-bound observation, never an atomic permission.
     ``transport`` is solely an offline test seam; arbitrary clients are not accepted.
+    No production secret provider or executor isolation has been implemented.
+    This runtime gate also protects callers that bypass the orchestration layer.
     """
+    if type(transport) is not httpx.MockTransport:
+        raise ValueError("offline transport required")
+
     result: Literal["bot_identity_observed", "identity_rejected", "unavailable", "access_changed"]
     result = "unavailable"
     try:

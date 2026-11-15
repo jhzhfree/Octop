@@ -10,7 +10,7 @@
 
 - 用经服务端核验的 Mattermost 稳定 user/bot ID 绑定数字员工，禁止用户名、显示名或前端的 `is_bot` 声明充当身份认证。校验服务实例、bot 身份、禁用状态和最小权限。
 - 人类用户与数字员工 bot 分离。无论人工触发还是自动执行，数字员工发言都保留原生 BOT 标记；明确标注人工发起还是自动执行，禁止冒充人类。
-- bot 密钥仅放后端加密 Connector 凭据存储。现有通用 channel detail 返回 config，因此不得把密钥直接放 channel config。不得将密钥发到浏览器、模型或审计。
+- bot 密钥须由部署侧独立权限域的外部 secret provider 管理（当前未实现）；不能依赖通用 Connector 的同库加密抵御整库泄漏。现有通用 channel detail 返回 config，因此不得把密钥直接放 channel config。不得将密钥发到浏览器、模型或审计。
 - 自动执行记录可信 run ID；人工操作关联登录 actor；审批、channel allowlist、授权版本、发送结果独立记录。外发前再验证授权，不能拿本地检查结果当凭证。
 - 外部消息内容不可授予权限。防 bot 循环、重复发送、重试和超时未知结果需独立设计及验证。
 
@@ -67,7 +67,7 @@ roles 严格为 `system_user`；普通人类 token、禁用 Bot、错误 ID 或�
 凭据字段不参加对象 repr/序列化；这不是外部 Secret Manager 或完整凭据管理方案。
 
 网络前后必须调用授权快照复核回调。快照携带组织、员工、实际操作者、员工版本、
-意向 revision、配置 revision 和实例别名。**该回调的数据库实现尚未接入**：
+意向 revision、配置 revision 和实例别名。**内核不内置数据库授权，阶段 4 仅在离线编排中接入**：
 生产适配必须以组织+实例确定配置，读取当前账号启用/组织管理/Agent权限、
 同组织员工、draft 意向、实际 Bot ID 和所有版本，并复核凭据/实例撤权。
 不得使用恒真回调或将用户提交的 scope 作为授权证明。前后复核仍不能消除网络
@@ -162,3 +162,28 @@ octop mattermost-instance --manifest ./mattermost-instance.json --actor-id 1 --e
 契约（如必须零窗口撤权需跨权限变更的序列化协议，而非多查一次）；PG 集成验证；
 真实固定 IP HTTPS Mattermost 的受控只读验收。之后才能考虑启用核验入口。
 核验 `/users/me` 仍不能证明团队/频道成员资格，任何消息发送须另走授权、审批与审计设计。
+
+## 生产核验硬关闭与执行器秘密隔离（阶段 5 安全修正）
+
+`observe_bot_identity` 内核现在也要求显式、精确类型的 `httpx.MockTransport`，
+不再允许省略 transport 后走真实网络。`None`、真实 transport 和 Mock 子类在
+创建 HTTP client 或执行授权回调前即被拒绝。上层离线编排保持相同限制。
+这是当前版本运行时门禁，不是一个可通过环境变量或管理员布尔开关启用的功能。
+Mock handler 仍属于受信任测试代码，本限制不构成对任意 Python 插件的沙箱。
+
+目前不能把真实 Bot token 放进 API 进程：默认本地 Agent backend 可以使用
+host-root，已安装 harness 的本地 shell 默认继承环境且子进程未降 UID。
+所以 `chmod 0600`、文件路径隐藏、SecretStr 或“isolated=true”部署声明均不能
+证明 Agent 无法读取 API 的秘密。此版本不新增生产 secret resolver 或核验路由，
+也不读取真实秘密、访问真实实例。配置元数据与 Mock 测试不等于已连接。
+
+后续启用必须先交付独立权限域的 verifier/broker 和可重复运行的隔离验收：
+执行器无法访问秘密卷、环境、API/broker 内存和管理接口；不能共享高权限 UID、
+宿主 PID 命名空间、Docker socket 或可提升权限的宿主挂载；验证受信任 provider
+独立绑定完整组织/实例/origin/bot/ref/revision，而非依赖请求声明。
+此外仍须提供真实 JWT + 当前数据库授权、请求并发/速率限制、审计失败关闭、
+SQLite/PG 撤权一致性说明以及受控 TLS/Mattermost 验收。移除硬门禁属于另一次
+必须评审的代码改动，不能因离线测试通过而自动启用。身份观察结果也绝不授予发送权。
+
+本次内核测试自动阻断 socket connect/connect_ex/create_connection 与 DNS，
+并断言绕过编排直接调用内核也不能构建真实 HTTP client。
