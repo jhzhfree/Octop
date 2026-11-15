@@ -28,6 +28,42 @@ export class SetupRequiredError extends Error {
 
 /** Session flag: backend reported no admin yet (setup lockdown active). */
 let _setupRequiredKnown = false;
+// Same-tab login/logout generation also distinguishes re-login with equal token bytes.
+let authGeneration = 0;
+
+type AuthRequestContext = {
+  token: string;
+  generation: number;
+  usesCurrentAuth: boolean;
+};
+
+function captureAuthContext(headers: HeadersInit): AuthRequestContext {
+  const token = getAuthToken();
+  return {
+    token,
+    generation: authGeneration,
+    usesCurrentAuth:
+      new Headers(headers).get("Authorization") ===
+      (token ? `Bearer ${token}` : null),
+  };
+}
+
+function ownsCurrentAuth(context: AuthRequestContext): boolean {
+  return (
+    context.usesCurrentAuth &&
+    context.generation === authGeneration &&
+    context.token === getAuthToken()
+  );
+}
+
+function mergeHeaders(
+  base: HeadersInit,
+  extra?: HeadersInit,
+): Record<string, string> {
+  const headers = new Headers(base);
+  new Headers(extra).forEach((value, key) => headers.set(key, value));
+  return Object.fromEntries(headers.entries());
+}
 
 /** Mark that first-run setup is still required (skips further locked APIs). */
 export function markSetupRequired(): void {
@@ -79,6 +115,9 @@ export function setAuthToken(token: string, remember: boolean = true) {
     sessionStorage.setItem(AUTH_TOKEN_KEY, token);
     localStorage.removeItem(AUTH_TOKEN_KEY);
   }
+  authGeneration += 1;
+  _redirectingToLogin = false;
+  _redirectingToSetup = false;
   clearSetupRequired();
 }
 
@@ -93,6 +132,7 @@ export function getAuthToken(): string {
 
 /** Remove JWT token from both storages. */
 export function clearAuthToken() {
+  authGeneration += 1;
   localStorage.removeItem(AUTH_TOKEN_KEY);
   sessionStorage.removeItem(AUTH_TOKEN_KEY);
   sessionStorage.removeItem(AUTH_REMEMBER_PREF_KEY);
@@ -167,6 +207,7 @@ function assertNotSetupLocked(path: string): void {
 async function check503ForSetupRequired(
   path: string,
   response: Response,
+  authContext: AuthRequestContext,
 ): Promise<boolean> {
   if (response.status !== 503) return false;
   let body: unknown = null;
@@ -181,10 +222,12 @@ async function check503ForSetupRequired(
     typeof body === "object" &&
     (body as Record<string, unknown>).setup_required === true
   ) {
-    markSetupRequired();
-    clearAuthToken();
-    if (!isSetupApiPath(path)) {
-      handleSetupRequired();
+    if (ownsCurrentAuth(authContext)) {
+      markSetupRequired();
+      clearAuthToken();
+      if (!isSetupApiPath(path)) {
+        handleSetupRequired();
+      }
     }
     return true;
   }
@@ -261,21 +304,6 @@ function buildHeaders(path: string, extra?: HeadersInit): HeadersInit {
     headers.Authorization = `Bearer ${token}`;
   }
 
-  // Caller-supplied headers win — needed so the setup wizard can pass
-  // its short-TTL Bearer without being stomped by a stale localStorage
-  // JWT.
-  if (extra) {
-    const extraEntries =
-      extra instanceof Headers
-        ? Array.from(extra.entries())
-        : Array.isArray(extra)
-        ? extra
-        : Object.entries(extra);
-    for (const [k, v] of extraEntries) {
-      headers[k] = String(v);
-    }
-  }
-
   if (
     activeAgentId &&
     isAgentScopedPath(path) &&
@@ -284,7 +312,7 @@ function buildHeaders(path: string, extra?: HeadersInit): HeadersInit {
     headers["X-Octop-Agent-Id"] = activeAgentId;
   }
 
-  return headers;
+  return mergeHeaders(headers, extra);
 }
 
 /**
@@ -335,18 +363,21 @@ function handleUnauthorized(): void {
 }
 
 /**
- * Handle 401 responses: clear token, redirect to login, and throw.
+ * Reject 401 responses; clear and redirect only for the requesting session.
  * Shared by request(), requestBlob(), and requestUpload().
  */
 async function throwIfUnauthorized(
   path: string,
   response: Response,
+  authContext: AuthRequestContext,
 ): Promise<void> {
   if (response.status !== 401 || path.startsWith("/auth/")) {
     return;
   }
-  clearAuthToken();
-  handleUnauthorized();
+  if (ownsCurrentAuth(authContext)) {
+    clearAuthToken();
+    handleUnauthorized();
+  }
   let message = "Unauthorized";
   if (path.startsWith("/setup/")) {
     try {
@@ -372,17 +403,18 @@ export async function request<T = unknown>(
   const url = getApiUrl(path);
 
   const headers = buildHeaders(path, options.headers);
+  const authContext = captureAuthContext(headers);
 
   const response = await fetch(url, {
     ...options,
     headers,
   });
 
-  if (await check503ForSetupRequired(path, response)) {
+  if (await check503ForSetupRequired(path, response, authContext)) {
     throw new SetupRequiredError();
   }
 
-  await throwIfUnauthorized(path, response);
+  await throwIfUnauthorized(path, response, authContext);
 
   if (!response.ok) {
     if (response.status === 403 && isAgentScopedPath(path)) {
@@ -425,17 +457,18 @@ export async function requestBlob(
   assertNotSetupLocked(path);
 
   const url = getApiUrl(path);
-  const headers = buildAuthHeaders(path);
+  const headers = mergeHeaders(buildAuthHeaders(path), options.headers);
+  const authContext = captureAuthContext(headers);
   const response = await fetch(url, {
     ...options,
-    headers: { ...headers, ...(options.headers as Record<string, string>) },
+    headers,
   });
 
-  if (await check503ForSetupRequired(path, response)) {
+  if (await check503ForSetupRequired(path, response, authContext)) {
     throw new SetupRequiredError();
   }
 
-  await throwIfUnauthorized(path, response);
+  await throwIfUnauthorized(path, response, authContext);
 
   if (!response.ok) {
     const text = await response.text().catch(() => "");
@@ -477,17 +510,18 @@ export async function probeAuthResource(
   assertNotSetupLocked(path);
 
   const url = getApiUrl(path);
-  const headers = buildAuthHeaders(path);
+  const headers = mergeHeaders(buildAuthHeaders(path), options.headers);
+  const authContext = captureAuthContext(headers);
   const response = await fetch(url, {
     ...options,
-    headers: { ...headers, ...(options.headers as Record<string, string>) },
+    headers,
   });
 
-  if (await check503ForSetupRequired(path, response)) {
+  if (await check503ForSetupRequired(path, response, authContext)) {
     throw new SetupRequiredError();
   }
 
-  await throwIfUnauthorized(path, response);
+  await throwIfUnauthorized(path, response, authContext);
 
   if (!response.ok) {
     const text = await response.text().catch(() => "");
@@ -516,17 +550,18 @@ export async function requestStream(
   assertNotSetupLocked(path);
 
   const url = getApiUrl(path);
-  const headers = buildAuthHeaders(path);
+  const headers = mergeHeaders(buildAuthHeaders(path), options.headers);
+  const authContext = captureAuthContext(headers);
   const response = await fetch(url, {
     ...options,
-    headers: { ...headers, ...(options.headers as Record<string, string>) },
+    headers,
   });
 
-  if (await check503ForSetupRequired(path, response)) {
+  if (await check503ForSetupRequired(path, response, authContext)) {
     throw new SetupRequiredError();
   }
 
-  await throwIfUnauthorized(path, response);
+  await throwIfUnauthorized(path, response, authContext);
 
   if (!response.ok) {
     const text = await response.text().catch(() => "");
@@ -562,7 +597,8 @@ export async function requestUpload<T = unknown>(
   assertNotSetupLocked(path);
 
   const url = getApiUrl(path);
-  const headers = buildAuthHeaders(path);
+  const headers = mergeHeaders(buildAuthHeaders(path), options.headers);
+  const authContext = captureAuthContext(headers);
   const method = options.method ?? "POST";
 
   return new Promise<T>((resolve, reject) => {
@@ -571,17 +607,6 @@ export async function requestUpload<T = unknown>(
 
     for (const [key, value] of Object.entries(headers)) {
       xhr.setRequestHeader(key, value);
-    }
-    if (options.headers) {
-      const extraEntries =
-        options.headers instanceof Headers
-          ? Array.from(options.headers.entries())
-          : Array.isArray(options.headers)
-          ? options.headers
-          : Object.entries(options.headers);
-      for (const [k, v] of extraEntries) {
-        xhr.setRequestHeader(k, String(v));
-      }
     }
 
     if (onProgress) {
@@ -620,13 +645,13 @@ export async function requestUpload<T = unknown>(
           headers: responseHeaders,
         });
 
-        if (await check503ForSetupRequired(path, response)) {
+        if (await check503ForSetupRequired(path, response, authContext)) {
           reject(new SetupRequiredError());
           return;
         }
 
         try {
-          await throwIfUnauthorized(path, response);
+          await throwIfUnauthorized(path, response, authContext);
         } catch (err) {
           reject(err);
           return;
