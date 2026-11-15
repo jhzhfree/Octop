@@ -397,7 +397,11 @@ def test_migration_35_upgrades_existing_schema(tmp_path, monkeypatch):
     migrate.run_migrations(db)
     with db.connect() as conn:
         assert conn.execute("SELECT version FROM _schema_version").fetchone()[0] == 34
-    monkeypatch.setattr(migrate, "_discover", discover)
+    monkeypatch.setattr(
+        migrate,
+        "_discover",
+        lambda dialect="sqlite": [(v, p) for v, p in discover(dialect) if v <= 35],
+    )
     migrate.run_migrations(db)
     with db.connect() as conn:
         assert conn.execute("SELECT version FROM _schema_version").fetchone()[0] == 35

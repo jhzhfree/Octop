@@ -9,6 +9,7 @@
 - Separate connection identity management from resource mounts; version resource checks, preserve concurrent edits, and support resumable key rotation (schema 031).
 
 ### 新增
+- 场景可显式批准本人 HTTP 巡检任务，在同次运行生成确定性本地报告并绑定独立验收；隔离普通 Agent 路径，不外发、不调用模型，附实际持久化计数与中断不重放策略（schema 036）。
 - 晨检报告可由申请人显式关联为成功场景运行的不可变快照，供独立验收；不自动执行、不批准外发，附版本/权限/并发校验与离线服务链测试。
 - 场景单次执行链修复：新运行要求就绪计划，旧无计划记录可读/可拒绝；内部 Cron 本地串行交付，转录存储失败不计成功，新增无网络真实审批至人工验收测试。
 - 组织待办支持最小化运行详情；目标完成增加成功标准确认、防重复提交与选中状态同步，隔离切换上下文后的旧响应

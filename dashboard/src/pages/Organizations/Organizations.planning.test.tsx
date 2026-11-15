@@ -6,6 +6,11 @@ import { organizationsApi } from "../../api/modules/organizations";
 import { externalKnowledgeApi } from "../../api/modules/externalKnowledge";
 import { workerKnowledgeMappingsApi } from "../../api/modules/workerKnowledgeMappings";
 import OrganizationsPage from "./index";
+import { inspectionRunApi } from "../../api/modules/inspectionRun";
+import { inspectionRunMessages } from "./InspectionRunOptions";
+vi.mock("../../api/modules/inspectionRun", () => ({
+  inspectionRunApi: { candidates: vi.fn() },
+}));
 import { organizationProgressApi } from "../../api/modules/organizationProgress";
 import { useCurrentUser } from "../../hooks/useCurrentUser";
 import { deliveryAcceptanceApi } from "../../api/modules/deliveryAcceptance";
@@ -734,3 +739,74 @@ describe("scene plan entry", { timeout: 15000 }, () => {
     expect(organizationsApi.requestSceneRun).not.toHaveBeenCalled();
   });
 });
+
+it(
+  "requires explicit inspection sources and sharing and submits with memory disabled",
+  { timeout: 15000 },
+  async () => {
+    vi.mocked(organizationsApi.scenes).mockResolvedValue([
+      {
+        scene_id: "scene1",
+        organization_id: "org1",
+        position_id: "position1",
+        agent_id: "agent1",
+        name: "Morning inspection",
+        enabled: true,
+        version: 1,
+        prompt: "Inspect",
+        mcp_servers: [],
+        owner_user_id: 1,
+        created_at: 0,
+        updated_at: 0,
+      },
+    ]);
+    vi.mocked(organizationsApi.digitalWorkerPlans).mockResolvedValue([
+      {
+        plan_id: "plan1",
+        goal_id: "goal1",
+        title: "Inspection plan",
+        approach: "Read approved data",
+        steps: [{ action: "Inspect", expected_output: "Report" }],
+        status: "ready",
+        version: 1,
+        created_by: 1,
+        created_at: 0,
+        updated_at: 0,
+      },
+    ]);
+    vi.mocked(inspectionRunApi.candidates).mockResolvedValue([
+      {
+        job_id: "job1",
+        name: "Health check",
+        job_version: 2,
+        connection_version: 3,
+      },
+    ]);
+    const user = await openPlans();
+    await user.click(
+      await screen.findByRole("button", { name: en.organizations.requestRun }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    expect(inspectionRunApi.candidates).not.toHaveBeenCalled();
+    await user.click(
+      within(dialog).getByLabelText(inspectionRunMessages.en.mode),
+    );
+    await user.click(within(dialog).getByRole("button", { name: "OK" }));
+    await screen.findByText(inspectionRunMessages.en.required);
+    expect(organizationsApi.requestSceneRun).not.toHaveBeenCalled();
+    await user.click(await within(dialog).findByLabelText(/Health check/));
+    await user.click(
+      within(dialog).getByLabelText(inspectionRunMessages.en.share),
+    );
+    await user.click(within(dialog).getByRole("button", { name: "OK" }));
+    await waitFor(() =>
+      expect(organizationsApi.requestSceneRun).toHaveBeenCalledWith(
+        "org1",
+        "scene1",
+        "plan1",
+        { useMemory: false, captureMemory: false },
+        { jobIds: ["job1"], share: true },
+      ),
+    );
+  },
+);

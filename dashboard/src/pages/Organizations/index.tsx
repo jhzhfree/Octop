@@ -62,6 +62,11 @@ import ReportAttachment from "./ReportAttachment";
 import OrganizationProgress from "./OrganizationProgress";
 import RunQueue from "./RunQueue";
 import ScenePlanGuide from "./ScenePlanGuide";
+import InspectionRunOptions, {
+  emptyInspectionRun,
+  inspectionRunMessages,
+  type InspectionRunValue,
+} from "./InspectionRunOptions";
 import GoalStatusAction from "./GoalStatusAction";
 import PlanningDialogue from "./PlanningDialogue";
 import KnowledgeMappings from "./KnowledgeMappings";
@@ -75,7 +80,9 @@ type ModalKind =
 type AssignmentKind = "user" | "agent";
 
 export default function OrganizationsPage() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const inspectionMessages =
+    inspectionRunMessages[i18n.language.startsWith("zh") ? "zh" : "en"];
   const timezone = useServerTimezone();
   const currentUser = useCurrentUser();
   const [form] = Form.useForm();
@@ -84,6 +91,12 @@ export default function OrganizationsPage() {
   const [goalForm] = Form.useForm();
   const [planForm] = Form.useForm();
   const [runRequestForm] = Form.useForm();
+  const runSceneId = Form.useWatch("scene_id", runRequestForm);
+  const inspectionOptions: InspectionRunValue | undefined = Form.useWatch(
+    "inspection",
+    runRequestForm,
+  );
+  const requestContext = useRef(-1);
   const [capabilityProposalForm] = Form.useForm();
   const [organizations, setOrganizations] = useState<OrganizationRecord[]>([]);
   const [organizationId, setOrganizationId] = useState<string>();
@@ -140,6 +153,9 @@ export default function OrganizationsPage() {
   const [editingPlan, setEditingPlan] = useState<DigitalWorkerPlan>();
   const [runRequestPlan, setRunRequestPlan] = useState<DigitalWorkerPlan>();
   const [runRequestOpen, setRunRequestOpen] = useState(false);
+  useEffect(() => {
+    runRequestForm.setFieldValue("inspection", emptyInspectionRun);
+  }, [runSceneId, runRequestForm]);
   const [activeTab, setActiveTab] = useState("chart");
   const [guideScene, setGuideScene] = useState<EnterpriseScene>();
   const [preferredSceneId, setPreferredSceneId] = useState<string>();
@@ -612,6 +628,7 @@ export default function OrganizationsPage() {
         scene.position_id === selectedWorker.position_id &&
         scene.agent_id === selectedWorker.agent_id,
     );
+    requestContext.current = context.current.generation;
     setRunRequestPlan(plan);
     runRequestForm.resetFields();
     runRequestForm.setFieldsValue({
@@ -620,12 +637,21 @@ export default function OrganizationsPage() {
           ?.scene_id ?? matching[0]?.scene_id,
       use_memory: true,
       capture_memory: true,
+      inspection: emptyInspectionRun,
     });
     setRunRequestOpen(true);
   }
 
   async function submitPlanRun(values: Record<string, unknown>) {
-    if (!organizationId || !runRequestPlan) return;
+    if (
+      !organizationId ||
+      !runRequestPlan ||
+      requestContext.current !== context.current.generation ||
+      saving
+    )
+      return;
+    const scope = context.current.generation;
+    const inspection = values.inspection as InspectionRunValue | undefined;
     setSaving(true);
     try {
       await organizationsApi.requestSceneRun(
@@ -633,15 +659,23 @@ export default function OrganizationsPage() {
         String(values.scene_id ?? ""),
         runRequestPlan.plan_id,
         {
-          useMemory: values.use_memory !== false,
-          captureMemory: values.capture_memory !== false,
+          useMemory: inspection?.enabled ? false : values.use_memory !== false,
+          captureMemory: inspection?.enabled
+            ? false
+            : values.capture_memory !== false,
         },
+        inspection?.enabled
+          ? { jobIds: inspection.jobIds, share: inspection.share }
+          : undefined,
       );
+      if (scope !== context.current.generation) return;
       setRunRequestOpen(false);
       await load(organizationId);
-      message.success(t("organizations.runSubmitted"));
+      if (scope === context.current.generation)
+        message.success(t("organizations.runSubmitted"));
     } catch {
-      message.error(t("organizations.operationFailed"));
+      if (scope === context.current.generation)
+        message.error(t("organizations.operationFailed"));
     } finally {
       setSaving(false);
     }
@@ -1512,6 +1546,24 @@ export default function OrganizationsPage() {
       title: t("organizations.planSnapshot"),
       key: "plan",
       render: (_: unknown, run) => run.plan_snapshot?.plan.title ?? "—",
+    },
+    {
+      title: inspectionMessages.sources,
+      key: "inspection_scope",
+      render: (_: unknown, run) =>
+        run.plan_snapshot?.inspection ? (
+          <Space direction="vertical">
+            <Typography.Text>{inspectionMessages.modeSummary}</Typography.Text>
+            {run.plan_snapshot.inspection.sources.map((source) => (
+              <Typography.Text key={source.job_id}>
+                {source.name} ({source.job_id}, v{source.job_version}/
+                {source.connection_version})
+              </Typography.Text>
+            ))}
+          </Space>
+        ) : (
+          "—"
+        ),
     },
     {
       title: t("organizations.runStatus"),
@@ -2798,7 +2850,10 @@ export default function OrganizationsPage() {
         />
       )}
       <Modal
-        open={runRequestOpen}
+        open={
+          runRequestOpen &&
+          requestContext.current === context.current.generation
+        }
         title={t("organizations.requestPlanRun")}
         onCancel={() => setRunRequestOpen(false)}
         onOk={() => runRequestForm.submit()}
@@ -2838,8 +2893,31 @@ export default function OrganizationsPage() {
             />
           </Form.Item>
           <Form.Item
+            name="inspection"
+            rules={[
+              {
+                validator: (_, value: InspectionRunValue | undefined) =>
+                  !value?.enabled ||
+                  (value.target === `${organizationId}:${runSceneId}` &&
+                    value.jobIds.length > 0 &&
+                    value.jobIds.length <= 10 &&
+                    value.share)
+                    ? Promise.resolve()
+                    : Promise.reject(new Error(inspectionMessages.required)),
+              },
+            ]}
+          >
+            <InspectionRunOptions
+              key={`${contextKey}:${runSceneId}:${runRequestOpen}`}
+              organizationId={organizationId ?? ""}
+              sceneId={runSceneId ?? ""}
+              disabled={saving}
+            />
+          </Form.Item>
+          <Form.Item
             name="use_memory"
             label={t("organizations.runMemoryRecall")}
+            hidden={inspectionOptions?.enabled}
             valuePropName="checked"
           >
             <Switch />
@@ -2847,6 +2925,7 @@ export default function OrganizationsPage() {
           <Form.Item
             name="capture_memory"
             label={t("organizations.runMemoryCandidate")}
+            hidden={inspectionOptions?.enabled}
             valuePropName="checked"
             extra={t("organizations.runMemoryCandidateHint")}
           >

@@ -412,6 +412,16 @@ class AssistantService:
                 )
                 final = "awaiting_approval"
             else:
+                evidence.append(
+                    {"type": "stage", "stage": "collection_started", "at": int(time.time())}
+                )
+                # Persist attempt intent before dispatch. A crash is an uncertain
+                # attempt, never silently counted as an unattempted healthy source.
+                if not self.repo.transition(
+                    run_id, run["version"], state, state, evidence=evidence
+                ):
+                    raise WorkflowError("VERSION_CONFLICT")
+                run = self.run_owned(run_id)
                 evidence.extend(await adapters.collect(config, secret, flags))
                 final = "succeeded"
             if len(json.dumps(evidence, ensure_ascii=False).encode()) > 1024 * 1024:

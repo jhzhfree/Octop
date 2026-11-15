@@ -111,6 +111,17 @@ export interface EnterpriseSceneRun {
   error_summary: string | null;
   plan_id?: string | null;
   plan_snapshot?: {
+    inspection?: {
+      mode: "http_inspection";
+      share_results: boolean;
+      sources: {
+        job_id: string;
+        name: string;
+        job_version: number;
+        connection_id: string;
+        connection_version: number;
+      }[];
+    };
     worker: {
       worker_id: string;
       name: string;
@@ -682,6 +693,7 @@ export const organizationsApi = {
     sceneId: string,
     planId?: string,
     memoryPolicy?: { useMemory?: boolean; captureMemory?: boolean },
+    inspection?: { jobIds: string[]; share: boolean },
   ) =>
     request<EnterpriseSceneRun>(
       "/organizations/" +
@@ -696,6 +708,12 @@ export const organizationsApi = {
               plan_id: planId,
               use_memory: memoryPolicy?.useMemory ?? true,
               capture_memory: memoryPolicy?.captureMemory ?? true,
+              ...(inspection
+                ? {
+                    inspection_job_ids: inspection.jobIds,
+                    share_inspection_results: inspection.share,
+                  }
+                : {}),
             }),
           }
         : { method: "POST" },

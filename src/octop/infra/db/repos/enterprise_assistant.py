@@ -122,6 +122,7 @@ class EnterpriseAssistantRepo:
         with self.db.connect() as conn:
             rows = conn.execute(
                 "SELECT * FROM enterprise_assistant_runs WHERE status IN ('queued','approved') "
+                "AND NOT EXISTS (SELECT 1 FROM scene_inspection_sources s WHERE s.source_run_id=enterprise_assistant_runs.id) "
                 "ORDER BY seq LIMIT 20",
             ).fetchall()
         return [_decode(r) for r in rows]
@@ -160,6 +161,7 @@ class EnterpriseAssistantRepo:
             conn.execute(
                 "UPDATE enterprise_assistant_runs SET status=CASE WHEN status='executing' THEN 'unknown' ELSE 'failed' END,"
                 "error_code='PROCESS_INTERRUPTED',"
-                "version=version+1 WHERE status IN ('running','executing') AND updated_at<?",
+                "version=version+1 WHERE status IN ('running','executing') AND updated_at<? "
+                "AND NOT EXISTS (SELECT 1 FROM scene_inspection_sources s WHERE s.source_run_id=enterprise_assistant_runs.id)",
                 (now_ts() - 600,),
             )

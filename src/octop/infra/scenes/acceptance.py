@@ -49,6 +49,20 @@ class SceneAcceptanceService:
         answer = await self.evidence_loader(run)
         if not answer or not answer.strip():
             raise SceneError("ACCEPTANCE_NO_EVIDENCE", "delivery summary unavailable", 409)
+        if run.get("inspection_report_sha256"):
+            from octop.infra.db.repos.scene_inspection import SceneInspectionRepo
+
+            report = SceneInspectionRepo(self.repo.db).get(run_id)
+            if (
+                report is None
+                or report["status"] != "reported"
+                or report["content"] != answer
+                or report["content_sha256"] != run["inspection_report_sha256"]
+                or hashlib.sha256(answer.encode()).hexdigest() != run["inspection_report_sha256"]
+            ):
+                raise SceneError(
+                    "ACCEPTANCE_STALE", "same-run inspection report integrity changed", 409
+                )
         attachment_digest = run.get("report_attachment_sha256")
         if attachment_digest:
             attachment = SceneReportAttachmentRepo(self.repo.db).get(organization_id, run_id)

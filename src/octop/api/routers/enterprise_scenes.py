@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from octop.api.common.agent import require_agent_row, user_owns_agent
@@ -44,6 +44,8 @@ class SceneRunRequestBody(BaseModel):
     )
     use_memory: bool = True
     capture_memory: bool = True
+    inspection_job_ids: list[str] = Field(default_factory=list, max_length=10)
+    share_inspection_results: bool = False
 
 
 class SceneRecord(BaseModel):
@@ -235,6 +237,8 @@ async def request_scene_run(
             plan_id=body.plan_id if body is not None else None,
             use_memory=body.use_memory if body is not None else True,
             capture_memory=body.capture_memory if body is not None else True,
+            inspection_job_ids=body.inspection_job_ids if body is not None else [],
+            share_inspection_results=body.share_inspection_results if body is not None else False,
         )
     )
 
@@ -338,3 +342,46 @@ async def reject_scene_run(
         raise HTTPException(
             status_code=exc.status, detail={"code": exc.code, "message": exc.message}
         ) from exc
+
+
+@router.get(
+    "/organizations/{organization_id}/scenes/{scene_id}/inspection-jobs",
+    summary="List own HTTP inspection candidates without connection details",
+)
+async def inspection_jobs(
+    organization_id: str,
+    scene_id: str,
+    user: Any = Depends(current_user),
+    server: Any = Depends(get_server),
+) -> list[dict[str, Any]]:
+    from octop.infra.enterprise_assistant.adapters import WorkflowError
+    from octop.infra.scenes.inspection import candidates
+
+    service = _service(server, user)
+    scene = _call(lambda: service.get_scene(organization_id, scene_id))
+    try:
+        return candidates(service.repos, user, str(scene["agent_id"]))
+    except WorkflowError as exc:
+        raise HTTPException(status_code=403, detail="Inspection access unavailable") from exc
+
+
+@router.get(
+    "/organizations/{organization_id}/scene-runs/{run_id}/inspection-result",
+    summary="Read same-run inspection counts and source identities without connection data",
+)
+async def get_inspection_result(
+    organization_id: str,
+    run_id: str,
+    response: Response,
+    user: Any = Depends(current_user),
+    server: Any = Depends(get_server),
+) -> dict[str, Any] | None:
+    from octop.infra.db.repos.scene_acceptance import AcceptanceStoreError
+    from octop.infra.scenes.inspection import inspection_result
+
+    response.headers["Cache-Control"] = "no-store"
+    service = _service(server, user)
+    try:
+        return inspection_result(service.repos, user, organization_id, run_id)
+    except AcceptanceStoreError as exc:
+        raise HTTPException(status_code=403, detail="Inspection result access denied") from exc

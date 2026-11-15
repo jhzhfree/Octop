@@ -41,6 +41,8 @@ def snapshot_hash(run: dict[str, Any]) -> str:
     # Preserve old hashes when no attachment exists (including pre-migration reviews).
     if run.get("report_attachment_sha256"):
         value["report_attachment_sha256"] = run["report_attachment_sha256"]
+    if run.get("inspection_report_sha256"):
+        value["inspection_report_sha256"] = run["inspection_report_sha256"]
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()
     ).hexdigest()

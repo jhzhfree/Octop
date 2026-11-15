@@ -140,6 +140,39 @@ class CronDeliveryService:
         command: CronDeliveryCommand,
         session: SessionRow,
     ) -> None:
+        scene_repo = getattr(self._repos, "enterprise_scene_repo", None)
+        scene_run = scene_repo.get_run_by_cron_id(command.cron_id) if scene_repo else None
+        if isinstance(scene_run, dict) and (scene_run.get("plan_snapshot") or {}).get("inspection"):
+            from octop.infra.scenes.inspection import execute_inspection
+
+            if session.channel_type != ThreadRegistry.CHANNEL_INTERNAL_CRON or session.channel_id:
+                raise RuntimeError("inspection requires an internal scene session")
+            cron_row = self._repos.cron_repo.get(command.cron_id)
+            if (
+                cron_row is None
+                or cron_row.session_key != command.session_key
+                or cron_row.agent_id != command.agent_id
+                or cron_row.user_id != command.user_id
+            ):
+                raise RuntimeError("inspection cron binding changed")
+            outbound = await execute_inspection(
+                self._repos,
+                scene_run,
+                cron_id=command.cron_id,
+                user_id=command.user_id,
+                agent_id=command.agent_id,
+            )
+            delivery_id = new_ulid()
+            projected = message_inputs(
+                [
+                    HumanMessage(content=command.prompt, id=f"inspection:{delivery_id}:human"),
+                    AIMessage(content=outbound, id=f"inspection:{delivery_id}:assistant"),
+                ],
+                dedupe_missing_ids=True,
+            )
+            self._project_best_effort(session.thread_id, projected, required=True)
+            await self._gateway.push_session_text(session, outbound, title_source=command.prompt)
+            return
         request = await self._build_agent_request(command, session)
         tracker = TurnHistoryTracker.from_request(request)
         usage = UsageTracker()
