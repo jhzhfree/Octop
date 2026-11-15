@@ -48,6 +48,10 @@ class PublicationPreviewBody(BaseModel):
     expected_configuration_revision: int = Field(gt=0)
 
 
+class PublicationCandidate(PublicationPreviewBody):
+    model_config = ConfigDict(extra="ignore", strict=True)
+
+
 class PublicationDecisionBody(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     expected_publication_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -89,6 +93,26 @@ def _http_error(exc: SceneError) -> HTTPException:
         detail={"code": exc.code, "message": exc.message},
         headers={"Cache-Control": "no-store"},
     )
+
+
+@router.get(
+    _PATH + "/candidate",
+    response_model=PublicationCandidate,
+    summary="Read current publication preview preconditions without creating a preview",
+    description="Requester only. Rechecks current permissions, accepted report and destination "
+    "revisions. Returns only four optimistic preconditions; no content, destination, credentials, "
+    "publication mutation, audit write or network operation. POST revalidates these values.",
+)
+def get_publication_candidate(
+    organization_id: str,
+    run_id: str,
+    user: Any = Depends(current_user),
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    try:
+        return _service(server, user).candidate(organization_id, run_id)
+    except SceneError as exc:
+        raise _http_error(exc) from exc
 
 
 @router.get(

@@ -204,6 +204,32 @@ class MattermostPublicationRepo:
             "execution_authorized": False,
         }
 
+    def candidate(self, org: str, run_id: str, actor: int) -> dict[str, Any]:
+        """Read preview preconditions only; no publication or audit mutation."""
+        with self.db.transaction() as conn:
+            run = self._access(conn, org, run_id, actor)
+            if actor != run["requested_by"]:
+                raise AcceptanceStoreError("forbidden", "requesting owner must propose publication")
+            snapshot, _ = self._snapshot(conn, run)
+            existing = conn.execute(
+                "SELECT * FROM scene_mattermost_publications WHERE run_id=?", (run_id,)
+            ).fetchone()
+            if existing:
+                row = dict(existing)
+                if row["status"] not in {"pending_approval", "blocked_not_connected"}:
+                    raise AcceptanceStoreError("conflict", "publication is terminal")
+                self._assert_snapshot(row, snapshot)
+                self._check_approver(conn, row, snapshot)
+            return {
+                "expected_" + key: snapshot[key]
+                for key in (
+                    "report_sha256",
+                    "worker_version",
+                    "intent_revision",
+                    "configuration_revision",
+                )
+            }
+
     def preview(
         self, org: str, run_id: str, actor: int, expected: dict[str, Any]
     ) -> dict[str, Any]:

@@ -172,6 +172,7 @@ def test_changed_authority_or_binding_blocks_approval_and_read(publication_setup
             "o", "r", expected_publication_sha256=draft["publication_sha256"]
         ),
         lambda: publication_service(s, 2).get("o", "r"),
+        lambda: publication_service(s).candidate("o", "r"),
     ):
         with pytest.raises(SceneError) as err:
             method()

@@ -63,6 +63,10 @@ def domain_stub(monkeypatch):
         def __init__(self, repos, actor_id):
             calls.append(("actor", actor_id))
 
+        def candidate(self, org, run):
+            calls.append(("candidate", org, run))
+            return PREVIEW | {"credential_ref": "SECRET_REF", "origin": "SECRET_ORIGIN"}
+
         def get(self, org, run):
             calls.append(("get", org, run))
             return record
@@ -171,3 +175,15 @@ async def test_openapi_describes_local_only_typed_operations(env):
         assert operation["responses"]["200"]["content"]["application/json"]["schema"][
             "$ref"
         ].endswith("/PublicationRecord")
+
+
+async def test_candidate_jwt_identity_and_exact_whitelist(env, domain_stub):
+    client, _, auth = env
+    assert (await client.get(PATH + "/candidate")).status_code == 401
+    assert not domain_stub
+    me = (await client.get("/api/auth/me", headers=auth)).json()
+    response = await client.get(PATH + "/candidate", headers=auth)
+    assert response.status_code == 200
+    assert response.json() == PREVIEW
+    assert response.headers["cache-control"] == "no-store"
+    assert domain_stub == [("actor", me["id"]), ("candidate", "org", "run")]

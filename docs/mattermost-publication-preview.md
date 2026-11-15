@@ -66,3 +66,28 @@ SQLite 使用真实事务，串行化写入、重复审批和同事务审计。P
 测试明确禁用网络，不连接 Mattermost，不验证真实 TLS、Bot 身份或频道成员关系。
 生产核验硬关闭和同 UID 执行器秘密隔离阻塞详见
 [mattermost-integration-readiness.md](mattermost-integration-readiness.md)。
+
+### Read-only preview candidate API
+
+`GET /api/organizations/{organization_id}/scene-runs/{run_id}/mattermost-publication/candidate`
+returns only `expected_report_sha256`, `expected_worker_version`,
+`expected_intent_revision`, and `expected_configuration_revision`. The dashboard
+passes these four values unchanged to the existing preview POST. Only the run's
+requester can obtain them, even when another actor is an administrator.
+
+This is a read-only eligibility snapshot, not a publication, acceptance or approval.
+It rechecks current actor/participant authority, accepted same-run report, active
+worker, assignment, intent and configured instance. Existing terminal publications
+are rejected; existing active publications must still match their immutable snapshot
+and current approver authority. It returns no report text, destination, URL,
+credential reference or secret, and writes neither publication nor audit rows.
+Repeated reads are safe. All responses are non-cacheable. Changes between GET and
+POST are rejected by POST's existing optimistic version checks; refresh the candidate
+rather than guessing revisions. A 409 is not permission to retry sending.
+
+Candidate validation coverage includes authenticated JWT identity and exact response
+whitelisting, SQLite HTTP repeated reads without ledger/audit mutation, cross-org
+and non-requester denial, current authority removal, revoked intent/configuration,
+changed report content, terminal publication, and configuration changes between
+candidate and preview. This does not validate real PostgreSQL concurrency, real
+Mattermost connectivity or sending; those remain outside this local-only slice.

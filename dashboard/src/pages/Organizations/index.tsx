@@ -59,6 +59,7 @@ import PlanReadiness from "./PlanReadiness";
 import ServerPlanReadiness from "./ServerPlanReadiness";
 import DeliveryAcceptance from "./DeliveryAcceptance";
 import ReportAttachment from "./ReportAttachment";
+import MattermostPublication from "./MattermostPublication";
 import OrganizationProgress from "./OrganizationProgress";
 import RunQueue from "./RunQueue";
 import ScenePlanGuide from "./ScenePlanGuide";
@@ -2440,6 +2441,46 @@ export default function OrganizationsPage() {
                                       run.status === "succeeded" &&
                                       run.requested_by !== currentUser.id &&
                                       (currentUser.role === "admin" ||
+                                        run.approved_by === currentUser.id)
+                                    }
+                                  />
+                                )}
+                              {currentUser &&
+                                Number.isSafeInteger(currentUser.id) &&
+                                run.organization_id === organizationId &&
+                                chart?.organization.organization_id ===
+                                  organizationId && (
+                                  <MattermostPublication
+                                    target={{
+                                      organizationId: run.organization_id,
+                                      runId: run.run_id,
+                                    }}
+                                    currentUserId={currentUser.id}
+                                    canCreate={
+                                      run.status === "succeeded" &&
+                                      run.requested_by === currentUser.id
+                                    }
+                                    canRead={
+                                      (currentUser.role === "admin" ||
+                                        (canManage &&
+                                          currentUser.permissions?.includes(
+                                            "tasks",
+                                          ) === true)) &&
+                                      run.status === "succeeded" &&
+                                      (currentUser.role === "admin" ||
+                                        run.requested_by === currentUser.id ||
+                                        run.approved_by === currentUser.id)
+                                    }
+                                    canApprove={
+                                      run.requested_by !== currentUser.id &&
+                                      (currentUser.role === "admin" ||
+                                        (canManage &&
+                                          run.approved_by === currentUser.id))
+                                    }
+                                    canRevoke={
+                                      run.requested_by === currentUser.id ||
+                                      currentUser.role === "admin" ||
+                                      (canManage &&
                                         run.approved_by === currentUser.id)
                                     }
                                   />

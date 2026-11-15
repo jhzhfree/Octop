@@ -6,6 +6,17 @@ import { organizationsApi } from "../../api/modules/organizations";
 import { externalKnowledgeApi } from "../../api/modules/externalKnowledge";
 import { workerKnowledgeMappingsApi } from "../../api/modules/workerKnowledgeMappings";
 import OrganizationsPage from "./index";
+import { mattermostPublicationApi } from "../../api/modules/mattermostPublication";
+import { mattermostPublicationMessages } from "./mattermostPublicationMessages";
+vi.mock("../../api/modules/mattermostPublication", async (load) => ({
+  ...(await load<typeof import("../../api/modules/mattermostPublication")>()),
+  mattermostPublicationApi: {
+    get: vi.fn(),
+    candidate: vi.fn(),
+    create: vi.fn(),
+    decide: vi.fn(),
+  },
+}));
 import { inspectionRunApi } from "../../api/modules/inspectionRun";
 import { inspectionRunMessages } from "./InspectionRunOptions";
 vi.mock("../../api/modules/inspectionRun", () => ({
@@ -423,7 +434,7 @@ describe(
       role: "user",
       display_name: null,
       locale: "zh",
-      permissions: [],
+      permissions: ["tasks"],
       sso_linked: false,
       sso_kind: null,
       sso_identities: [],
@@ -470,6 +481,169 @@ describe(
       );
       return { user, ...view };
     }
+    it("exposes a separate publication review with server-authoritative destination and no automatic sending", async () => {
+      vi.mocked(useCurrentUser).mockReturnValue(reviewer);
+      const publication = {
+        organization_id: "org1",
+        run_id: "run1",
+        worker_id: "worker1",
+        worker_version: 1,
+        intent_revision: 1,
+        configuration_revision: 1,
+        instance_key: "company",
+        team_id: "t".repeat(26),
+        channel_id: "c".repeat(26),
+        bot_id: "b".repeat(26),
+        report_sha256: "a".repeat(64),
+        publication_sha256: "b".repeat(64),
+        content: "Native inspection report",
+        proposed_by: 1,
+        approved_by: null,
+        status: "pending_approval" as const,
+        created_at: 1,
+        updated_at: 1,
+        connected: false as const,
+        dispatch_enabled: false as const,
+        execution_authorized: false as const,
+      };
+      vi.mocked(mattermostPublicationApi.get).mockResolvedValue(publication);
+      vi.mocked(mattermostPublicationApi.decide).mockResolvedValue({
+        ...publication,
+        approved_by: 2,
+        status: "blocked_not_connected",
+      });
+      const { user, rerender } = await openRun();
+      const m = mattermostPublicationMessages.en;
+      expect(mattermostPublicationApi.get).not.toHaveBeenCalled();
+      await user.click(screen.getByRole("button", { name: m.open }));
+      expect(await screen.findByText(publication.content)).toBeInTheDocument();
+      expect(
+        screen.getByText(`${m.channel}: ${publication.channel_id}`),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: m.create }),
+      ).not.toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: m.approve }));
+      expect(mattermostPublicationApi.decide).not.toHaveBeenCalled();
+      await user.click(screen.getByRole("button", { name: m.confirm }));
+      expect(
+        await screen.findByText(m.blocked_not_connected),
+      ).toBeInTheDocument();
+      expect(mattermostPublicationApi.decide).toHaveBeenCalledExactlyOnceWith(
+        { organizationId: "org1", runId: "run1" },
+        "approve",
+        publication.publication_sha256,
+      );
+      expect(deliveryAcceptanceApi.decide).not.toHaveBeenCalled();
+      vi.mocked(useCurrentUser).mockReturnValue({
+        ...reviewer,
+        permissions: [],
+      });
+      rerender(<OrganizationsPage />);
+      expect(screen.queryByText(publication.content)).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: m.open }),
+      ).not.toBeInTheDocument();
+    });
+    it("does not revive a previous organization's publication when the next organization load fails", async () => {
+      vi.mocked(useCurrentUser).mockReturnValue({ ...reviewer, role: "admin" });
+      const other = {
+        ...organization,
+        organization_id: "org2",
+        name: "Other organization",
+      };
+      vi.mocked(organizationsApi.list).mockResolvedValue([organization, other]);
+      const { user } = await openRun();
+      expect(
+        screen.getByRole("button", {
+          name: mattermostPublicationMessages.en.open,
+        }),
+      ).toBeInTheDocument();
+      vi.mocked(organizationsApi.chart).mockRejectedValue(
+        new Error("unavailable"),
+      );
+      await user.click(
+        screen.getByRole("combobox", {
+          name: en.organizations.selectOrganization,
+        }),
+      );
+      await user.click(await screen.findByText("Other organization"));
+      await screen.findByText(en.organizations.loadFailed);
+      expect(
+        screen.queryByRole("button", {
+          name: mattermostPublicationMessages.en.open,
+        }),
+      ).not.toBeInTheDocument();
+      expect(mattermostPublicationApi.get).not.toHaveBeenCalled();
+    });
+    it("does not expose publication content to a requester with ordinary member permissions", async () => {
+      vi.mocked(useCurrentUser).mockReturnValue({ ...reviewer, id: 1 });
+      vi.mocked(organizationsApi.chart).mockResolvedValue({
+        organization: { ...organization, member_role: "member" },
+        positions: [],
+        departments: [],
+        members: [],
+      });
+      await openRun();
+      expect(
+        screen.queryByRole("button", {
+          name: mattermostPublicationMessages.en.open,
+        }),
+      ).not.toBeInTheDocument();
+      expect(mattermostPublicationApi.get).not.toHaveBeenCalled();
+    });
+    it("allows a platform administrator to review independently without an organization manager role", async () => {
+      vi.mocked(useCurrentUser).mockReturnValue({
+        ...reviewer,
+        role: "admin",
+        id: 3,
+      });
+      vi.mocked(organizationsApi.chart).mockResolvedValue({
+        organization: { ...organization, member_role: "member" },
+        positions: [],
+        departments: [],
+        members: [],
+      });
+      vi.mocked(mattermostPublicationApi.get).mockResolvedValue({
+        organization_id: "org1",
+        run_id: "run1",
+        worker_id: "worker1",
+        worker_version: 1,
+        intent_revision: 1,
+        configuration_revision: 1,
+        instance_key: "company",
+        team_id: "t".repeat(26),
+        channel_id: "c".repeat(26),
+        bot_id: "b".repeat(26),
+        report_sha256: "a".repeat(64),
+        publication_sha256: "b".repeat(64),
+        content: "Reviewed report",
+        proposed_by: 1,
+        approved_by: null,
+        status: "pending_approval",
+        created_at: 1,
+        updated_at: 1,
+        connected: false,
+        dispatch_enabled: false,
+        execution_authorized: false,
+      });
+      const { user } = await openRun();
+      await user.click(
+        screen.getByRole("button", {
+          name: mattermostPublicationMessages.en.open,
+        }),
+      );
+      expect(
+        await screen.findByRole("button", {
+          name: mattermostPublicationMessages.en.approve,
+        }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", {
+          name: mattermostPublicationMessages.en.revoke,
+        }),
+      ).toBeInTheDocument();
+    });
     it("reads only after opening and sends only after a second confirmation", async () => {
       vi.mocked(useCurrentUser).mockReturnValue(reviewer);
       vi.mocked(deliveryAcceptanceApi.review).mockResolvedValue(review);

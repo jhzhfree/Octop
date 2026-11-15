@@ -67,6 +67,9 @@ class MattermostPublicationService:
             },
         )
 
+    def candidate(self, org: str, run_id: str) -> dict[str, Any]:
+        return self._call("candidate", org, run_id)
+
     def get(self, org: str, run_id: str) -> dict[str, Any]:
         return self._call("get", org, run_id)
 

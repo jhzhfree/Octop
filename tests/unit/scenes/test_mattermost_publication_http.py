@@ -4,6 +4,7 @@ JWT parsing is tested separately by integration/test_mattermost_publication_api.
 Report/acceptance are seeded here, not a full inspection execution test.
 """
 
+from functools import partial
 from types import SimpleNamespace
 
 import pytest
@@ -92,3 +93,74 @@ async def test_http_scope_and_realtime_revoke_hide_report(publication_app, publi
             response = await client.request(method, PATH + suffix, json=body)
             assert response.status_code in (403, 409)
             assert "INTERNAL_REPORT_SENTINEL" not in response.text
+
+
+async def test_candidate_readonly_then_stale_post(publication_app, publication_setup):
+    db = publication_setup[0]
+    with db.connect() as conn:
+        before = conn.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
+        database_before = list(conn.iterdump())
+    async with AsyncClient(
+        transport=ASGITransport(app=publication_app), base_url="http://test"
+    ) as client:
+        for _ in range(2):
+            response = await client.get(PATH + "/candidate")
+            assert response.status_code == 200, response.text
+            assert response.json() == preview_args()
+            assert response.headers["cache-control"] == "no-store"
+        with db.connect() as conn:
+            assert list(conn.iterdump()) == database_before
+            assert conn.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0] == before
+            assert (
+                conn.execute("SELECT COUNT(*) FROM scene_mattermost_publications").fetchone()[0]
+                == 0
+            )
+        with db.transaction() as conn:
+            conn.execute("UPDATE mattermost_instances SET revision=revision+1")
+        assert (await client.post(PATH, json=response.json())).status_code == 409
+        fresh = await client.get(PATH + "/candidate")
+        assert fresh.json()["expected_configuration_revision"] == 2
+        draft = await client.post(PATH, json=fresh.json())
+        assert draft.status_code == 200
+        await client.post(
+            PATH + "/revoke",
+            json={"expected_publication_sha256": draft.json()["publication_sha256"]},
+        )
+        assert (await client.get(PATH + "/candidate")).status_code == 409
+
+
+@pytest.mark.parametrize(
+    "sql,status",
+    [
+        ("UPDATE users SET disabled=1 WHERE id=1", 403),
+        ("DELETE FROM organization_members WHERE user_id=2", 403),
+        ("UPDATE worker_mattermost_intents SET status='revoked'", 409),
+        ("UPDATE mattermost_instances SET status='revoked'", 409),
+        ("UPDATE scene_inspection_batches SET content='changed'", 409),
+    ],
+)
+async def test_candidate_rechecks_authority_and_sources(
+    publication_app, publication_setup, sql, status
+):
+    with publication_setup[0].transaction() as conn:
+        conn.execute(sql)
+    async with AsyncClient(
+        transport=ASGITransport(app=publication_app), base_url="http://test"
+    ) as client:
+        response = await client.get(PATH + "/candidate")
+        assert response.status_code == status
+        assert "INTERNAL_REPORT_SENTINEL" not in response.text
+        assert "credential_ref" not in response.text
+        assert "http" not in response.text
+
+
+async def test_candidate_cross_org_and_non_requester_denied(publication_app):
+    async with AsyncClient(
+        transport=ASGITransport(app=publication_app), base_url="http://test"
+    ) as client:
+        assert (await client.get(PATH.replace("/o/", "/other/") + "/candidate")).status_code == 404
+        for actor in (2, 3):
+            publication_app.dependency_overrides[current_user] = partial(
+                User, actor, "other", "admin", None
+            )
+            assert (await client.get(PATH + "/candidate")).status_code == 403
