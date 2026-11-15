@@ -23,11 +23,10 @@ else:
     from octop.infra.users.identity import User
 
 
-# Sliding renew: when remaining life is below this fraction of configured TTL,
+# Sliding renew: at or below max(1, configured TTL // 3) seconds remaining,
 # the explicit renewal endpoint issues a token via ACCESS_TOKEN_RESPONSE_HEADER.
 ACCESS_TOKEN_RESPONSE_HEADER = "X-Octop-Access-Token"
 RENEW_CHECK_AFTER_HEADER = "X-Octop-Renew-Check-After"
-_SLIDING_RENEW_REMAINING_FRACTION = 1 / 3
 
 
 # Paths that bypass JWT middleware (setup wizard, health, login).
@@ -123,8 +122,8 @@ def maybe_sliding_renew_token(server: OctopServer, token: str, user: User) -> st
     """Return a fresh access token when ``token`` is past the sliding renew threshold.
 
     Called only by the explicit renewal endpoint; ordinary traffic is not activity.
-    Threshold is one-third of ``access_token_ttl_seconds`` remaining. Active clients
-    that pick up ``ACCESS_TOKEN_RESPONSE_HEADER`` stay signed in without re-login.
+    Threshold is max(1, TTL // 3), inclusive, so short TTLs have a valid
+    renewal window. This does not guarantee a browser sends activity in time.
     """
     assert server.services is not None
     payload = _decode(server, token)
@@ -134,8 +133,10 @@ def maybe_sliding_renew_token(server: OctopServer, token: str, user: User) -> st
         raise OctopError(ErrorCode.USER_DISABLED, "user not active")
     ttl = int(server.services.config.access_token_ttl_seconds)
     remaining = int(payload["exp"]) - int(time.time())
-    threshold = max(1, int(ttl * _SLIDING_RENEW_REMAINING_FRACTION))
-    if remaining >= threshold:
+    if remaining <= 0:
+        raise OctopError(ErrorCode.TOKEN_EXPIRED, "token expired")
+    threshold = max(1, ttl // 3)
+    if remaining > threshold:
         return None
     secret = server.services.secret_repo.get("jwt")
     if secret is None:

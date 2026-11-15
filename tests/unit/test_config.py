@@ -430,3 +430,27 @@ def test_non_object_config_raises(tmp_path: Path):
     with pytest.raises(ValueError, match="JSON object"):
         load_config(cfg_path)
     assert cfg_path.read_text(encoding="utf-8") == "[1, 2]"
+
+
+@pytest.mark.parametrize("ttl", [-1, 0, 1])
+@pytest.mark.parametrize("source", ["direct", "file", "environment"])
+def test_access_token_ttl_rejects_unrenewable_lifetimes(tmp_path, monkeypatch, ttl, source):
+    from octop.config import OctopConfig
+
+    path = tmp_path / "config.json"
+    if source == "file":
+        path.write_text(json.dumps({"access_token_ttl_seconds": ttl}))
+    if source == "environment":
+        monkeypatch.setenv("OCTOP_ACCESS_TOKEN_TTL", str(ttl))
+    with pytest.raises(ValueError, match="access_token_ttl_seconds must be at least 2"):
+        if source == "direct":
+            OctopConfig(access_token_ttl_seconds=ttl)
+        else:
+            load_config(path)
+
+
+@pytest.mark.parametrize("ttl", [2, 3, 5, 60, 86400])
+def test_access_token_ttl_preserves_supported_values(tmp_path, ttl):
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"access_token_ttl_seconds": ttl}))
+    assert load_config(path).access_token_ttl_seconds == ttl

@@ -144,6 +144,12 @@ class OctopConfig:
     max_upload_mb: int = DEFAULT_MAX_UPLOAD_MB
     browser_idle_timeout_minutes: int = DEFAULT_BROWSER_IDLE_TIMEOUT_MINUTES
 
+    def __post_init__(self) -> None:
+        # JWT iat/exp and activity cadence use whole seconds. A one-second
+        # lifetime has no valid second in which renewal can extend expiry.
+        if self.access_token_ttl_seconds < 2:
+            raise ValueError("access_token_ttl_seconds must be at least 2 seconds")
+
     @property
     def max_upload_bytes(self) -> int:
         return upload_mb_to_bytes(self.max_upload_mb)

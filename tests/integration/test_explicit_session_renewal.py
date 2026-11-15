@@ -120,3 +120,66 @@ async def test_short_ttl_cadence_is_bounded(patched_app_client):
     assert response.status_code == 204
     assert response.headers["X-Octop-Renew-Check-After"] == "10"
     assert ACCESS_TOKEN_RESPONSE_HEADER not in response.headers
+
+
+@pytest.mark.parametrize("ttl", [2, 3, 4, 5, 6, 7, 60, 86400])
+async def test_inclusive_renewal_window_and_expiry(patched_app_client, monkeypatch, ttl):
+    import time
+    from dataclasses import replace
+    from datetime import datetime
+
+    import jwt.api_jwt
+
+    client, server, secret, original = await short_session(patched_app_client)
+    user_id = decode_token(secret, original)["sub"]
+    server.services = replace(
+        server.services, config=replace(server.services.config, access_token_ttl_seconds=ttl)
+    )
+    clock = [int(time.time())]
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.fromtimestamp(clock[0], tz=tz)
+
+    monkeypatch.setattr(time, "time", lambda: clock[0])
+    monkeypatch.setattr(jwt.api_jwt, "datetime", FixedDateTime)
+    token = sign_token(secret, sub=user_id, uname="admin", role="admin", ttl_seconds=ttl)
+    payload = decode_token(secret, token)
+    threshold = max(1, ttl // 3)
+    clock[0] = payload["exp"] - threshold - 1
+    outside = await client.post("/api/auth/renew", headers=bearer(token))
+    assert outside.status_code == 204
+    assert ACCESS_TOKEN_RESPONSE_HEADER not in outside.headers
+    clock[0] += 1
+    boundary = await client.post("/api/auth/renew", headers=bearer(token))
+    assert boundary.status_code == 204
+    renewed = decode_token(secret, boundary.headers[ACCESS_TOKEN_RESPONSE_HEADER])
+    assert renewed["sid"] == payload["sid"]
+    assert renewed["exp"] > payload["exp"]
+    assert renewed["exp"] - renewed["iat"] == ttl
+    assert boundary.headers["Cache-Control"] == "no-store"
+    clock[0] = payload["exp"]
+    expired = await client.post("/api/auth/renew", headers=bearer(token))
+    assert expired.status_code == 401
+    assert ACCESS_TOKEN_RESPONSE_HEADER not in expired.headers
+
+
+async def test_expiry_between_decode_and_issuance_is_rejected(patched_app_client, monkeypatch):
+    from octop.api import deps
+    from octop.infra.errors import ErrorCode, OctopError
+
+    _, server, secret, token = await short_session(patched_app_client)
+    payload = decode_token(secret, token)
+    user = server.user_manager.get_by_id(payload["sub"])
+    original_get = server.services.user_repo.get
+
+    def get_then_advance(user_id):
+        row = original_get(user_id)
+        monkeypatch.setattr(deps.time, "time", lambda: payload["exp"])
+        return row
+
+    monkeypatch.setattr(server.services.user_repo, "get", get_then_advance)
+    with pytest.raises(OctopError) as error:
+        deps.maybe_sliding_renew_token(server, token, user)
+    assert error.value.code == ErrorCode.TOKEN_EXPIRED

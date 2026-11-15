@@ -12,7 +12,8 @@
 现在中间件只鉴权，任何普通 HTTP 请求都不产生续期令牌。只有新的
 `POST /api/auth/renew` 接受 Header Bearer，重新校验到期/会话撤销和持久化账号，
 使用数据库当前角色签发同一 sid 家族的令牌；不接受仅 query token 的续期请求。
-剩余有效期低于配置 TTL 的三分之一才签发，否则成功返回 204 不带令牌。
+原阶段按严格小于 TTL 三分之一签发；后续[短 TTL 修复](short-token-renewal.md)改为
+剩余时间不超过 max(1, TTL // 3) 时签发，并要求配置至少 2 秒；否则 204 不带令牌。
 响应 no-store，`X-Octop-Renew-Check-After` 给出下一次活动检查间隔
 `max(1, min(60, TTL // 6))` 秒，照顾短 TTL；不是定时重试指令。
 现有允许的 CORS 配置暴露该响应头，不新增来源或放宽鉴权。
