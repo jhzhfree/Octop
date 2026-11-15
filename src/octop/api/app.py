@@ -127,7 +127,7 @@ def build_app(server: OctopServer) -> FastAPI:
             allow_credentials=True,
             allow_methods=["*"],
             allow_headers=["*"],
-            expose_headers=[ACCESS_TOKEN_RESPONSE_HEADER, RENEW_CHECK_AFTER_HEADER],
+            expose_headers=[ACCESS_TOKEN_RESPONSE_HEADER, RENEW_CHECK_AFTER_HEADER, "Retry-After"],
         )
 
     from octop.api.middleware.bridge_proxy import install as install_bridge_proxy

@@ -183,3 +183,52 @@ async def test_expiry_between_decode_and_issuance_is_rejected(patched_app_client
     with pytest.raises(OctopError) as error:
         deps.maybe_sliding_renew_token(server, token, user)
     assert error.value.code == ErrorCode.TOKEN_EXPIRED
+
+
+async def test_renew_limit_shared_by_token_family_and_spoofed_headers(
+    patched_app_client, monkeypatch
+):
+    import time
+    from types import SimpleNamespace
+
+    from octop.infra.auth import renewal
+
+    client, server, secret, token = await short_session(patched_app_client)
+    now = int(time.time())
+    monkeypatch.setattr(renewal, "time", SimpleNamespace(time=lambda: now))
+    identity = decode_token(secret, token)
+    for index in range(10):
+        # Independently signed families and changing client/IP claims share the account budget.
+        other = sign_token(secret, sub=identity["sub"], uname="admin", role="admin", ttl_seconds=60)
+        response = await client.post(
+            "/api/auth/renew",
+            headers=bearer(other)
+            | {"X-Forwarded-For": f"192.0.2.{index}", "X-Octop-User-Activity": "true"},
+        )
+        assert response.status_code == 204
+    blocked = await client.post("/api/auth/renew", headers=bearer(token))
+    assert blocked.status_code == 429
+    assert blocked.json()["error"]["code"] == "RATE_LIMITED"
+    assert blocked.headers["Retry-After"] == "1"
+    assert blocked.headers["Cache-Control"] == "no-store"
+    assert ACCESS_TOKEN_RESPONSE_HEADER not in blocked.headers
+    # Admission pressure does not revoke a session or block ordinary authorized reads.
+    assert (await client.get("/api/auth/me", headers=bearer(token))).status_code == 200
+    monkeypatch.setattr(renewal, "time", SimpleNamespace(time=lambda: now + 1))
+    assert (await client.post("/api/auth/renew", headers=bearer(token))).status_code == 204
+
+
+async def test_failed_renew_budget_never_signs(patched_app_client, monkeypatch):
+    from octop.api import deps
+    from octop.infra.db.repos.auth_renew_buckets import AuthRenewBucketRepo
+
+    client, _, _, token = await short_session(patched_app_client)
+
+    def unavailable(*args):
+        raise RuntimeError("synthetic budget failure")
+
+    monkeypatch.setattr(AuthRenewBucketRepo, "admit", unavailable)
+    monkeypatch.setattr(deps, "sign_token", lambda *a, **kw: pytest.fail("must not sign"))
+    response = await client.post("/api/auth/renew", headers=bearer(token))
+    assert response.status_code == 503
+    assert ACCESS_TOKEN_RESPONSE_HEADER not in response.headers

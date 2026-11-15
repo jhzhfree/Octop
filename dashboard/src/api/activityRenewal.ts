@@ -56,6 +56,13 @@ export function startActivityRenewal(
               interval = seconds * 1000;
             }
           }
+          if (response.status === 429 && getAuthToken() === expectedToken) {
+            const seconds = Number(response.headers.get("Retry-After"));
+            if (Number.isInteger(seconds) && seconds >= 1) {
+              interval = Math.min(seconds, 3600) * 1000;
+              lastAttempt = performance.now();
+            }
+          }
           applyRenewedAccessToken(response, expectedToken);
         }
       })

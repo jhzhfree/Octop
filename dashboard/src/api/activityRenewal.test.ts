@@ -172,4 +172,44 @@ describe("activity-only renewal", () => {
     expect(fetcher).not.toHaveBeenCalled();
     expect(remove).toHaveBeenCalledWith("pointerdown", activity, true);
   });
+  it("honors a 429 delay from receipt and waits for another activity", async () => {
+    let resolve!: (response: Response) => void;
+    fetcher.mockReturnValue(
+      new Promise<Response>((done) => {
+        resolve = done;
+      }),
+    );
+    trusted();
+    vi.advanceTimersByTime(2000);
+    resolve(
+      new Response(null, {
+        status: 429,
+        headers: { "Retry-After": "3", "X-Octop-Access-Token": "must-ignore" },
+      }),
+    );
+    await flush();
+    expect(getAuthToken()).toBe("old");
+    vi.advanceTimersByTime(2999);
+    trusted();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(1);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    trusted();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["0", "-1", "NaN", "1.5"])(
+    "ignores invalid Retry-After %s",
+    async (delay) => {
+      fetcher.mockResolvedValue(
+        new Response(null, { status: 429, headers: { "Retry-After": delay } }),
+      );
+      trusted();
+      await flush();
+      vi.advanceTimersByTime(1000);
+      trusted();
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(getAuthToken()).toBe("old");
+    },
+  );
 });

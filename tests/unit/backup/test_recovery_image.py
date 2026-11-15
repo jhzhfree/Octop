@@ -335,7 +335,7 @@ def test_old_schema_upgrades_only_private_image(source, tmp_path, monkeypatch):
         )
         output = tmp_path / "legacy.sqlite"
         result = recover(archive, output)
-        assert result["schema_version"] == 42
+        assert result["schema_version"] == 43
         with old.connect() as conn:
             assert conn.execute("SELECT version FROM _schema_version").fetchone()[0] == 37
         with sqlite3.connect(output / "octop.db") as conn:
@@ -786,7 +786,7 @@ async def test_normal_startup_reuses_checked_pool_with_runtime_mocked(tmp_path, 
         await instance.start()
         assert instance._started and len(opened) == 1
         with instance.services.db.connect() as conn:
-            assert conn.execute("SELECT version FROM _schema_version").fetchone()[0] == 42
+            assert conn.execute("SELECT version FROM _schema_version").fetchone()[0] == 43
     finally:
         for pool in opened:
             pool.close()

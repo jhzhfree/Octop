@@ -8,6 +8,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
 from pydantic import BaseModel, Field
+from starlette.responses import JSONResponse
 
 from octop.api.common.client_ip import resolve_client_ip
 from octop.api.deps import (
@@ -23,6 +24,7 @@ from octop.api.deps import (
 from octop.i18n import tr
 from octop.infra.auth import sessions
 from octop.infra.auth.captcha import current_env, ensure_captcha, load_effective, public_config
+from octop.infra.auth.renewal import RenewalThrottled, require_renewal_budget
 from octop.infra.errors import ErrorCode, OctopError
 from octop.infra.users.email import normalize_email
 from octop.infra.users.permissions import effective_permissions
@@ -231,6 +233,14 @@ def renew_session(
     raw = extract_raw_token(authorization=request.headers.get("authorization"))
     if not raw:
         raise OctopError(ErrorCode.AUTH_FAILED, "missing credentials")
+    try:
+        require_renewal_budget(server.services.db, user.id)
+    except RenewalThrottled as exc:
+        return JSONResponse(
+            exc.to_envelope(locale=normalize_locale(user.locale)),
+            status_code=429,
+            headers={"Retry-After": str(exc.retry_after), "Cache-Control": "no-store"},
+        )
     renewed = maybe_sliding_renew_token(server, raw, user)
     headers = {
         "Cache-Control": "no-store",

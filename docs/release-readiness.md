@@ -10,7 +10,7 @@
 
 **AI-TAgent 企业场景仍处于开发阶段，尚不满足 1.0 发布条件。**
 当前开发分支为 `feature/akb-octop-litellm-dev`；本轮开始核对的远端提交为
-`acb78fe10fd1d8700c78abfe39a04b93aa2bcd7d`。后续提交以 Git 实际记录为准，
+`83027c979644044e19cffb7df5b31ffe190046fd`。后续提交以 Git 实际记录为准，
 本文件不是发布批准，也不授权生产操作、合并、部署或外部消息发送。
 
 已实现的基础链路包括同 run 单次 HTTP 巡检、本地报告、独立人工验收、
@@ -20,7 +20,7 @@
 [操作来源记录](ai-tagent/operation-trace.md)按操作显示现有审计事实及来源未知项，
 不将单次 Cron 等同于周期自主执行。批准本地发布后仍是 `blocked_not_connected`，没有发送器。
 
-当前静态核对迁移文件 001–042 的 SQLite/PostgreSQL 配对完整；**这不是实际数据库
+当前静态核对迁移文件 001–043 的 SQLite/PostgreSQL 配对完整；**这不是实际数据库
 迁移验收**。报告读取加固及已验收交付回看的分项验证记录见
 [组织运行待办](ai-tagent/organization-run-queue.md) 的 2026-11-15 后续记录。
 其他增量证据见[验收来源标识](ai-tagent/delivery-acceptance-ui.md)及
@@ -60,7 +60,8 @@
   仍需确定服务端生命周期策略及真实浏览器、多标签、辅助输入和目标 TTL 下的体验。
   30 秒权限检查从前次成功后计时，不能宣称撤权后 40 秒清屏。
   [短 TTL 续期窗口](ai-tagent/short-token-renewal.md)已修正：阈值含等号，配置最小 2 秒；
-  仍不保证短 TTL 浏览器体验，没有服务端 renew 限流。
+  仍不保证短 TTL 浏览器体验。[服务端续期限流](ai-tagent/renewal-admission.md)已增加
+  同数据库账号共享额度；不是全站负载防护，PG/多机时钟和真实负载仍未验收。
   公共请求封装已加入[迟到 401/503 会话归属保护](ai-tagent/stale-auth-responses.md)，
   防止旧请求清理后续登录。localStorage 比较/写入仍不是跨标签原子操作；其他
   迟到响应的页面处理、跨标签竞态及服务端生命周期边界仍属 1.0 待办。
