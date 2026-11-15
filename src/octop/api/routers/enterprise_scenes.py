@@ -91,6 +91,46 @@ class SceneRunEvidenceRecord(BaseModel):
     answer: str | None
 
 
+class OperationTraceEvent(BaseModel):
+    record_id: int
+    recorded_at: int
+    action: Literal[
+        "scene.run_requested",
+        "scene.run_approved",
+        "scene.run_rejected",
+        "scene.run.delivery_reviewed",
+        "scene.mattermost_publication.proposed",
+        "scene.mattermost_publication.approved_locally",
+        "scene.mattermost_publication.revoked",
+        "cron.run_ok",
+        "cron.run_failed",
+    ]
+    actor_kind: Literal["user_account", "system", "unknown"]
+    actor_user_id: int | None
+    interaction_mode: Literal["service_execution", "not_recorded"] = Field(
+        description="Account actions do not prove a human clicked; legacy interaction channels were not recorded."
+    )
+
+
+class OperationExecutionContext(BaseModel):
+    agent_id: str
+    on_behalf_of_user_id: int
+    bound_cron_id: str | None
+    configured_executor: Literal["http_inspection", "agent_task", "unknown"]
+    schedule_kind: Literal["one_shot", "unknown"]
+
+
+class OperationTraceRecord(BaseModel):
+    organization_id: str
+    run_id: str
+    as_of: int
+    events: list[OperationTraceEvent]
+    truncated: bool
+    history_complete: Literal[False]
+    execution_authorized: Literal[False]
+    execution_context: OperationExecutionContext
+
+
 class SceneVersionRecord(BaseModel):
     scene_id: str
     version: int
@@ -304,6 +344,32 @@ async def get_scene_run_evidence(
         return await SceneDeliveryEvidenceService(_service(server, user), load).read(
             organization_id, run_id
         )
+    except SceneError as exc:
+        raise HTTPException(
+            status_code=exc.status,
+            detail={"code": exc.code, "message": exc.message},
+            headers={"Cache-Control": "no-store"},
+        ) from exc
+
+
+@router.get(
+    "/organizations/{organization_id}/scene-runs/{run_id}/operation-trace",
+    summary="Read recorded operation accounts and bound execution context",
+    description="Current authorized run participants or administrators only. Latest 100 allowlisted audit records, newest inserted first; no raw payloads. Missing/retained history is not reconstructed. Does not reconcile, execute, approve or send anything.",
+    response_model=OperationTraceRecord,
+)
+def get_scene_operation_trace(
+    organization_id: str,
+    run_id: str,
+    response: Response,
+    user: Any = Depends(current_user),
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    from octop.infra.scenes.operation_trace import SceneOperationTraceService
+
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return SceneOperationTraceService(_service(server, user)).read(organization_id, run_id)
     except SceneError as exc:
         raise HTTPException(
             status_code=exc.status,

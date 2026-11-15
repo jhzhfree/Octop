@@ -12,6 +12,25 @@ from octop.infra.scenes.service import EnterpriseSceneService, SceneError
 from octop.infra.users.identity import User
 
 
+def authorized_delivery_run(
+    scenes: EnterpriseSceneService, organization_id: str, run_id: str, *, reconcile: bool = True
+) -> dict[str, Any]:
+    # The request's User may predate a disable, role change or permission revoke.
+    row = scenes.repos.user_repo.get(scenes.actor.id)
+    if row is None or row.disabled or (row.role != "admin" and "tasks" not in row.permissions):
+        raise SceneError("SCENE_EVIDENCE_FORBIDDEN", "scene run evidence access denied", 403)
+    actor = User(
+        id=row.id,
+        username=row.username,
+        role=row.role,
+        display_name=row.display_name,
+        permissions=row.permissions,
+    )
+    return EnterpriseSceneService(scenes.repos, actor).get_run_evidence_access(
+        organization_id, run_id, reconcile=reconcile
+    )
+
+
 class SceneDeliveryEvidenceService:
     def __init__(
         self,
@@ -21,27 +40,11 @@ class SceneDeliveryEvidenceService:
         self.scenes = scenes
         self.loader = loader
 
-    def _authorized_run(self, organization_id: str, run_id: str) -> dict[str, Any]:
-        # The request's User may predate a disable, role change or permission revoke.
-        row = self.scenes.repos.user_repo.get(self.scenes.actor.id)
-        if row is None or row.disabled or (row.role != "admin" and "tasks" not in row.permissions):
-            raise SceneError("SCENE_EVIDENCE_FORBIDDEN", "scene run evidence access denied", 403)
-        actor = User(
-            id=row.id,
-            username=row.username,
-            role=row.role,
-            display_name=row.display_name,
-            permissions=row.permissions,
-        )
-        return EnterpriseSceneService(self.scenes.repos, actor).get_run_evidence_access(
-            organization_id, run_id
-        )
-
     async def read(self, organization_id: str, run_id: str) -> dict[str, Any]:
-        run = self._authorized_run(organization_id, run_id)
+        run = authorized_delivery_run(self.scenes, organization_id, run_id)
         expected = snapshot_hash(run)
         answer = await self.loader(run) if run["status"] == "succeeded" else None
-        current = self._authorized_run(organization_id, run_id)
+        current = authorized_delivery_run(self.scenes, organization_id, run_id)
         if snapshot_hash(current) != expected:
             raise SceneError("SCENE_EVIDENCE_STALE", "run changed during evidence retrieval", 409)
         if answer is not None and run.get("inspection_report_sha256"):

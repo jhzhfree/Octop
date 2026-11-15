@@ -19,6 +19,7 @@ from octop.infra.enterprise_assistant.models import (
 from octop.infra.enterprise_assistant.service import FLAGS_KEY, AssistantService
 from octop.infra.scenes.delivery_evidence import SceneDeliveryEvidenceService
 from octop.infra.scenes.inspection import candidates, execute_inspection
+from octop.infra.scenes.operation_trace import SceneOperationTraceService
 from octop.infra.scenes.progress import OrganizationProgressService
 from octop.infra.scenes.service import SceneError
 from tests.integration.test_scene_execution_offline import approve_and_wait
@@ -101,6 +102,12 @@ async def test_same_run_fresh_sources_report_and_acceptance(scene_runtime, monke
     run = request(scene_runtime, jobs)
     cron = await approve_and_wait(scene_runtime, run)
     assert cron.last_status == "ok"
+    trace = SceneOperationTraceService(scene_runtime.requester).read("o", run["run_id"])
+    assert trace["execution_context"]["configured_executor"] == "http_inspection"
+    assert trace["execution_context"]["schedule_kind"] == "one_shot"
+    assert any(
+        e["action"] == "cron.run_ok" and e["actor_kind"] == "system" for e in trace["events"]
+    )
     current = scene_runtime.requester.get_run("o", run["run_id"])
     assert current["status"] == "succeeded"
     batch = SceneInspectionRepo(scene_runtime.db).get(run["run_id"])

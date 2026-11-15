@@ -221,3 +221,9 @@ Validation:
 - Local ASGI inspection returned `/api/docs` HTML 200 and verified the accepted
   query/response enums and endpoint description in OpenAPI; no real browser
   visual check or external request was made.
+
+### 2026-11-15：逐操作来源回看
+
+运行详情新增按需读取的[操作来源记录](operation-trace.md)，显示服务端记录的申请/审批/
+验收账号和绑定执行事件。账号身份不等于本人点击；旧记录没有 UI/API 交互来源，因此明确
+标为未记录。单次 Cron 不宣称周期自动化；本地发布批准也不宣称真实发送。

@@ -103,6 +103,7 @@ async function open() {
 it("opens the exact run without fetching content, and reads each surface only on click", async () => {
   render(<RunQueue organizationId="o" canManage />);
   await open();
+  expect(screen.getByText("operationTrace.view")).toBeTruthy();
   expect(organizationsApi.sceneRunEvidence).not.toHaveBeenCalled();
   expect(deliveryAcceptanceApi.review).not.toHaveBeenCalled();
   expect(mattermostPublicationApi.get).not.toHaveBeenCalled();

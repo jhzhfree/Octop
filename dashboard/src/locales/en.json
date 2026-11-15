@@ -7399,5 +7399,39 @@
     "noCriteria": "No success criteria recorded",
     "notice": "Check the success criteria before completing this goal. This records your decision; it does not verify deliveries, stop running tasks or write knowledge.",
     "failed": "The status could not be updated. Please retry."
+  },
+  "operationTrace": {
+    "actions": {
+      "scene_run_requested": "Run requested",
+      "scene_run_approved": "Run approved",
+      "scene_run_rejected": "Run rejected",
+      "scene_run_delivery_reviewed": "Acceptance decision",
+      "scene_mattermost_publication_proposed": "Publication preview created",
+      "scene_mattermost_publication_approved_locally": "Publication preview approved locally",
+      "scene_mattermost_publication_revoked": "Publication preview revoked",
+      "cron_run_ok": "Execution succeeded",
+      "cron_run_failed": "Execution failed"
+    },
+    "view": "View operation trace",
+    "close": "Close operation trace",
+    "error": "Unable to read trace. Check current access and retry.",
+    "title": "Operation trace",
+    "notice": "Account records do not prove a human click; interaction channel was not recorded. History may be missing due to retention; at most 100 recent records are shown. Preview approval is not delivery.",
+    "configuration": "Execution configuration",
+    "oneShot": "One-shot task (not evidence of recurring automation)",
+    "unknownSchedule": "Schedule origin unknown",
+    "onBehalf": "On behalf of account",
+    "truncated": "Additional records omitted.",
+    "empty": "No available audit records; this does not prove no operations occurred.",
+    "account": "User account",
+    "system": "System service execution",
+    "unknownActor": "Unknown actor",
+    "notRecorded": "Interaction channel not recorded",
+    "serviceExecution": "Server execution record",
+    "executors": {
+      "http_inspection": "HTTP inspection executor",
+      "agent_task": "Agent task executor",
+      "unknown": "Executor not recorded"
+    }
   }
 }

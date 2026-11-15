@@ -106,6 +106,19 @@ class AuditRepo:
             rows = conn.execute(sql, params).fetchall()
         return map_rows(rows, AuditRow)
 
+    def for_target(self, target: str, actions: tuple[str, ...], *, limit: int) -> list[AuditRow]:
+        """Bounded, deterministic lookup; callers must authorize the target first."""
+        if not actions:
+            return []
+        placeholders = ",".join("?" for _ in actions)
+        with self._db.connect() as conn:
+            rows = conn.execute(
+                "SELECT id,ts,actor,action,target,payload FROM audit_log WHERE target=? "
+                f"AND action IN ({placeholders}) ORDER BY id DESC LIMIT ?",
+                (target, *actions, limit),
+            ).fetchall()
+        return map_rows(rows, AuditRow)
+
     def delete_before(self, cutoff_ts: int) -> int:
         """Delete audit rows older than ``cutoff_ts``. Returns deleted count."""
         with self._db.transaction() as conn:

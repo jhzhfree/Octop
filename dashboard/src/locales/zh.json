@@ -7399,5 +7399,39 @@
     "noCriteria": "未记录成功标准",
     "notice": "完成前请核对成功标准。这只记录你的决定，不自动验证交付、不停止运行任务，也不写入知识库。",
     "failed": "状态更新失败，请重试。"
+  },
+  "operationTrace": {
+    "actions": {
+      "scene_run_requested": "申请运行",
+      "scene_run_approved": "批准运行",
+      "scene_run_rejected": "拒绝运行",
+      "scene_run_delivery_reviewed": "交付验收决定",
+      "scene_mattermost_publication_proposed": "创建发布预览",
+      "scene_mattermost_publication_approved_locally": "本地批准发布预览",
+      "scene_mattermost_publication_revoked": "撤销发布预览",
+      "cron_run_ok": "执行成功",
+      "cron_run_failed": "执行失败"
+    },
+    "view": "查看操作来源记录",
+    "close": "关闭操作记录",
+    "error": "无法读取记录，请检查当前权限后重试。",
+    "title": "操作来源记录",
+    "notice": "账号记录不证明本人点击；交互方式未记录。历史可能因保留期限而缺失，仅展示最近100条。预览批准不代表真实发送。",
+    "configuration": "执行配置",
+    "oneShot": "单次任务（不证明周期自动化）",
+    "unknownSchedule": "调度来源未知",
+    "onBehalf": "代表账号",
+    "truncated": "更多记录未展示。",
+    "empty": "没有可展示的审计记录；不代表没有发生操作。",
+    "account": "用户账号",
+    "system": "系统服务执行",
+    "unknownActor": "主体未知",
+    "notRecorded": "交互方式未记录",
+    "serviceExecution": "服务端执行记录",
+    "executors": {
+      "http_inspection": "HTTP 巡检执行器",
+      "agent_task": "Agent 任务执行器",
+      "unknown": "执行器未记录"
+    }
   }
 }

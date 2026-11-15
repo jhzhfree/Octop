@@ -1,3 +1,4 @@
+import RunOperationTrace from "./RunOperationTrace";
 import RunDelivery from "./RunDelivery";
 import { useEffect, useState } from "react";
 import { Alert, Descriptions, Modal, Spin } from "antd";
@@ -80,6 +81,13 @@ function DetailSession({
               {run.plan_id ?? "—"}
             </Descriptions.Item>
           </Descriptions>
+          {currentUserId !== undefined && (
+            <RunOperationTrace
+              organizationId={organizationId}
+              runId={runId}
+              currentUserId={currentUserId}
+            />
+          )}
           {run.status === "succeeded" && currentUserId !== undefined && (
             <RunDelivery
               target={{ organizationId, runId }}
