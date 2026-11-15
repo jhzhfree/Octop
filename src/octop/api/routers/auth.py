@@ -6,11 +6,12 @@ import asyncio
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Request, Response, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
 from pydantic import BaseModel, Field
 
 from octop.api.common.client_ip import resolve_client_ip
 from octop.api.deps import _decode, current_user, extract_raw_token, get_server, sign_token
+from octop.i18n import tr
 from octop.infra.auth import sessions
 from octop.infra.auth.captcha import current_env, ensure_captcha, load_effective, public_config
 from octop.infra.errors import ErrorCode, OctopError
@@ -225,6 +226,45 @@ async def logout(
     sessions.revoke(server.services.db, _decode(server, raw), raw)
     server.services.audit_repo.write(actor=user.username, action="auth.logout")
     return Response(status_code=204)
+
+
+class AccessStateUserRecord(BaseModel):
+    id: int
+    username: str
+    role: str
+    display_name: str | None
+    locale: str
+    permissions: list[str]
+
+
+class AccessStateRecord(BaseModel):
+    revision: str = Field(
+        pattern="^[a-f0-9]{64}$",
+        description="Opaque account/membership change detector, never an authorization grant",
+    )
+    user: AccessStateUserRecord
+
+
+@router.get(
+    "/access-state",
+    response_model=AccessStateRecord,
+    summary="Read current account and organization access revision",
+    description="Read-only persisted identity and membership change detector. Not an authorization grant or a resource ACL snapshot; recheck each protected operation.",
+)
+async def access_state(
+    response: Response, user: Any = Depends(current_user), server: Any = Depends(get_server)
+) -> dict[str, Any]:
+    from octop.infra.auth.access_state import AccessStateUnavailable, read_access_state
+
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return read_access_state(server.services.repos, user.id)
+    except AccessStateUnavailable as exc:
+        raise HTTPException(
+            status_code=401 if exc.unauthenticated else 409,
+            detail=tr("auth.access_state_unavailable", normalize_locale(user.locale)),
+            headers={"Cache-Control": "no-store"},
+        ) from exc
 
 
 @router.get("/me", summary="Current user profile")

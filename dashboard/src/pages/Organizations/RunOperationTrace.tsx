@@ -1,3 +1,4 @@
+import SensitiveAccessBoundary from "../../components/SensitiveAccessBoundary";
 import { useEffect, useRef, useState } from "react";
 import { Alert, Button, Space, Typography } from "antd";
 import { useTranslation } from "react-i18next";
@@ -16,7 +17,11 @@ interface Props {
   canRead?: boolean;
 }
 export default function RunOperationTrace(props: Props) {
-  return <TraceSession key={JSON.stringify(props)} {...props} />;
+  return (
+    <SensitiveAccessBoundary>
+      <TraceSession key={JSON.stringify(props)} {...props} />
+    </SensitiveAccessBoundary>
+  );
 }
 function TraceSession({
   organizationId,

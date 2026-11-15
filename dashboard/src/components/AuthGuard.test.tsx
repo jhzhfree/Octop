@@ -1,14 +1,16 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { useEffect } from "react";
 import AuthGuard from "./AuthGuard";
 
-vi.mock("../api/modules/auth", () => ({
+vi.mock("../api/modules/auth", async (original) => ({
+  ...(await original<typeof import("../api/modules/auth")>()),
   authApi: {
     getAuthStatus: vi.fn(),
     me: vi.fn(),
+    accessState: vi.fn(),
   },
 }));
 
@@ -22,12 +24,26 @@ vi.mock("../utils/locale", () => ({
 }));
 
 import { authApi } from "../api/modules/auth";
-import { getAuthToken } from "../api/request";
+import { clearAuthToken, getAuthToken } from "../api/request";
 
 describe("AuthGuard offline boot", () => {
   beforeEach(() => {
+    vi.mocked(clearAuthToken).mockClear();
     vi.mocked(authApi.getAuthStatus).mockReset();
     vi.mocked(authApi.me).mockReset();
+    vi.mocked(authApi.accessState)
+      .mockReset()
+      .mockResolvedValue({
+        revision: "a".repeat(64),
+        user: {
+          id: 1,
+          username: "admin",
+          role: "admin",
+          permissions: [],
+          display_name: null,
+          locale: "zh",
+        },
+      });
     vi.mocked(getAuthToken).mockReset();
     vi.mocked(getAuthToken).mockReturnValue(null);
   });
@@ -88,7 +104,9 @@ describe("AuthGuard offline boot", () => {
       </MemoryRouter>,
     );
 
-    expect(await screen.findByText("protected-shell")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByText("protected-shell")).toBeInTheDocument(),
+    );
     await waitFor(() => {
       expect(authApi.getAuthStatus).toHaveBeenCalledTimes(1);
     });
@@ -98,6 +116,7 @@ describe("AuthGuard offline boot", () => {
     });
     expect(authApi.getAuthStatus).toHaveBeenCalledTimes(1);
     expect(authApi.me).toHaveBeenCalledTimes(1);
+    expect(authApi.accessState).toHaveBeenCalledTimes(1);
   });
 
   it("retries auth from the offline panel without leaving a blank shell", async () => {
@@ -129,5 +148,24 @@ describe("AuthGuard offline boot", () => {
     });
     await user.click(retry);
     expect(await screen.findByText("protected-shell")).toBeInTheDocument();
+  });
+  it("ignores late setup responses after unmount", async () => {
+    let resolve!: (value: never) => void;
+    vi.mocked(authApi.getAuthStatus).mockImplementationOnce(
+      () =>
+        new Promise((r) => {
+          resolve = r;
+        }),
+    );
+    const view = render(
+      <MemoryRouter>
+        <AuthGuard>
+          <div>protected-shell</div>
+        </AuthGuard>
+      </MemoryRouter>,
+    );
+    view.unmount();
+    await act(async () => resolve({ setup_required: true } as never));
+    expect(clearAuthToken).not.toHaveBeenCalled();
   });
 });

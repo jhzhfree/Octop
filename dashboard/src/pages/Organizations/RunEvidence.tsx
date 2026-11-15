@@ -1,3 +1,4 @@
+import SensitiveAccessBoundary from "../../components/SensitiveAccessBoundary";
 import { useEffect, useRef, useState } from "react";
 import { Alert, Button, Space, Typography } from "antd";
 import { useTranslation } from "react-i18next";
@@ -12,7 +13,11 @@ interface Props {
 }
 /** Destroy content, busy state and delayed responses on every authorization change. */
 export default function RunEvidence(props: Props) {
-  return <EvidenceSession key={JSON.stringify(props)} {...props} />;
+  return (
+    <SensitiveAccessBoundary>
+      <EvidenceSession key={JSON.stringify(props)} {...props} />
+    </SensitiveAccessBoundary>
+  );
 }
 function EvidenceSession({ target, canRead, currentUserId }: Props) {
   const { t } = useTranslation();

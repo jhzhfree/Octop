@@ -7435,5 +7435,9 @@
       "agent_task": "Agent task executor",
       "unknown": "Executor not recorded"
     }
+  },
+  "accessSession": {
+    "failed": "Current access could not be verified",
+    "notice": "Protected pages have been closed. Check the connection and retry; old content will not be restored before access is verified."
   }
 }

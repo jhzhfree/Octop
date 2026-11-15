@@ -67,6 +67,32 @@ export interface OctopUser {
   avatar_url?: string | null;
 }
 
+export interface AccessState {
+  revision: string;
+  user: Pick<
+    OctopUser,
+    "id" | "username" | "role" | "display_name" | "locale"
+  > & { permissions: string[] };
+}
+export function validAccessState(value: AccessState) {
+  const user = value?.user;
+  return (
+    !!value &&
+    typeof value.revision === "string" &&
+    /^[a-f0-9]{64}$/.test(value.revision) &&
+    !!user &&
+    Number.isSafeInteger(user.id) &&
+    user.id > 0 &&
+    typeof user.role === "string" &&
+    !!user.role &&
+    typeof user.username === "string" &&
+    typeof user.locale === "string" &&
+    (user.display_name === null || typeof user.display_name === "string") &&
+    Array.isArray(user.permissions) &&
+    user.permissions.every((p) => typeof p === "string")
+  );
+}
+
 export interface LoginResponse {
   access_token: string;
   token_type: string;
@@ -255,7 +281,9 @@ export const authApi = {
     request<void>("/auth/logout", { method: "POST" }).catch(() => undefined),
 
   /** Get the current authenticated user. */
-  me: () => request<OctopUser>("/auth/me"),
+  accessState: (signal?: AbortSignal) =>
+    request<AccessState>("/auth/access-state", { cache: "no-store", signal }),
+  me: () => request<OctopUser>("/auth/me", { cache: "no-store" }),
 
   /** Change current user's password. */
   changePassword: (oldPassword: string, newPassword: string) =>

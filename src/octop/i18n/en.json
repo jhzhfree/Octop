@@ -985,5 +985,8 @@
     "invalid": "A successful scene and an inspection-only report draft for the same owned Agent are required.",
     "forbidden": "You do not have access to share or read this report attachment.",
     "conflict": "The report or run changed, was already attached, or has already been reviewed."
+  },
+  "auth": {
+    "access_state_unavailable": "Current access could not be verified. Please retry."
   }
 }

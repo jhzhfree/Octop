@@ -51,6 +51,16 @@ class OrganizationRepo:
             ).fetchall()
         return [_dict(row) for row in rows]
 
+    def access_memberships(self, user_id: int) -> list[dict[str, Any]]:
+        """Minimal current authorization facts, without organization content."""
+        with self._db.connect() as conn:
+            rows = conn.execute(
+                "SELECT organization_id,role FROM organization_members WHERE user_id=? "
+                "ORDER BY organization_id",
+                (user_id,),
+            ).fetchall()
+        return [_dict(row) for row in rows]
+
     def list_all(self) -> list[dict[str, Any]]:
         with self._db.connect() as conn:
             rows = conn.execute(

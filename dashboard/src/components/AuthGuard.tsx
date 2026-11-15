@@ -5,7 +5,7 @@ import { clearAuthToken, getAuthToken } from "../api/request";
 import { authApi, type OctopUser } from "../api/modules/auth";
 import { applyUserLocale } from "../utils/locale";
 import { isNetworkFetchError } from "../utils/networkError";
-import { CurrentUserProvider } from "../hooks/useCurrentUser";
+import AccessSession from "./AccessSession";
 import BootOfflinePanel from "./BootOfflinePanel";
 
 interface AuthGuardProps {
@@ -29,7 +29,8 @@ interface AuthGuardProps {
  * When the backend is unreachable (offline / Failed to fetch), show an
  * explicit offline panel with Retry instead of mounting a blank shell.
  *
- * Auth is checked on mount and on explicit offline retry only. Do not put
+ * Boot auth is checked on mount and explicit offline retry. AccessSession then
+ * monitors persisted permissions independently of navigation. Do not put
  * ``navigate`` in the effect deps: under ``BrowserRouter``, React Router's
  * navigate identity changes with the location, which would re-run the gate
  * on every sidebar click and flash a full-page spinner.
@@ -52,6 +53,7 @@ export default function AuthGuard({ children }: AuthGuardProps) {
       setOffline(false);
       try {
         const status = await authApi.getAuthStatus();
+        if (cancelled) return;
 
         // No admin yet → push to setup wizard; drop any leftover JWT from a
         // previous install so background prefetch cannot stampede lockdown.
@@ -78,6 +80,7 @@ export default function AuthGuard({ children }: AuthGuardProps) {
         // need to swallow the throw here.
         try {
           const me = await authApi.me();
+          if (cancelled) return;
           await applyUserLocale(me.locale);
           if (!cancelled) {
             setUser(me);
@@ -143,8 +146,8 @@ export default function AuthGuard({ children }: AuthGuardProps) {
   }
 
   return (
-    <CurrentUserProvider user={user} setUser={setUser}>
+    <AccessSession user={user} setUser={setUser}>
       {children}
-    </CurrentUserProvider>
+    </AccessSession>
   );
 }

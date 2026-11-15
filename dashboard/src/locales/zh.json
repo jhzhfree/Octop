@@ -7435,5 +7435,9 @@
       "agent_task": "Agent 任务执行器",
       "unknown": "执行器未记录"
     }
+  },
+  "accessSession": {
+    "failed": "无法确认当前访问权限",
+    "notice": "已关闭受保护页面。请检查连接并重试；确认权限前不会恢复旧内容。"
   }
 }

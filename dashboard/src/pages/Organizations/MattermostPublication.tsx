@@ -1,3 +1,4 @@
+import SensitiveAccessBoundary from "../../components/SensitiveAccessBoundary";
 import { useEffect, useRef, useState } from "react";
 import { Alert, Button, Space, Typography } from "antd";
 import { useTranslation } from "react-i18next";
@@ -21,7 +22,11 @@ interface Props {
 type Decision = "approve" | "revoke";
 /** Identity, organization, run and role changes destroy the old content and confirmation. */
 export default function MattermostPublication(props: Props) {
-  return <PublicationSession key={JSON.stringify(props)} {...props} />;
+  return (
+    <SensitiveAccessBoundary>
+      <PublicationSession key={JSON.stringify(props)} {...props} />
+    </SensitiveAccessBoundary>
+  );
 }
 function PublicationSession({
   target,

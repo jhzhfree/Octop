@@ -1,3 +1,4 @@
+import SensitiveAccessBoundary from "../../components/SensitiveAccessBoundary";
 import { useEffect, useRef, useState } from "react";
 import { Alert, Button, Space, Typography } from "antd";
 import { useTranslation } from "react-i18next";
@@ -20,15 +21,17 @@ interface DeliveryAcceptanceProps {
 /** Every authorization context change destroys the previous evidence session. */
 export default function DeliveryAcceptance(props: DeliveryAcceptanceProps) {
   return (
-    <AcceptanceSession
-      key={JSON.stringify([
-        props.target.organizationId,
-        props.target.runId,
-        props.canReview,
-        props.currentUserId,
-      ])}
-      {...props}
-    />
+    <SensitiveAccessBoundary>
+      <AcceptanceSession
+        key={JSON.stringify([
+          props.target.organizationId,
+          props.target.runId,
+          props.canReview,
+          props.currentUserId,
+        ])}
+        {...props}
+      />
+    </SensitiveAccessBoundary>
   );
 }
 
