@@ -6,6 +6,7 @@ success nor report content/acceptance is seeded. No outbound approval is called.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from types import SimpleNamespace
 
@@ -150,6 +151,18 @@ async def test_manual_report_snapshot_is_reviewed_and_not_sent(scene_runtime, mo
         )
     assert stale.value.status == 409
     review = await scene_runtime.acceptance.review("o", run_id)
+    assert review["evidence_sources"] == [
+        {
+            "kind": "assistant_summary",
+            "source_run_id": run_id,
+            "content_sha256": prior_review["evidence_sha256"],
+        },
+        {
+            "kind": "owner_shared_report",
+            "source_run_id": p.report["id"],
+            "content_sha256": hashlib.sha256(record["content"].encode()).hexdigest(),
+        },
+    ]
     assert record["content"] in review["answer"]
     assert record["attachment_sha256"] in review["answer"]
     assert review["snapshot_sha256"] != prior_review["snapshot_sha256"]

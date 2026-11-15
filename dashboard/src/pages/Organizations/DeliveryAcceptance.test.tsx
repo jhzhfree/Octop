@@ -267,3 +267,59 @@ describe("delivery acceptance", () => {
     expect(screen.queryByText("Accepted by a human")).toBeNull();
   });
 });
+
+it("labels verified automatic reports and human-shared snapshots separately before a manual decision", async () => {
+  vi.mocked(deliveryAcceptanceApi.review).mockResolvedValue({
+    ...review,
+    evidence_sources: [
+      {
+        kind: "same_run_http_report",
+        source_run_id: "r",
+        content_sha256: "c".repeat(64),
+      },
+      {
+        kind: "owner_shared_report",
+        source_run_id: "historical-report",
+        content_sha256: "d".repeat(64),
+      },
+    ],
+  });
+  const view = render(
+    <DeliveryAcceptance target={target} currentUserId={42} canReview />,
+  );
+  await open();
+  expect(screen.getByText(/Automatic local report/)).toBeTruthy();
+  expect(screen.getByText(/Manually shared report snapshot/)).toBeTruthy();
+  expect(screen.getByText(/historical-report/)).toBeTruthy();
+  expect(screen.getByText(/c{64}/)).toBeTruthy();
+  expect(deliveryAcceptanceApi.decide).not.toHaveBeenCalled();
+  view.rerender(
+    <DeliveryAcceptance target={target} currentUserId={42} canReview={false} />,
+  );
+  expect(screen.queryByText(/historical-report/)).toBeNull();
+});
+it("shows unavailable source metadata explicitly for older servers", async () => {
+  render(<DeliveryAcceptance target={target} currentUserId={42} canReview />);
+  await open();
+  expect(screen.getByText(/Source metadata unavailable/)).toBeTruthy();
+  expect(screen.queryByText(/Automatic local report/)).toBeNull();
+});
+it("rejects source metadata from another run without showing its content", async () => {
+  vi.mocked(deliveryAcceptanceApi.review).mockResolvedValue({
+    ...review,
+    evidence_sources: [
+      {
+        kind: "same_run_http_report",
+        source_run_id: "other",
+        content_sha256: review.evidence_sha256,
+      },
+    ],
+  });
+  render(<DeliveryAcceptance target={target} currentUserId={42} canReview />);
+  fireEvent.click(
+    screen.getByRole("button", { name: "Review delivery summary" }),
+  );
+  await screen.findByText(/Review unavailable/);
+  expect(screen.queryByText(review.answer)).toBeNull();
+  expect(screen.queryByText(/Automatic local report/)).toBeNull();
+});

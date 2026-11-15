@@ -16,6 +16,11 @@ export interface AcceptanceRecord {
   snapshot_sha256: string;
   scene_version: number;
 }
+export interface EvidenceSource {
+  kind: "same_run_http_report" | "assistant_summary" | "owner_shared_report";
+  source_run_id: string;
+  content_sha256: string;
+}
 export interface AcceptanceReview {
   run_id: string;
   answer: string;
@@ -23,6 +28,7 @@ export interface AcceptanceReview {
   evidence_length: number;
   snapshot_sha256: string;
   acceptance: AcceptanceRecord | null;
+  evidence_sources?: EvidenceSource[];
 }
 const path = (target: AcceptanceTarget) =>
   `/organizations/${encodeURIComponent(
@@ -63,6 +69,26 @@ export function validAcceptanceReview(
 ) {
   return (
     review.run_id === target.runId &&
+    (review.evidence_sources === undefined ||
+      (Array.isArray(review.evidence_sources) &&
+        review.evidence_sources.length >= 1 &&
+        review.evidence_sources.length <= 2 &&
+        review.evidence_sources.every(
+          (source, index) =>
+            !!source &&
+            typeof source.source_run_id === "string" &&
+            !!source.source_run_id &&
+            typeof source.content_sha256 === "string" &&
+            /^[a-f0-9]{64}$/.test(source.content_sha256) &&
+            (index === 0
+              ? ["same_run_http_report", "assistant_summary"].includes(
+                  source.kind,
+                ) && source.source_run_id === target.runId
+              : source.kind === "owner_shared_report"),
+        ) &&
+        (review.evidence_sources.length !== 1 ||
+          review.evidence_sources[0].content_sha256 ===
+            review.evidence_sha256))) &&
     typeof review.answer === "string" &&
     review.answer.trim().length > 0 &&
     /^[a-f0-9]{64}$/.test(review.evidence_sha256) &&

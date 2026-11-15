@@ -63,6 +63,15 @@ class SceneAcceptanceService:
                 raise SceneError(
                     "ACCEPTANCE_STALE", "same-run inspection report integrity changed", 409
                 )
+        sources = [
+            {
+                "kind": "same_run_http_report"
+                if run.get("inspection_report_sha256")
+                else "assistant_summary",
+                "source_run_id": run_id,
+                "content_sha256": hashlib.sha256(answer.encode()).hexdigest(),
+            }
+        ]
         attachment_digest = run.get("report_attachment_sha256")
         if attachment_digest:
             attachment = SceneReportAttachmentRepo(self.repo.db).get(organization_id, run_id)
@@ -72,6 +81,13 @@ class SceneAcceptanceService:
                 or attachment_hash(attachment) != attachment_digest
             ):
                 raise SceneError("ACCEPTANCE_STALE", "report attachment integrity changed", 409)
+            sources.append(
+                {
+                    "kind": "owner_shared_report",
+                    "source_run_id": attachment["report_run_id"],
+                    "content_sha256": hashlib.sha256(attachment["content"].encode()).hexdigest(),
+                }
+            )
             # Stable protocol marker: sharing is manual, not proof the Agent generated this report.
             answer += (
                 "\n\n[owner_shared_report_snapshot "
@@ -90,6 +106,7 @@ class SceneAcceptanceService:
             "evidence_length": len(answer),
             "snapshot_sha256": snapshot_hash(run),
             "acceptance": self.repo.get(organization_id, run_id),
+            "evidence_sources": sources,
         }
 
     async def decide(

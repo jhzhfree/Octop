@@ -1,5 +1,18 @@
 export const deliveryAcceptanceMessages = {
   en: {
+    sources: "Evidence sources for this review",
+    sourceBoundary:
+      "Source labels describe persisted evidence, not an autonomous workflow. Acceptance is your explicit human decision. No Mattermost delivery or AKB write is performed here.",
+    same_run_http_report:
+      "Automatic local report · same-run one-time HTTP inspection (no LLM)",
+    assistant_summary:
+      "Stored assistant summary · model/tool execution not verified by this text",
+    owner_shared_report:
+      "Manually shared report snapshot · not proof of same-run generation",
+    sourceRun: "Source run",
+    sourceHash: "Source text SHA-256",
+    sourcesUnknown:
+      "Source metadata unavailable from this server. Do not infer manual or automatic generation from the text.",
     open: "Review delivery summary",
     close: "Close review",
     title: "Human delivery review",
@@ -21,6 +34,15 @@ export const deliveryAcceptanceMessages = {
     snapshot: "Snapshot hash",
   },
   zh: {
+    sources: "本次验收的证据来源",
+    sourceBoundary:
+      "来源标识描述已保存的证据，不代表自主工作流。验收由你明确作出人工决定；此处不发送 Mattermost 消息，也不写入 AKB。",
+    same_run_http_report: "自动生成本地报告 · 同次单次 HTTP 巡检（无模型调用）",
+    assistant_summary: "已保存的助手摘要 · 此文本不证明模型或工具执行已验证",
+    owner_shared_report: "人工共享报告快照 · 不证明由本次运行生成",
+    sourceRun: "来源运行",
+    sourceHash: "来源正文 SHA-256",
+    sourcesUnknown: "服务端未提供来源元数据，请勿仅凭正文推断人工或自动生成。",
     open: "验收交付摘要",
     close: "关闭验收",
     title: "交付摘要人工验收",

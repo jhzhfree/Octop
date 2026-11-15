@@ -135,6 +135,27 @@ function AcceptanceSession({ target, canReview }: DeliveryAcceptanceProps) {
           {current.failed && <Alert type="error" message={m.failed} />}
           {current.review && (
             <>
+              <section aria-label={m.sources}>
+                <Typography.Title level={5}>{m.sources}</Typography.Title>
+                <Typography.Paragraph>{m.sourceBoundary}</Typography.Paragraph>
+                {current.review.evidence_sources ? (
+                  <ol>
+                    {current.review.evidence_sources.map((source, index) => (
+                      <li key={`${index}:${source.source_run_id}`}>
+                        <strong>{m[source.kind]}</strong>
+                        <p>
+                          {m.sourceRun}: {source.source_run_id}
+                        </p>
+                        <p>
+                          {m.sourceHash}: {source.content_sha256}
+                        </p>
+                      </li>
+                    ))}
+                  </ol>
+                ) : (
+                  <Alert type="warning" message={m.sourcesUnknown} />
+                )}
+              </section>
               <Typography.Paragraph style={{ whiteSpace: "pre-wrap" }}>
                 {current.review.answer}
               </Typography.Paragraph>

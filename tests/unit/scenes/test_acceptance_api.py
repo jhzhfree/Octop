@@ -1,5 +1,6 @@
 """Router boundary tests with ASGI, real acceptance DB and offline evidence adapter."""
 
+import hashlib
 from types import SimpleNamespace
 
 import httpx
@@ -59,6 +60,13 @@ async def test_api_review_decide_and_retry(api_env):
         data = preview.json()
         assert data["answer"] == "server controlled summary"
         assert data["acceptance"] is None
+        assert data["evidence_sources"] == [
+            {
+                "kind": "assistant_summary",
+                "source_run_id": "r",
+                "content_sha256": hashlib.sha256(data["answer"].encode()).hexdigest(),
+            }
+        ]
         body = {
             "decision": "accepted",
             "expected_evidence_sha256": data["evidence_sha256"],
@@ -77,7 +85,13 @@ async def test_api_review_decide_and_retry(api_env):
 
 @pytest.mark.parametrize(
     "extra",
-    [{"answer": "forged"}, {"reviewer_id": 4}, {"is_admin": True}, {"completion_percentage": 100}],
+    [
+        {"answer": "forged"},
+        {"reviewer_id": 4},
+        {"is_admin": True},
+        {"completion_percentage": 100},
+        {"evidence_sources": []},
+    ],
 )
 async def test_client_cannot_supply_evidence_or_authority(api_env, extra):
     app, _, calls = api_env
@@ -128,3 +142,16 @@ async def test_forged_hash_and_cross_org_rejected(api_env):
         response = await client.get(BASE.replace("/o/", "/other/") + "/review")
         assert response.status_code == 404
         assert not calls
+
+
+def test_source_openapi_contract(api_env):
+    app, _, _ = api_env
+    schema = app.openapi()["components"]["schemas"]
+    assert "evidence_sources" in schema["AcceptanceReviewRecord"]["required"]
+    fields = schema["EvidenceSourceRecord"]["properties"]
+    assert fields["kind"]["enum"] == [
+        "same_run_http_report",
+        "assistant_summary",
+        "owner_shared_report",
+    ]
+    assert all(fields[key]["description"] for key in fields)

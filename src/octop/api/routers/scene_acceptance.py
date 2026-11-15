@@ -36,6 +36,19 @@ class AcceptanceRecord(BaseModel):
     scene_version: int
 
 
+class EvidenceSourceRecord(BaseModel):
+    kind: Literal["same_run_http_report", "assistant_summary", "owner_shared_report"] = Field(
+        description="Server-resolved source: verified same-run local HTTP report, visible assistant text, or manually shared report snapshot. Not proof of external-system readiness."
+    )
+    source_run_id: str = Field(
+        description="Scene run ID for the base evidence; original report run ID for a manual attachment."
+    )
+    content_sha256: str = Field(
+        pattern=r"^[0-9a-f]{64}$",
+        description="SHA-256 of this source's exact UTF-8 text, before attachment markers are added.",
+    )
+
+
 class AcceptanceReviewRecord(BaseModel):
     run_id: str
     answer: str
@@ -43,6 +56,7 @@ class AcceptanceReviewRecord(BaseModel):
     evidence_length: int
     snapshot_sha256: str
     acceptance: AcceptanceRecord | None
+    evidence_sources: list[EvidenceSourceRecord]
 
 
 def _service(server: Any, user: Any) -> SceneAcceptanceService:

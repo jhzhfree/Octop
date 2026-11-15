@@ -121,6 +121,13 @@ async def test_same_run_fresh_sources_report_and_acceptance(scene_runtime, monke
     assert not [r for r in svc.repo.runs(1) if r["snapshot"]["job"]["kind"] == "report"]
     review = await scene_runtime.acceptance.review("o", run["run_id"])
     assert review["answer"] == batch["content"]
+    assert review["evidence_sources"] == [
+        {
+            "kind": "same_run_http_report",
+            "source_run_id": run["run_id"],
+            "content_sha256": batch["content_sha256"],
+        }
+    ]
     accepted = await scene_runtime.acceptance.decide(
         "o",
         run["run_id"],
