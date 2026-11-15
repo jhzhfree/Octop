@@ -176,6 +176,13 @@ def ensure_bubblewrap() -> dict[str, Any]:
             "detail": "",
         }
 
+    if os.environ.get("OCTOP_LOCAL_TRIAL") == "1":
+        return {
+            "status": "degraded",
+            "reason": "local_trial_no_install",
+            "detail": "local trial does not auto-install bubblewrap; provision capability before startup",
+        }
+
     manager = _detect_package_manager()
     if manager is None:
         return {

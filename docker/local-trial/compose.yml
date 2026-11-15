@@ -1,0 +1,34 @@
+# Independent file: NEVER merge with docker/docker-compose.yml.
+name: ai-tagent-local-trial
+services:
+  octop:
+    image: ${AI_TAGENT_TRIAL_IMAGE:?Set an explicitly built and reviewed local image tag}
+    pull_policy: never
+    entrypoint: ["/bin/sh", "/trial/preflight.sh"]
+    restart: "no"
+    ports:
+      - "127.0.0.1:8088:8088"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=256m
+    volumes:
+      - trial-data:/data
+      - ./preflight.sh:/trial/preflight.sh:ro
+    environment:
+      HOME: /data
+      OCTOP_HOME: /data/.octop
+      OCTOP_LOCAL_TRIAL: "1"
+      OCTOP_BIND_HOST: 0.0.0.0
+      OCTOP_PORT: "8088"
+      OCTOP_DEFAULT_PASSWORD: ""
+      LANGFUSE_TRACING_ENABLED: "false"
+      OTEL_SDK_DISABLED: "true"
+      DO_NOT_TRACK: "1"
+    networks: [trial]
+networks:
+  trial:
+    internal: true
+volumes:
+  trial-data:

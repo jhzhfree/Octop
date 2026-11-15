@@ -13,6 +13,7 @@ Procedural flow (bypasses the LangGraph ReAct loop):
 from __future__ import annotations
 
 import logging
+import os
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
@@ -121,6 +122,8 @@ class ProactiveCareService:
             agent_id: The agent ID to push for.
             session_key: The session key to push to.
         """
+        if os.environ.get("OCTOP_LOCAL_TRIAL") == "1":
+            return
         logger.info(
             "ProactiveCareService: starting push agent=%s session=%s", agent_id, session_key
         )

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import random
 from datetime import UTC, datetime, time, timedelta
 from typing import TYPE_CHECKING
@@ -190,7 +191,7 @@ class ProactiveCareScheduler:
 
     def ensure_scheduled(self, agent_id: str) -> None:
         """Start the loop if this agent is enabled and not already scheduled."""
-        if self._suspended:
+        if self._suspended or os.environ.get("OCTOP_LOCAL_TRIAL") == "1":
             return
         if agent_id in self._tasks:
             return
@@ -244,7 +245,7 @@ class ProactiveCareScheduler:
 
     def _schedule(self, agent_id: str) -> None:
         """Create a scheduling task for an agent."""
-        if self._suspended:
+        if self._suspended or os.environ.get("OCTOP_LOCAL_TRIAL") == "1":
             return
         existing = self._tasks.get(agent_id)
         if existing is not None and not existing.done():
