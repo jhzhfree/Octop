@@ -395,6 +395,7 @@
     "DATABASE_NOT_EMPTY": "The target database already has users. Use an empty database, or log in with the existing admin.",
     "BACKUP_DRIVER_MISMATCH": "This backup was made with a different database engine (SQLite vs PostgreSQL). Switch the runtime to match the backup, or create a new backup on the current engine. Cross-engine restore is not supported.",
     "BACKUP_SCHEMA_INCOMPATIBLE": "This backup uses database schema version {archive_schema_version}, which cannot be restored by this Octop version (maximum supported: {runtime_schema_version}).",
+    "BACKUP_ONLINE_RESTORE_UNAVAILABLE": "Online restore is unavailable because coordinated maintenance and identity/permission recovery are not yet supported. No restore was started. Backup creation, upload and download remain available.",
     "BACKUP_IN_PROGRESS": "A backup or restore is already in progress. Try again shortly.",
     "FORBIDDEN": "Permission denied.",
     "UPDATE_TARGET_NOT_NEWER": "Target version {target} must be newer than installed version {current}. Reinstalling or downgrading is not supported.",

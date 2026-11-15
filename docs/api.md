@@ -554,3 +554,15 @@ dashboard mirrors every code under `apiErrors.*` in
 | `STORAGE_BACKEND_UNREACHABLE` | 502 | Remote backend connect / list failed |
 | `CONNECTOR_OAUTH_FAILED` | 400 | OAuth flow could not complete |
 | `INTERNAL_ERROR` | 500 | Unhandled exception (logged with traceback) |
+
+## System backup recovery restriction
+
+`POST /api/admin/backup/files/{filename}/restore` retains its existing backup
+permission requirement but now always returns HTTP 409 with error code
+`BACKUP_ONLINE_RESTORE_UNAVAILABLE`. It does not read/apply the archive or reload
+agents, channels or schedules. No query flag or administrator override enables it.
+This applies to SQLite and PostgreSQL, including old clients and migration archives.
+Create, import/upload, list, export/download and delete retain their existing semantics.
+Coordinated maintenance, identity/ACL recovery and rollback are not yet implemented;
+the legacy offline CLI is not a verified safe substitute. See
+[recovery gate and remaining design requirements](ai-tagent/online-restore-gate.md).

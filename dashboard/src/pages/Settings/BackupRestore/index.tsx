@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   App,
+  Alert,
   Button,
   Checkbox,
   Divider,
@@ -141,7 +142,8 @@ function BackupFileCard({
           size="small"
           icon={<RotateCcw size={14} />}
           loading={restoringThis}
-          disabled={busy}
+          disabled
+          title={t("apiErrors.BACKUP_ONLINE_RESTORE_UNAVAILABLE")}
           onClick={() => onRestore(row)}
         >
           {restoringThis ? t("backup.restoring") : t("backup.restoreAction")}
@@ -430,7 +432,8 @@ export default function BackupRestorePanel() {
             size="small"
             icon={<RotateCcw size={14} />}
             loading={restoringThisName === row.name}
-            disabled={busy}
+            disabled
+            title={t("apiErrors.BACKUP_ONLINE_RESTORE_UNAVAILABLE")}
             onClick={() => {
               setPendingRestore(row);
               setRestoreConfig(row.includes_config !== false);
@@ -458,6 +461,11 @@ export default function BackupRestorePanel() {
 
   return (
     <>
+      <Alert
+        type="warning"
+        showIcon
+        message={t("apiErrors.BACKUP_ONLINE_RESTORE_UNAVAILABLE")}
+      />
       <TabPanelHeader
         icon={<Archive size={22} />}
         title={t("backup.storedTitle")}
@@ -830,7 +838,7 @@ export default function BackupRestorePanel() {
         okText={restoring ? t("backup.restoring") : t("backup.importConfirmOk")}
         cancelText={t("common.cancel")}
         confirmLoading={restoring}
-        okButtonProps={{ danger: true, disabled: busy && !restoring }}
+        okButtonProps={{ danger: true, disabled: true }}
         cancelButtonProps={{ disabled: restoring }}
       >
         <p>

@@ -34,9 +34,8 @@ from octop.infra.backup.store import (
     resolve_backup_path,
     write_backup_file,
 )
-from octop.infra.backup.system_archive import create_system_backup, restore_system_backup
+from octop.infra.backup.system_archive import create_system_backup
 from octop.infra.db.pool import DatabasePool
-from octop.infra.db.repos.audit import ACTOR_ADMIN
 from octop.infra.errors import ErrorCode, OctopError
 from octop.infra.utils.paths import PathLayout
 
@@ -125,27 +124,6 @@ def _create_and_store_manual_backup(
         return place_backup_file(paths, filename, tmp_path)
 
 
-def _restore_stored_backup(
-    *,
-    paths: PathLayout,
-    filename: str,
-    pool: DatabasePool,
-    db_config: DatabaseConfig,
-    restore_config: bool,
-    owner_user_id: int,
-) -> dict[str, Any]:
-    """Sync path-based restore for ``asyncio.to_thread``."""
-    archive = resolve_backup_path(paths, filename)
-    return restore_system_backup(
-        archive,
-        paths=paths,
-        pool=pool,
-        db_config=db_config,
-        restore_config=restore_config,
-        owner_user_id=owner_user_id,
-    )
-
-
 def _create_ephemeral_backup(
     *,
     paths: PathLayout,
@@ -183,31 +161,6 @@ def _unlink_quiet(path: Path) -> None:
         path.unlink(missing_ok=True)
     except OSError:
         logger.warning("failed to remove ephemeral backup %s", path, exc_info=True)
-
-
-async def _rehydrate_runtime_after_restore(server: Any) -> None:
-    """Sync restored providers/agents, IM channels, and cron (no process restart)."""
-    runtime = getattr(server, "app_runtime", None)
-    if runtime is None:
-        return
-    registry = getattr(runtime, "agent_registry", None)
-    if registry is not None:
-        try:
-            await registry.on_provider_changed()
-        except Exception:
-            logger.exception("post-restore provider/agent rehydrate failed")
-    gateway = getattr(runtime, "gateway", None)
-    if gateway is not None:
-        try:
-            await gateway.reload_channels_from_db()
-        except Exception:
-            logger.exception("post-restore channel rehydrate failed")
-    cron_manager = getattr(runtime, "cron_manager", None)
-    if cron_manager is not None:
-        try:
-            await cron_manager.reload_from_db()
-        except Exception:
-            logger.exception("post-restore cron rehydrate failed")
 
 
 @router.get("/backup/list", summary="List stored backup archives")
@@ -314,48 +267,23 @@ async def download_backup_file(
     )
 
 
-@router.post("/backup/files/{filename}/restore", summary="Restore from stored backup")
+@router.post(
+    "/backup/files/{filename}/restore",
+    summary="Online restore unavailable pending coordinated recovery",
+    description="Fails closed before reading the archive or mutating any data. Online restore has no cross-process maintenance barrier or atomic identity/ACL recovery policy. Upload and download remain available.",
+)
 async def restore_backup_file(
     filename: str,
     restore_config: bool = Query(default=True),
     user: Any = Depends(require_permission("backup")),
     server: Any = Depends(get_server),
 ) -> dict[str, Any]:
-    """Restore database and workspaces from a file in ``backups_dir``.
+    """Keep the legacy route, but never enter the unsafe live restore pipeline.
 
-    After the archive is applied, providers/agents, IM channels, and cron jobs
-    are reloaded in-process so experts, messaging, and schedules can run without
-    a full service restart.
-    Restored ``config.json`` / ``env`` still require a process restart to take effect.
-
-    LightClaw migration archives reassign imported ownership to the restoring admin.
-
-    Heavy disk/DB work runs in a worker thread so the asyncio event loop stays
-    responsive; concurrent create/restore/auto backup is rejected via
-    ``BACKUP_LOCK``. SQLite restore still holds the shared DB lock for the
-    merge window, so DB-backed APIs may briefly queue during that phase.
+    Neither an administrator, an old client, nor a restore_config override can
+    opt out. This applies to both database drivers; it is not an offline lock.
     """
-    assert server.services is not None
-    _raise_if_backup_busy()
-    safe = normalize_backup_filename(filename)
-    async with hold_backup_lock("restore"):
-        result = await asyncio.to_thread(
-            _restore_stored_backup,
-            paths=server.paths,
-            filename=safe,
-            pool=server.services.db,
-            db_config=server.services.config.database,
-            restore_config=restore_config,
-            owner_user_id=int(user.id),
-        )
-        await _rehydrate_runtime_after_restore(server)
-    server.services.audit_repo.write(
-        actor=getattr(user, "username", None) or ACTOR_ADMIN,
-        action="backup.restore",
-        target=safe,
-        payload=str(result),
-    )
-    return {"ok": True, "name": safe, **result}
+    raise OctopError.localized(ErrorCode.BACKUP_ONLINE_RESTORE_UNAVAILABLE)
 
 
 @router.delete("/backup/files/{filename}", summary="Delete a stored backup", status_code=204)

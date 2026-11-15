@@ -428,6 +428,11 @@ def restore_system_backup(
 ) -> dict[str, Any]:
     """Restore database, workspaces, and optional config from a tar.gz archive.
 
+    Legacy offline primitive, not a coordinated recovery protocol. The HTTP
+    entry point rejects restores. This function does not preserve all current
+    permissions/ACLs, atomically preserve identity, or stop other processes;
+    callers must not interpret preserve_users as an authorization-safety policy.
+
     *source* may be a filesystem path (preferred) or in-memory bytes (tests / legacy).
 
     ``preserve_users`` controls whether the *current* Octop instance's login
