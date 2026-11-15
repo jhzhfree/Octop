@@ -120,8 +120,8 @@ async def test_near_expiry_token_gets_sliding_renew(client) -> None:
         role=user.role,
         ttl_seconds=60,
     )
-    r = await c.get("/api/auth/me", headers=bearer(short))
-    assert r.status_code == 200
+    r = await c.post("/api/auth/renew", headers=bearer(short))
+    assert r.status_code == 204
     renewed = r.headers.get(ACCESS_TOKEN_RESPONSE_HEADER)
     assert renewed
     assert renewed != short

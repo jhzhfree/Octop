@@ -100,10 +100,18 @@ export function clearAuthToken() {
   setActiveAgentId(null);
 }
 
-/** Persist a sliding-renewed access token from an API response, if present. */
-export function applyRenewedAccessToken(response: Response): void {
+/** Apply an explicit renewal only while the exact requesting token is current. */
+export function applyRenewedAccessToken(
+  response: Response,
+  expectedToken: string,
+): void {
   const renewed = response.headers.get(ACCESS_TOKEN_RESPONSE_HEADER);
-  if (renewed) {
+  if (
+    response.ok &&
+    renewed &&
+    expectedToken &&
+    getAuthToken() === expectedToken
+  ) {
     setAuthToken(renewed, !isSessionOnlyAuth());
   }
 }
@@ -375,7 +383,6 @@ export async function request<T = unknown>(
   }
 
   await throwIfUnauthorized(path, response);
-  applyRenewedAccessToken(response);
 
   if (!response.ok) {
     if (response.status === 403 && isAgentScopedPath(path)) {
@@ -429,7 +436,6 @@ export async function requestBlob(
   }
 
   await throwIfUnauthorized(path, response);
-  applyRenewedAccessToken(response);
 
   if (!response.ok) {
     const text = await response.text().catch(() => "");
@@ -482,7 +488,6 @@ export async function probeAuthResource(
   }
 
   await throwIfUnauthorized(path, response);
-  applyRenewedAccessToken(response);
 
   if (!response.ok) {
     const text = await response.text().catch(() => "");
@@ -522,7 +527,6 @@ export async function requestStream(
   }
 
   await throwIfUnauthorized(path, response);
-  applyRenewedAccessToken(response);
 
   if (!response.ok) {
     const text = await response.text().catch(() => "");
@@ -627,8 +631,6 @@ export async function requestUpload<T = unknown>(
           reject(err);
           return;
         }
-
-        applyRenewedAccessToken(response);
 
         if (!response.ok) {
           // Same shape as request() so parseApiError() can read the error envelope.

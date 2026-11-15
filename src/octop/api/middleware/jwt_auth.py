@@ -3,8 +3,7 @@
 Validated users are cached on ``request.state.octop_user`` so route-level
 ``Depends(current_user)`` can reuse the result without re-decoding.
 
-When the access token is past the sliding-renew threshold, a fresh token is
-attached as ``X-Octop-Access-Token`` on the response.
+Ordinary requests never renew tokens. Renewal is an explicit authenticated action.
 """
 
 from __future__ import annotations
@@ -17,11 +16,8 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 
 from octop.api.deps import (
-    ACCESS_TOKEN_RESPONSE_HEADER,
     authenticate_request,
-    extract_raw_token,
     is_jwt_exempt_request,
-    maybe_sliding_renew_token,
 )
 from octop.infra.errors import OctopError
 
@@ -43,10 +39,6 @@ def install(app: Any, server: Any) -> None:
         if not path.startswith("/api/") or is_jwt_exempt_request(request):
             return await call_next(request)
 
-        raw = extract_raw_token(
-            authorization=request.headers.get("authorization"),
-            access_token=request.query_params.get("access_token"),
-        )
         try:
             request.state.octop_user = authenticate_request(request, server)
         except OctopError as exc:
@@ -61,12 +53,4 @@ def install(app: Any, server: Any) -> None:
                 )
             return JSONResponse(status_code=exc.status, content=exc.to_envelope())
 
-        response = await call_next(request)
-        if raw is not None and path != "/api/auth/logout":
-            try:
-                renewed = maybe_sliding_renew_token(server, raw, request.state.octop_user)
-            except OctopError:
-                renewed = None
-            if renewed:
-                response.headers[ACCESS_TOKEN_RESPONSE_HEADER] = renewed
-        return response
+        return await call_next(request)

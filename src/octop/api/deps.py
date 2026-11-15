@@ -24,8 +24,9 @@ else:
 
 
 # Sliding renew: when remaining life is below this fraction of configured TTL,
-# middleware issues a fresh access token via ACCESS_TOKEN_RESPONSE_HEADER.
+# the explicit renewal endpoint issues a token via ACCESS_TOKEN_RESPONSE_HEADER.
 ACCESS_TOKEN_RESPONSE_HEADER = "X-Octop-Access-Token"
+RENEW_CHECK_AFTER_HEADER = "X-Octop-Renew-Check-After"
 _SLIDING_RENEW_REMAINING_FRACTION = 1 / 3
 
 
@@ -121,11 +122,16 @@ def resolve_user_from_token(server: OctopServer, token: str) -> User:
 def maybe_sliding_renew_token(server: OctopServer, token: str, user: User) -> str | None:
     """Return a fresh access token when ``token`` is past the sliding renew threshold.
 
+    Called only by the explicit renewal endpoint; ordinary traffic is not activity.
     Threshold is one-third of ``access_token_ttl_seconds`` remaining. Active clients
     that pick up ``ACCESS_TOKEN_RESPONSE_HEADER`` stay signed in without re-login.
     """
     assert server.services is not None
     payload = _decode(server, token)
+    # Cached middleware identity is not sufficient for issuing new credentials.
+    row = server.services.user_repo.get(int(payload["sub"]))
+    if row is None or row.disabled or row.id != user.id:
+        raise OctopError(ErrorCode.USER_DISABLED, "user not active")
     ttl = int(server.services.config.access_token_ttl_seconds)
     remaining = int(payload["exp"]) - int(time.time())
     threshold = max(1, int(ttl * _SLIDING_RENEW_REMAINING_FRACTION))
@@ -137,8 +143,8 @@ def maybe_sliding_renew_token(server: OctopServer, token: str, user: User) -> st
     return sign_token(
         secret,
         sub=user.id,
-        uname=user.username,
-        role=user.role,
+        uname=row.username,
+        role=row.role,
         ttl_seconds=ttl,
         session_id=sessions.session_id(payload, token),
     )

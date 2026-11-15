@@ -10,7 +10,16 @@ from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, 
 from pydantic import BaseModel, Field
 
 from octop.api.common.client_ip import resolve_client_ip
-from octop.api.deps import _decode, current_user, extract_raw_token, get_server, sign_token
+from octop.api.deps import (
+    ACCESS_TOKEN_RESPONSE_HEADER,
+    RENEW_CHECK_AFTER_HEADER,
+    _decode,
+    current_user,
+    extract_raw_token,
+    get_server,
+    maybe_sliding_renew_token,
+    sign_token,
+)
 from octop.i18n import tr
 from octop.infra.auth import sessions
 from octop.infra.auth.captcha import current_env, ensure_captcha, load_effective, public_config
@@ -207,6 +216,31 @@ async def login(
         "expires_in": ttl,
         "user": _user_json(user, locale=user.locale),
     }
+
+
+@router.post(
+    "/renew",
+    status_code=204,
+    summary="Explicitly renew an active session",
+    description="Authenticated client activity request, not proof of a human action. Ordinary API traffic never renews. Preserves session family; expired or revoked tokens cannot renew.",
+)
+def renew_session(
+    request: Request, user: Any = Depends(current_user), server: Any = Depends(get_server)
+) -> Response:
+    # Header-only credentials: do not expose renewal credentials in URLs.
+    raw = extract_raw_token(authorization=request.headers.get("authorization"))
+    if not raw:
+        raise OctopError(ErrorCode.AUTH_FAILED, "missing credentials")
+    renewed = maybe_sliding_renew_token(server, raw, user)
+    headers = {
+        "Cache-Control": "no-store",
+        RENEW_CHECK_AFTER_HEADER: str(
+            max(1, min(60, int(server.services.config.access_token_ttl_seconds) // 6))
+        ),
+    }
+    if renewed:
+        headers[ACCESS_TOKEN_RESPONSE_HEADER] = renewed
+    return Response(status_code=204, headers=headers)
 
 
 @router.post("/logout", status_code=204, summary="Sign out")

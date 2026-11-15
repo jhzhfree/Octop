@@ -15,6 +15,13 @@ described in [Chat (WebSocket)](#chat-websocket).
 | `Authorization` | `Bearer <access_token>` from `POST /api/auth/login` |
 
 Tokens expire after `OCTOP_ACCESS_TOKEN_TTL` seconds (default 24 h).
+Ordinary requests never renew tokens. Explicit authenticated `POST /api/auth/renew`
+returns 204 with `Cache-Control: no-store`; below one-third of the configured TTL
+it returns `X-Octop-Access-Token` for the same session family. Apply it only while
+the requesting session is still current. `X-Octop-Renew-Check-After` is a bounded
+1–60 second cadence for activity-triggered checks, never an instruction to poll.
+Old clients that rely on implicit renewal must log in again when their token expires.
+This is not server-enforced idle expiry or a maximum session lifetime.
 Rotating the JWT secret (`octop admin rotate-jwt-secret`) invalidates
 every outstanding token immediately. Login attempts are rate-limited
 (`OCTOP_LOGIN_MAX_ATTEMPTS` / `OCTOP_LOGIN_LOCKOUT_SECONDS`); the
@@ -100,6 +107,7 @@ does not set these headers itself.
 | `GET`    | `/auth/ldap/config` | admin | Directory settings; `bind_password` is never returned (`has_bind_password` instead) |
 | `PUT`    | `/auth/ldap/config` | admin | Upsert directory settings; `bind_password` is write-only (omit to keep the stored one) |
 | `POST`   | `/auth/ldap/config/test` | admin | Service bind + probe of `user_base_dn` → `{ok, detail}` |
+| `POST`   | `/auth/renew` | user | Header Bearer only; `204`, optional renewed token header; fresh persisted account required |
 | `POST`   | `/auth/logout` | user | `204` |
 | `GET`    | `/auth/me` | user | `{id, username, role, display_name, locale, ...}` |
 | `PATCH`  | `/auth/me` | user | body `{display_name?, locale?, ...}` |

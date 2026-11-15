@@ -1,6 +1,7 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   type Dispatch,
   type SetStateAction,
@@ -14,6 +15,7 @@ import {
   type AccessState,
   type OctopUser,
 } from "../api/modules/auth";
+import { startActivityRenewal } from "../api/activityRenewal";
 import { CurrentUserProvider } from "../hooks/useCurrentUser";
 import { SensitiveAccessContext } from "./SensitiveAccessBoundary";
 
@@ -138,6 +140,9 @@ export default function AccessSession({ user, setUser, children }: Props) {
       window.removeEventListener("octop:unauthorized", fail);
     };
   }, [attempt]);
+  const renewalEnabled = useRef(false);
+  renewalEnabled.current = ready && !failed;
+  useEffect(() => startActivityRenewal(() => renewalEnabled.current), []);
   const verifiedUser = useMemo(() => {
     if (!state) return null;
     // Keep same-account profile edits responsive, but never take authority from them.

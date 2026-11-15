@@ -47,10 +47,31 @@ describe("auth token remember / session-only", () => {
     const response = new Response(null, {
       headers: { "X-Octop-Access-Token": "renewed" },
     });
-    mod.applyRenewedAccessToken(response);
+    mod.applyRenewedAccessToken(response, "old");
     expect(mod.getAuthToken()).toBe("renewed");
     expect(mod.isSessionOnlyAuth()).toBe(true);
     expect(sessionStorage.getItem("auth_token")).toBe("renewed");
+  });
+
+  it("ignores renewal headers on ordinary background responses, including old servers", async () => {
+    mod.setAuthToken("old");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response("{}", {
+          headers: {
+            "Content-Type": "application/json",
+            "X-Octop-Access-Token": "background",
+          },
+        }),
+      ),
+    );
+    try {
+      await mod.request("/auth/access-state");
+      expect(mod.getAuthToken()).toBe("old");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("reads and writes the SSO remember preference", () => {

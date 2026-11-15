@@ -26,8 +26,8 @@ async def test_logout_revokes_entire_sliding_family_only(patched_app_client, leg
         short = jwt.encode(payload | {"sub": str(payload["sub"])}, secret, algorithm="HS256")
     else:
         short = sign_token(secret, sub=payload["sub"], uname="admin", role="admin", ttl_seconds=60)
-    r = await c.get("/api/auth/me", headers=bearer(short))
-    assert r.status_code == 200
+    r = await c.post("/api/auth/renew", headers=bearer(short))
+    assert r.status_code == 204
     renewed = r.headers[ACCESS_TOKEN_RESPONSE_HEADER]
     assert decode_token(secret, renewed)["sid"] == sessions.session_id(
         decode_token(secret, short), short
