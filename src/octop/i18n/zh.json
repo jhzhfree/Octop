@@ -1,5 +1,6 @@
 {
   "mattermost": {
+    "configuration_rejected": "Mattermost 配置被拒绝，请检查管理员、配置文件及修订号。",
     "readiness_invalid": "Mattermost 本地检查请求无效。"
   },
   "slash": {

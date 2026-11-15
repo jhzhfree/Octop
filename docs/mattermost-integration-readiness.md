@@ -79,3 +79,86 @@ roles 严格为 `system_user`；普通人类 token、禁用 Bot、错误 ID 或�
 撤销及上述数据库复核，补 SQLite 与 PostgreSQL 运行测试和真实实例验收。
 本轮只增加数据库无关内核与 MockTransport 测试，没有修改 SQL 或迁移，
 不声称实现了两种数据库的生产授权一致性。
+
+## 阶段 4：部署方实例元数据与离线核验编排（schema 040）
+
+本阶段交付的是**本地配置管理与 Mock 核验链路**，不是 Mattermost 连接交付。
+原有 Octop、意向配置 API 和 readiness API 不变；未新增真实核验 HTTP 路由。
+`configured` 仅说明部署元数据存在，不表示 `connected`、身份已验证或允许发送。
+
+### 部署方如何配置 / 撤销
+
+仅具有 Octop 部署主机 / 数据库访问权限的运维人员使用 CLI。此权限等价于
+现有离线管理 CLI 的本地信任边界：`--actor-id` 是审计归属，不是登录凭证。
+禁止向租户或不可信数字员工提供与 Octop 部署者同权限的 shell 或数据库凭据。
+`actor-id` 只声明审计归属，不能证明实际操作人身份。
+命令额外从数据库检查该 ID 当前为未禁用的平台管理员；组织 owner / manager
+不能以组织角色配置目标。不要把此命令包装成面向组织用户的远程执行接口。
+
+准备**不含 token** 的本地 JSON manifest：
+
+```json
+{
+  "organization_id": "替换为已有组织ID",
+  "instance_key": "operations-bot",
+  "origin": "https://8.8.8.8",
+  "bot_id": "bbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "credential_ref": "operations-bot-v1",
+  "status": "configured"
+}
+```
+
+上面的地址和 ID 都只是格式示例，**不是 Mattermost 服务或测试目标**。
+此命令不会 DNS 查询、读取密钥或发起请求。origin 仅支持全局单播公网 IP 的
+规范 HTTPS origin（需要匹配 IP SAN 的证书）；域名、内网和路径尚不支持。
+
+```sh
+# 使用既有 OCTOP_HOME；先在测试副本验证，遵守现有离线 CLI 运维窗口要求。
+octop mattermost-instance --manifest ./mattermost-instance.json --actor-id 1 --expected-revision 0
+```
+
+成功只输出 revision、status 和 `connected: false`。更新时使用上次 revision；
+撤销时把 manifest 的 `status` 改成 `revoked`，再提交当前 revision。
+恢复 / 轮换同样递增 revision，不能删除再重建来复用旧 revision。CLI 没有删除命令。
+别名按组织隔离，每个别名绑定一个明确 bot 和密钥引用；不同岗位 bot 应使用不同别名。
+意向中的 bot ID 必须与该配置一致。目标、bot、引用或状态任何变更都会递增 revision。
+本地管理员和可写 DB 的运维人员属于信任边界，不宣称能防恶意主机管理员修改 SQL。
+
+`credential_ref` 是外部密钥系统中的非敏感、不透明别名，**不是 token、文件路径、
+环境变量名或可自动读取任意密钥的指令**。现阶段只保存引用，不内置生产解析器。
+配置表和审计中没有 token。未使用通用 connector 的同库 Fernet：其主密钥也在
+同一数据库，不能抵御完整数据库泄漏。未来外部 provider 必须独立授权并绑定
+组织、别名、origin、bot、credential_ref、status 和 revision 全部字段，不能简单
+用数据库里的引用去读取环境变量或把既有凭据发送给新目标。
+
+### 离线编排与撤权边界
+
+`observe_configured_identity` 必须显式提供 `httpx.MockTransport`，不接受 `None`
+或真实 transport。只有部署侧可信代码可注入 credential resolver；目前没有服务
+启动接线或用户调用入口。测试假 token 只驻内存，不序列化、不写入数据库、不输出日志。
+
+编排在解析凭据前、模拟 GET 前、响应后以及记录观察结果时回查：
+
+- 当前用户未禁用，且数据库当前平台管理员，或组织 owner / manager 且可访问 Agent；
+- Agent 启用、数字员工 active、岗位仍属于组织且 Agent 任命仍存在；
+- worker version、意向 revision、配置 revision 全部相符；
+- 意向 draft、配置 configured、组织和别名一致，bot ID 精确匹配。
+
+结果与审计都不是可重用授权。SQLite 审计事务串行化本次最终读取和写入；PG
+使用语句快照，不提供跨所有权限表的全局撤权锁。撤销后检测到变化会返回
+`access_changed`，但网络前后检查本身无法阻止检查之后发生的瞬时撤销，也不能
+收回已发出的请求；“撤销再恢复且所有版本未变”的通用权限 ABA 仍不具备 epoch
+保证。当前因此**保持离线，不发布生产核验入口**。发送、执行、连接状态均未开启。
+
+### 验证与下一道交付门
+
+`tests/unit/digital_workers/test_mattermost_instances.py` 阻断 socket connect 和 DNS，
+覆盖部署管理员、组织隔离、CAS 并发、撤销 / 恢复单调 revision、各阶段权限变化、
+错误凭据绑定、脱敏、事务审计回滚、CLI、真实 v39→v40 SQLite 升级和重复迁移。
+040 SQLite / PostgreSQL DDL 同时提供；本阶段 PG 运行时、真实 TLS / Mattermost、
+浏览器和部署验证尚未完成，不能用 Mock 结果替代。
+
+下一阶段生产接入仍需：部署方受控外部密钥供应与精确目标绑定；明确撤权一致性
+契约（如必须零窗口撤权需跨权限变更的序列化协议，而非多查一次）；PG 集成验证；
+真实固定 IP HTTPS Mattermost 的受控只读验收。之后才能考虑启用核验入口。
+核验 `/users/me` 仍不能证明团队/频道成员资格，任何消息发送须另走授权、审批与审计设计。

@@ -1,6 +1,7 @@
 {
   "mattermost": {
-    "readiness_invalid": "Invalid Mattermost readiness request."
+    "readiness_invalid": "Invalid Mattermost readiness request.",
+    "configuration_rejected": "Mattermost configuration rejected; verify administrator, manifest and revision."
   },
   "slash": {
     "error": {
