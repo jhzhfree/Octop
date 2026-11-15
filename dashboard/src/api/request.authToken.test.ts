@@ -47,7 +47,7 @@ describe("auth token remember / session-only", () => {
     const response = new Response(null, {
       headers: { "X-Octop-Access-Token": "renewed" },
     });
-    mod.applyRenewedAccessToken(response, "old");
+    mod.applyRenewedAccessToken(response, mod.captureAuthSession());
     expect(mod.getAuthToken()).toBe("renewed");
     expect(mod.isSessionOnlyAuth()).toBe(true);
     expect(sessionStorage.getItem("auth_token")).toBe("renewed");
@@ -85,5 +85,17 @@ describe("auth token remember / session-only", () => {
     mod.clearAuthToken();
     expect(mod.getAuthToken()).toBe("");
     expect(sessionStorage.getItem("auth_token")).toBeNull();
+  });
+  it("rejects an old renewal snapshot after same-token re-login", () => {
+    mod.setAuthToken("same", false);
+    const session = mod.captureAuthSession();
+    mod.clearAuthToken();
+    mod.setAuthToken("same", true);
+    const response = new Response(null, {
+      headers: { "X-Octop-Access-Token": "late" },
+    });
+    expect(mod.applyRenewedAccessToken(response, session)).toBe(false);
+    expect(mod.getAuthToken()).toBe("same");
+    expect(mod.isSessionOnlyAuth()).toBe(false);
   });
 });

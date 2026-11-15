@@ -31,29 +31,36 @@ let _setupRequiredKnown = false;
 // Same-tab login/logout generation also distinguishes re-login with equal token bytes.
 let authGeneration = 0;
 
-type AuthRequestContext = {
-  token: string;
-  generation: number;
-  usesCurrentAuth: boolean;
+export type AuthSessionSnapshot = {
+  readonly token: string;
+  readonly generation: number;
 };
 
+/** Browser-local ownership only; not a cross-tab CAS or server authentication. */
+export function captureAuthSession(): AuthSessionSnapshot {
+  return { token: getAuthToken(), generation: authGeneration };
+}
+
+export function isCurrentAuthSession(session: AuthSessionSnapshot): boolean {
+  return (
+    session.generation === authGeneration && session.token === getAuthToken()
+  );
+}
+
+type AuthRequestContext = AuthSessionSnapshot & { usesCurrentAuth: boolean };
+
 function captureAuthContext(headers: HeadersInit): AuthRequestContext {
-  const token = getAuthToken();
+  const session = captureAuthSession();
   return {
-    token,
-    generation: authGeneration,
+    ...session,
     usesCurrentAuth:
       new Headers(headers).get("Authorization") ===
-      (token ? `Bearer ${token}` : null),
+      (session.token ? `Bearer ${session.token}` : null),
   };
 }
 
 function ownsCurrentAuth(context: AuthRequestContext): boolean {
-  return (
-    context.usesCurrentAuth &&
-    context.generation === authGeneration &&
-    context.token === getAuthToken()
-  );
+  return context.usesCurrentAuth && isCurrentAuthSession(context);
 }
 
 function mergeHeaders(
@@ -140,20 +147,22 @@ export function clearAuthToken() {
   setActiveAgentId(null);
 }
 
-/** Apply an explicit renewal only while the exact requesting token is current. */
+/** Apply renewal only to the requesting login generation and token. */
 export function applyRenewedAccessToken(
   response: Response,
-  expectedToken: string,
-): void {
+  expectedSession: AuthSessionSnapshot,
+): boolean {
   const renewed = response.headers.get(ACCESS_TOKEN_RESPONSE_HEADER);
   if (
     response.ok &&
     renewed &&
-    expectedToken &&
-    getAuthToken() === expectedToken
+    expectedSession.token &&
+    isCurrentAuthSession(expectedSession)
   ) {
     setAuthToken(renewed, !isSessionOnlyAuth());
+    return true;
   }
+  return false;
 }
 
 let _redirectingToSetup = false;

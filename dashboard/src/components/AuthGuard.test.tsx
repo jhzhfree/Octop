@@ -14,10 +14,17 @@ vi.mock("../api/modules/auth", async (original) => ({
   },
 }));
 
-vi.mock("../api/request", () => ({
-  getAuthToken: vi.fn(() => null),
-  clearAuthToken: vi.fn(),
-}));
+vi.mock("../api/request", () => {
+  const getAuthToken = vi.fn(() => null);
+  return {
+    getAuthToken,
+    clearAuthToken: vi.fn(),
+    captureAuthSession: () => ({ token: getAuthToken() ?? "", generation: 0 }),
+    isCurrentAuthSession: (session: { token: string }) =>
+      session.token === (getAuthToken() ?? ""),
+    applyRenewedAccessToken: vi.fn(() => false),
+  };
+});
 
 vi.mock("../utils/locale", () => ({
   applyUserLocale: vi.fn(() => Promise.resolve()),

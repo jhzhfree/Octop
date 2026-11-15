@@ -212,4 +212,96 @@ describe("activity-only renewal", () => {
       expect(getAuthToken()).toBe("old");
     },
   );
+  it.each([204, 429])(
+    "ignores late %s after equal-token re-login",
+    async (status) => {
+      let resolve!: (response: Response) => void;
+      fetcher.mockReturnValue(
+        new Promise<Response>((done) => {
+          resolve = done;
+        }),
+      );
+      trusted();
+      clearAuthToken();
+      setAuthToken("old", true);
+      resolve(
+        new Response(null, {
+          status,
+          headers: {
+            "X-Octop-Access-Token": "obsolete-renewal",
+            "X-Octop-Renew-Check-After": "1",
+            "Retry-After": "3600",
+          },
+        }),
+      );
+      await flush();
+      expect(getAuthToken()).toBe("old");
+      expect(localStorage.getItem("auth_token")).toBe("old");
+      trusted();
+      expect(fetcher).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("does not carry old backoff into a new login", async () => {
+    fetcher.mockResolvedValue(
+      new Response(null, { status: 429, headers: { "Retry-After": "3600" } }),
+    );
+    trusted();
+    await flush();
+    setAuthToken("new-login");
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    trusted();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls[1][1].headers.Authorization).toBe(
+      "Bearer new-login",
+    );
+  });
+
+  it("new-login activity aborts an old pending request without canceling its replacement", async () => {
+    const resolvers: Array<(response: Response) => void> = [];
+    fetcher.mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolvers.push(resolve);
+        }),
+    );
+    trusted();
+    const oldSignal = fetcher.mock.calls[0][1].signal as AbortSignal;
+    setAuthToken("new-login");
+    trusted();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(oldSignal.aborted).toBe(true);
+    const newSignal = fetcher.mock.calls[1][1].signal as AbortSignal;
+    resolvers[0](renewedResponse());
+    await flush();
+    expect(newSignal.aborted).toBe(false);
+    expect(getAuthToken()).toBe("new-login");
+    resolvers[1](renewedResponse());
+    await flush();
+    expect(getAuthToken()).toBe("renewed");
+  });
+
+  it("keeps learned cadence across its own successful token rotation", async () => {
+    fetcher.mockResolvedValue(
+      new Response(null, {
+        status: 204,
+        headers: {
+          "X-Octop-Access-Token": "rotated",
+          "X-Octop-Renew-Check-After": "2",
+        },
+      }),
+    );
+    trusted();
+    await flush();
+    expect(getAuthToken()).toBe("rotated");
+    trusted();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(1999);
+    trusted();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(1);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    trusted();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
 });
