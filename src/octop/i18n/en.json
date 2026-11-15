@@ -950,7 +950,13 @@
     "report_title": "Weekly report draft (collected facts)",
     "source": "Source run: {run_id}; collected: {at}",
     "no_items": "No work items were returned.",
-    "review_notes": "Review and add completed work, risks and next-week plans. These are the latest snapshots within configured scope, not evidence of uncollected activity. Verify content and destination before confirming."
+    "review_notes": "Review and add completed work, risks and next-week plans. These are the latest snapshots within configured scope, not evidence of uncollected activity. Verify content and destination before confirming.",
+    "inspection_source": "Inspection run: {run_id}; attempt finished: {at}",
+    "inspection_coverage": "Inspection source-job coverage: {collected}/{total}; healthy: {healthy}; abnormal: {abnormal}; unknown health: {unknown}; unavailable: {unavailable}. Collection success does not imply healthy systems.",
+    "health_healthy": "Health endpoint reports healthy.",
+    "health_abnormal": "Health endpoint reports an abnormal state.",
+    "health_unknown": "Health state is unknown; do not treat as healthy.",
+    "health_unavailable": "Inspection failed; no current health conclusion is available."
   },
   "planningDialogue": {
     "unavailable": "The assigned Agent or its default model is unavailable.",
@@ -967,5 +973,8 @@
     "notFound": "Knowledge mapping or worker not found.",
     "conflict": "The mapping or its bindings changed. Refresh before trying again.",
     "unavailable": "Knowledge mapping management is unavailable."
+  },
+  "scenes": {
+    "plan_required": "A ready digital-worker plan is required. Submit a new run with a plan."
   }
 }

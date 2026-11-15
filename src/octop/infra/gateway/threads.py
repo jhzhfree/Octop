@@ -15,6 +15,8 @@ class ThreadRegistry:
 
     CHANNEL_DASHBOARD = "dashboard"
     CHANNEL_CLI = "cli"
+    # Internal scene execution, not an external delivery transport.
+    CHANNEL_INTERNAL_CRON = "cron"
     CHAT_TYPE_DM = "dm"
     CHAT_TYPE_GROUP = "group"
 

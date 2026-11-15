@@ -358,16 +358,21 @@ class AssistantService:
             elif job.kind == "report":
                 cutoff = int(time.time()) - 7 * 86400
                 facts: list[dict[str, Any]] = []
-                for source_id in job.source_job_ids:
+                for source_id in dict.fromkeys(job.source_job_ids):
                     source = self.owned(source_id, "job")
                     source_config = source["config"]
                     self.require(source_config["kind"])
+                    connection = self.owned(source_config["connection_id"], "connection")
                     latest = self.repo.latest_for_job(self.user.id, source_id)
                     if (
                         not latest
                         or latest["status"] != "succeeded"
+                        and not (
+                            source_config["kind"] == "inspection" and latest["status"] == "failed"
+                        )
                         or latest["created_at"] < cutoff
                         or latest["snapshot"]["job_version"] != source["version"]
+                        or latest["snapshot"]["connection_version"] != connection["version"]
                     ):
                         raise WorkflowError("REPORT_SOURCE_MISSING_OR_STALE")
                     facts.append(
@@ -375,9 +380,15 @@ class AssistantService:
                             "type": "source",
                             "job_id": source_id,
                             "run_id": latest["id"],
-                            "collected_at": latest["created_at"],
+                            "collected_at": latest["updated_at"],
                             "name": source_config["name"],
-                            "facts": latest["evidence"],
+                            "kind": source_config["kind"],
+                            "collection_status": latest["status"],
+                            # A failed inspection is a coverage gap, never a healthy result.
+                            # Do not expose raw upstream exceptions or reuse earlier success.
+                            "facts": latest["evidence"]
+                            if latest["status"] == "succeeded"
+                            else [{"type": "health", "status": "unavailable"}],
                         }
                     )
                 evidence.extend(facts)

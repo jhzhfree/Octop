@@ -6656,6 +6656,14 @@
     "title": "技能录制引导"
   },
   "organizations": {
+    "scenePlanGuideTitle": "选择就绪计划",
+    "scenePlanGuideContinue": "打开员工目标",
+    "scenePlanGuideWorker": "选择活跃数字员工",
+    "scenePlanGuideSteps": "选择匹配数字员工，打开活跃目标，再从就绪计划申请运行。此步骤不会提交或执行任务。",
+    "scenePlanGuideNoWorker": "请先创建或激活与该场景岗位和 Agent 匹配的数字员工。",
+    "scenePlanGuideAskManager": "请联系组织管理者创建或激活匹配的数字员工。",
+    "scenePlanGuideNoPlan": "没有就绪计划时，请先创建目标和计划，激活目标并将计划标记为就绪。",
+    "scenePlanGuideReadOnly": "你可申请已有就绪计划；若没有，请联系管理者创建或准备计划。",
     "title": "企业组织",
     "description": "维护组织、部门层级、岗位职责和汇报关系，并将员工或 Agent 指派到岗位。组织任职不会改变 AI-TAgent 账号和 Agent 的权限。",
     "selectOrganization": "选择组织",
@@ -7213,7 +7221,7 @@
     "executeStep": "执行已确认的操作",
     "error": "执行或配置失败",
     "help": {
-      "inspection": "填写只读 JSON 健康检查完整地址，返回 status: ok / healthy / up / pass 才视为成功。本版不执行任意远程命令。",
+      "inspection": "填写只读 JSON 健康检查完整地址，采集记录正常、异常或未知健康状态；连接失败标记为不可用。仅保留有限百分比指标，不执行任意远程命令。",
       "jira": "填写 Jira 根地址，不含 /rest/api。支持 Server / Data Center PAT 或 Basic 邮箱与 Token。结果最多 500 条，超限会明确失败。",
       "oa": "填写登录页与固定 CSS 选择器。服务端需预装 Chromium。验证码、MFA、SSO 跳转需人工处理；不绕过认证。登录成功标记必须与待办页面一致。",
       "wecom": "只填写官方群机器人地址，不含 ?key=。Key 填在凭证字段。发送前需确认，回执仅表示接口已接受。",

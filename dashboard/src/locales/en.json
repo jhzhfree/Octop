@@ -6656,6 +6656,14 @@
     "title": "Skill recording guide"
   },
   "organizations": {
+    "scenePlanGuideTitle": "Select a ready plan",
+    "scenePlanGuideContinue": "Open employee goals",
+    "scenePlanGuideWorker": "Select an active digital worker",
+    "scenePlanGuideSteps": "Choose a matching digital worker, open an active goal, then request a run from a ready plan. This step does not submit or execute a run.",
+    "scenePlanGuideNoWorker": "Create or activate a digital worker with this scene’s position and Agent before continuing.",
+    "scenePlanGuideAskManager": "Ask an organization manager to create or activate a matching digital worker.",
+    "scenePlanGuideNoPlan": "If no ready plan exists, create a goal and plan, activate the goal and mark the plan ready first.",
+    "scenePlanGuideReadOnly": "You can request an existing ready plan. Ask a manager to create or prepare a plan if none is available.",
     "title": "Organizations",
     "description": "Manage organization structure, departments, position duties and reporting lines, then assign employees or Agents to positions. Organization appointments do not change AI-TAgent account or Agent permissions.",
     "selectOrganization": "Select an organization",
@@ -7213,7 +7221,7 @@
     "executeStep": "Execute approved operation",
     "error": "Configuration or execution failed",
     "help": {
-      "inspection": "Full URL of a read-only JSON health endpoint. status must be ok / healthy / up / pass. No arbitrary remote commands.",
+      "inspection": "Full URL of a read-only JSON health endpoint. Collection records healthy, abnormal or unknown health; connection failures remain unavailable. Only bounded percentage metrics are retained. No arbitrary remote commands.",
       "jira": "Jira root URL without /rest/api. Server / Data Center PAT or Basic email/token supported. More than 500 issues fails explicitly.",
       "oa": "Provide login URL and fixed CSS selectors. Preinstall Chromium on the server. CAPTCHA, MFA and SSO require operator action; no bypass. The ready marker must identify the work-item page.",
       "wecom": "Official group webhook URL without ?key=. Store the key in the secret field. Confirmation required. Receipts mean API acceptance only.",

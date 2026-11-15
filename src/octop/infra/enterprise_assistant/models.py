@@ -91,7 +91,7 @@ class JobConfig(Contract):
     kind: Literal["inspection", "jira", "oa", "report", "vmware"]
     agent_id: str = Field(min_length=1, max_length=128)
     connection_id: str = Field(min_length=1, max_length=128)
-    # Reports collect only successful read-only runs belonging to these jobs.
+    # Reports include successful reads and explicit failed-inspection coverage gaps.
     source_job_ids: list[str] = Field(default_factory=list, max_length=30)
     enabled: bool = False
     cron: str = Field(default="", max_length=100)

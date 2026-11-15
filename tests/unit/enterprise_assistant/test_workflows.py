@@ -199,7 +199,7 @@ async def test_report_confirmed_exactly_once_and_draft_invalidates_decision(serv
     assert service.run_owned(run["id"])["status"] == "sent"
 
 
-async def test_report_requires_recent_success_not_previous_success(service, monkeypatch):
+async def test_report_includes_latest_failed_inspection_not_previous_success(service, monkeypatch):
     source = await successful_read(service, monkeypatch)
     monkeypatch.setattr(
         adapters, "collect", AsyncMock(side_effect=WorkflowError("UPSTREAM_UNAVAILABLE"))
@@ -209,7 +209,12 @@ async def test_report_requires_recent_success_not_previous_success(service, monk
     report = job(service, connection(service, "wecom"), "report", source_job_ids=[source["id"]])
     run = service.enqueue(report["id"])
     await service.process(run["id"])
-    assert service.run_owned(run["id"])["error_code"] == "REPORT_SOURCE_MISSING_OR_STALE"
+    result = service.run_owned(run["id"])
+    assert result["status"] == "awaiting_approval"
+    assert failed["id"] in result["content"]
+    assert "0/1" in result["content"]
+    assert "无法得出当前健康结论" in result["content"]
+    assert "done" not in result["content"]
 
 
 async def test_kill_switch_and_changed_destination_block_approved_vm(service, monkeypatch):
@@ -608,3 +613,130 @@ async def test_report_too_many_wecom_chunks_remains_editable(service, monkeypatc
     with pytest.raises(WorkflowError, match="REPORT_TOO_LARGE"):
         decide(service, draft)
     assert service.run_owned(run["id"])["status"] == "awaiting_approval"
+
+
+async def test_morning_inspection_partial_report_real_collect(service, monkeypatch):
+    """Actual collection and orchestration; HTTP only is replaced, never send a report."""
+
+    async def respond(request):
+        if request.url.path == "/a":
+            return httpx.Response(200, json={"status": "healthy", "cpu_percent": 12})
+        if request.url.path == "/b":
+            return httpx.Response(
+                200,
+                json={
+                    "status": "degraded",
+                    "disk_percent": 95,
+                    "password": "PRIVATE",
+                    "logs": "PRIVATE",
+                },
+            )
+        raise httpx.ReadTimeout("PRIVATE transport error", request=request)
+
+    monkeypatch.setattr(
+        adapters, "_client", lambda *_: httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    )
+    send = AsyncMock()
+    monkeypatch.setattr(adapters, "send_wecom", send)
+    sources = []
+    source_runs = []
+    for asset in ("a", "b", "c"):
+        source = job(
+            service, connection(service, name=asset, url=f"https://services.example/{asset}")
+        )
+        sources.append(source["id"])
+        run = service.enqueue(source["id"])
+        await service.process(run["id"])
+        source_runs.append(service.run_owned(run["id"]))
+    assert [r["status"] for r in source_runs] == ["succeeded", "succeeded", "failed"]
+    assert source_runs[-1]["error_code"] == "UPSTREAM_UNAVAILABLE"
+    assert source_runs[1]["evidence"][-1]["metrics"] == {"disk_percent": 95}
+    assert source_runs[1]["evidence"][-1]["collected_at"] > 0
+    report = job(service, connection(service, "wecom"), "report", source_job_ids=sources)
+    run = service.enqueue(report["id"])
+    await service.process(run["id"])
+    result = service.run_owned(run["id"])
+    assert result["status"] == "awaiting_approval"
+    for fragment in ("2/3", "健康：1", "异常：1", "未完成采集：1", "disk_percent: 95%"):
+        assert fragment in result["content"]
+    for source in source_runs:
+        assert source["id"] in result["content"]
+    assert "PRIVATE" not in json.dumps(result)
+    send.assert_not_awaited()
+
+
+@pytest.mark.parametrize("status", ["unknown", "PRIVATE", None, {"secret": "PRIVATE"}])
+async def test_health_unknown_never_becomes_healthy_or_retains_arbitrary_text(
+    service, monkeypatch, status
+):
+    monkeypatch.setattr(
+        adapters,
+        "_client",
+        lambda *_: httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda _: httpx.Response(
+                    200,
+                    json={
+                        "status": status,
+                        "cpu_percent": True,
+                        "disk_percent": 101,
+                        "memory_percent": "PRIVATE",
+                        "password": "PRIVATE",
+                    },
+                )
+            )
+        ),
+    )
+    facts = await adapters.collect(
+        ConnectionConfig(name="asset", kind="inspection", url="https://services.example"),
+        "",
+        service.flags(),
+    )
+    assert facts[0]["status"] == "unknown"
+    assert "metrics" not in facts[0]
+    assert "PRIVATE" not in json.dumps(facts)
+
+
+async def test_inspection_report_rejects_changed_connection(service, monkeypatch):
+    source = await successful_read(service, monkeypatch)
+    conn = service.owned(source["config"]["connection_id"], "connection")
+    service.save_connection(
+        ConnectionInput(
+            config=ConnectionConfig.model_validate(conn["config"]), expected_version=conn["version"]
+        ),
+        conn["id"],
+    )
+    report = job(service, connection(service, "wecom"), "report", source_job_ids=[source["id"]])
+    run = service.enqueue(report["id"])
+    await service.process(run["id"])
+    assert service.run_owned(run["id"])["error_code"] == "REPORT_SOURCE_MISSING_OR_STALE"
+
+
+async def test_inspection_report_deduplicates_sources_and_reads_legacy_health(service, monkeypatch):
+    monkeypatch.setattr(
+        adapters, "collect", AsyncMock(return_value=[{"type": "health", "status": "ok"}])
+    )
+    source = job(service, connection(service))
+    source_run = service.enqueue(source["id"])
+    await service.process(source_run["id"])
+    report = job(
+        service, connection(service, "wecom"), "report", source_job_ids=[source["id"], source["id"]]
+    )
+    run = service.enqueue(report["id"])
+    await service.process(run["id"])
+    result = service.run_owned(run["id"])
+    assert "1/1" in result["content"] and "健康：1" in result["content"]
+    assert result["content"].count(source_run["id"]) == 1
+
+
+async def test_report_still_rejects_failed_non_inspection(service, monkeypatch):
+    monkeypatch.setattr(
+        adapters, "collect", AsyncMock(side_effect=WorkflowError("UPSTREAM_UNAVAILABLE"))
+    )
+    source = job(service, connection(service, "jira"), "jira")
+    source_run = service.enqueue(source["id"])
+    await service.process(source_run["id"])
+    report = job(service, connection(service, "wecom"), "report", source_job_ids=[source["id"]])
+    run = service.enqueue(report["id"])
+    await service.process(run["id"])
+    assert service.run_owned(run["id"])["error_code"] == "REPORT_SOURCE_MISSING_OR_STALE"

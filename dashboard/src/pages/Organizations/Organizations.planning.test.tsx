@@ -39,6 +39,7 @@ vi.mock("../../api/modules/organizations", () => ({
     chart: vi.fn(),
     scenes: vi.fn(),
     sceneRuns: vi.fn(),
+    requestSceneRun: vi.fn(),
     digitalWorkers: vi.fn(),
     digitalWorkerMemoryCandidates: vi.fn(),
     digitalWorkerGoals: vi.fn(),
@@ -660,5 +661,76 @@ describe("goal completion integration", { timeout: 15000 }, () => {
     expect(
       screen.queryByRole("button", { name: en.organizations.addPlan }),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("scene plan entry", { timeout: 15000 }, () => {
+  it("routes a scene to employee goals without submitting a planless request", async () => {
+    vi.mocked(organizationsApi.scenes).mockResolvedValue([
+      {
+        scene_id: "scene1",
+        organization_id: "org1",
+        position_id: "position1",
+        agent_id: "agent1",
+        name: "Research scene",
+        enabled: true,
+        version: 1,
+        prompt: "Research",
+        mcp_servers: [],
+        owner_user_id: 1,
+        created_at: 0,
+        updated_at: 0,
+      },
+    ]);
+    const user = userEvent.setup();
+    render(<OrganizationsPage />);
+    await user.click(
+      await screen.findByRole("tab", { name: en.organizations.scenes }),
+    );
+    await user.click(
+      await screen.findByRole("button", {
+        name: en.organizations.scenePlanGuideTitle,
+      }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("combobox"));
+    await user.click(
+      await screen.findByText("Research twin", {
+        selector: ".ant-select-item-option-content",
+      }),
+    );
+    await user.click(
+      within(dialog).getByRole("button", {
+        name: en.organizations.scenePlanGuideContinue,
+      }),
+    );
+    expect(
+      await screen.findByRole("button", { name: en.organizations.managePlans }),
+    ).toBeInTheDocument();
+    // Re-entering the same worker must retain its already-loaded goal list.
+    await user.click(
+      screen.getByRole("tab", { name: en.organizations.scenes }),
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: en.organizations.scenePlanGuideTitle,
+      }),
+    );
+    const reopened = await screen.findByRole("dialog");
+    await user.click(within(reopened).getByRole("combobox"));
+    await user.click(
+      await screen.findByText("Research twin", {
+        selector: ".ant-select-item-option-content",
+      }),
+    );
+    await user.click(
+      within(reopened).getByRole("button", {
+        name: en.organizations.scenePlanGuideContinue,
+      }),
+    );
+    expect(
+      await screen.findByRole("button", { name: en.organizations.managePlans }),
+    ).toBeInTheDocument();
+    expect(organizationsApi.requestSceneRun).not.toHaveBeenCalled();
   });
 });

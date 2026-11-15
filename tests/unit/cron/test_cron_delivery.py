@@ -409,3 +409,24 @@ async def test_agent_failure_projects_the_prompt(tmp_path: Path) -> None:
     assert "记得喝水" in page[0].message_json
     assert "先查一下" in page[1].message_json
     db.close()
+
+
+@pytest.mark.asyncio
+async def test_external_channel_push_failure_is_not_swallowed() -> None:
+    session = _session(channel_type="feishu")
+
+    async def stream(_aid: str, _request: dict):
+        yield {"type": "token", "content": "Report"}
+
+    agent_manager = MagicMock()
+    agent_manager.merge_turn_mcp_servers.return_value = None
+    agent_manager.get_row.return_value = None
+    agent_manager.stream = stream
+    gateway = MagicMock()
+    gateway.run_in_session = _run_locked
+    gateway.require_session.return_value = session
+    gateway.push_session_text = AsyncMock(side_effect=RuntimeError("transport failed"))
+    service = CronDeliveryService(gateway=gateway, agent_manager=agent_manager, repos=MagicMock())
+    with pytest.raises(RuntimeError, match="transport failed"):
+        await service.deliver(_command(task_type="agent"))
+    gateway.push_session_text.assert_awaited_once()

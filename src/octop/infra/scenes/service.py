@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from octop.i18n import tr
 from octop.infra.db.services import RepoBundle
 from octop.infra.gateway.threads import ThreadRegistry
 from octop.infra.users.identity import User
+from octop.infra.utils.locale import resolve_user_locale
 from octop.infra.utils.ulid import new_ulid
 
 
@@ -163,6 +165,15 @@ class EnterpriseSceneService:
         if not self._assigned(organization_id, scene["position_id"], scene["agent_id"]):
             raise SceneError(
                 "SCENE_AGENT_NOT_ASSIGNED", "Agent is no longer appointed to this position", 409
+            )
+        if plan_id is None:
+            raise SceneError(
+                "SCENE_PLAN_REQUIRED",
+                tr(
+                    "scenes.plan_required",
+                    resolve_user_locale(user_repo=self.repos.user_repo, user_id=self.actor.id),
+                ),
+                422,
             )
         plan_snapshot = None
         prompt_snapshot = None
@@ -440,6 +451,24 @@ class EnterpriseSceneService:
             )
             return self.get_run(organization_id, run_id)
 
+        # Legacy requests may predate execution snapshots. They remain readable
+        # and rejectable, but must be resubmitted with a ready worker plan.
+        snapshot = run.get("plan_snapshot")
+        if (
+            not isinstance(snapshot, dict)
+            or not isinstance(snapshot.get("worker"), dict)
+            or not snapshot["worker"].get("worker_id")
+            or not isinstance(snapshot.get("capabilities"), dict)
+        ):
+            raise SceneError(
+                "SCENE_PLAN_REQUIRED",
+                tr(
+                    "scenes.plan_required",
+                    resolve_user_locale(user_repo=self.repos.user_repo, user_id=self.actor.id),
+                ),
+                409,
+            )
+
         requester_id = int(run["requested_by"])
         requester = self.repos.user_repo.get(requester_id)
         if requester is None or requester.disabled:
@@ -602,7 +631,7 @@ class EnterpriseSceneService:
                     user_id=int(run["requested_by"]),
                     session_key=ThreadRegistry.make_key(
                         agent_id=str(run["agent_id"]),
-                        channel_type="cron",
+                        channel_type=ThreadRegistry.CHANNEL_INTERNAL_CRON,
                         channel_subject_id=cron_id,
                         channel_chat_type=ThreadRegistry.CHAT_TYPE_DM,
                     ),

@@ -950,7 +950,13 @@
     "report_title": "周报草稿（基于已采集事实）",
     "source": "来源执行：{run_id}；采集时间：{at}",
     "no_items": "本次查询未返回待办。",
-    "review_notes": "待你补充确认：本周完成情况、问题与风险、下周计划。以上为配置范围内的最近采集快照，不能据此推断未采集的工作；请审核内容和发送目标。"
+    "review_notes": "待你补充确认：本周完成情况、问题与风险、下周计划。以上为配置范围内的最近采集快照，不能据此推断未采集的工作；请审核内容和发送目标。",
+    "inspection_source": "巡检运行：{run_id}；尝试结束时间：{at}",
+    "inspection_coverage": "巡检来源任务采集覆盖率：{collected}/{total}；健康：{healthy}；异常：{abnormal}；健康未知：{unknown}；未完成采集：{unavailable}。采集成功不代表系统健康。",
+    "health_healthy": "健康接口报告正常。",
+    "health_abnormal": "健康接口报告异常。",
+    "health_unknown": "健康状态未知，不可视为正常。",
+    "health_unavailable": "巡检失败，无法得出当前健康结论。"
   },
   "planningDialogue": {
     "unavailable": "任命的智能体或其默认模型不可用。",
@@ -967,5 +973,8 @@
     "notFound": "未找到知识映射或数字员工。",
     "conflict": "映射或相关绑定已变更，请刷新后重试。",
     "unavailable": "知识映射管理暂不可用。"
+  },
+  "scenes": {
+    "plan_required": "运行需要就绪的数字员工计划，请关联计划后重新申请。"
   }
 }

@@ -36,7 +36,12 @@ class SceneDecisionBody(BaseModel):
 
 
 class SceneRunRequestBody(BaseModel):
-    plan_id: str | None = Field(default=None, min_length=1, max_length=128)
+    plan_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        description="Ready digital-worker plan required for new run requests; omission returns SCENE_PLAN_REQUIRED.",
+    )
     use_memory: bool = True
     capture_memory: bool = True
 
@@ -203,6 +208,7 @@ async def list_scene_versions(
     "/organizations/{organization_id}/scenes/{scene_id}/runs",
     status_code=201,
     summary="Request an enterprise scene run",
+    description="Requires a ready plan belonging to the scene worker. Legacy planless requests remain readable and rejectable, but cannot be approved.",
     response_model=SceneRunRecord,
 )
 async def request_scene_run(

@@ -3,9 +3,23 @@
 from __future__ import annotations
 
 import asyncio
+import socket
+
+import pytest
 
 from octop.infra.gateway.threads import ThreadRegistry
 from tests.support.auth import TEST_PASSWORD, bearer, create_agent, login
+
+
+@pytest.fixture(autouse=True)
+def deny_outbound_network(monkeypatch):
+    def denied(*_args, **_kwargs):
+        raise AssertionError("scene API tests must not access external services")
+
+    monkeypatch.setattr(socket.socket, "connect", denied)
+    monkeypatch.setattr(socket.socket, "connect_ex", denied)
+    monkeypatch.setattr(socket.socket, "sendto", denied)
+    monkeypatch.setattr(socket, "getaddrinfo", denied)
 
 
 async def test_scene_run_is_snapshotted_and_requires_another_org_manager(env):
@@ -80,8 +94,57 @@ async def test_scene_run_is_snapshotted_and_requires_another_org_manager(env):
         f"/api/organizations/{org_id}/scenes/{scene_id}/runs", headers=manager_auth
     )
     assert denied_run.status_code == 403
-    requested = await client.post(
+    missing_plan = await client.post(
         f"/api/organizations/{org_id}/scenes/{scene_id}/runs", headers=owner_auth
+    )
+    assert missing_plan.status_code == 422, missing_plan.text
+    assert missing_plan.json()["detail"]["code"] == "SCENE_PLAN_REQUIRED"
+    workers_path = f"/api/organizations/{org_id}/digital-workers"
+    worker_response = await client.post(
+        workers_path,
+        headers=owner_auth,
+        json={
+            "position_id": position.json()["position_id"],
+            "agent_id": agent_id,
+            "name": "Operator",
+        },
+    )
+    assert worker_response.status_code == 201, worker_response.text
+    worker_path = f"{workers_path}/{worker_response.json()['worker_id']}"
+    active_worker = await client.patch(
+        worker_path, headers=owner_auth, json={"expected_version": 1, "status": "active"}
+    )
+    assert active_worker.status_code == 200, active_worker.text
+    goal_response = await client.post(
+        f"{worker_path}/goals",
+        headers=owner_auth,
+        json={"title": "Inspect services", "success_criteria": "Deliver a reviewable report"},
+    )
+    assert goal_response.status_code == 201, goal_response.text
+    goal_path = f"{worker_path}/goals/{goal_response.json()['goal_id']}"
+    active_goal = await client.patch(goal_path, headers=owner_auth, json={"status": "active"})
+    assert active_goal.status_code == 200, active_goal.text
+    plan_response = await client.post(
+        f"{goal_path}/plans",
+        headers=owner_auth,
+        json={
+            "title": "Read-only inspection",
+            "approach": "Inspect and report",
+            "steps": [{"action": "Inspect", "expected_output": "Report"}],
+        },
+    )
+    assert plan_response.status_code == 201, plan_response.text
+    plan_id = plan_response.json()["plan_id"]
+    ready = await client.patch(
+        f"{goal_path}/plans/{plan_id}",
+        headers=owner_auth,
+        json={"expected_version": 1, "status": "ready"},
+    )
+    assert ready.status_code == 200, ready.text
+    requested = await client.post(
+        f"/api/organizations/{org_id}/scenes/{scene_id}/runs",
+        headers=owner_auth,
+        json={"plan_id": plan_id},
     )
     assert requested.status_code == 201, requested.text
     run_id = requested.json()["run_id"]
@@ -158,7 +221,8 @@ async def test_scene_run_is_snapshotted_and_requires_another_org_manager(env):
     assert approved.status_code == 200, approved.text
     result = approved.json()
     assert result["status"] == "queued"
-    assert result["prompt_snapshot"] == "检查服务状态并生成摘要"
+    assert "检查服务状态并生成摘要" in result["prompt_snapshot"]
+    assert "后续版本的任务内容" not in result["prompt_snapshot"]
     assert result["scene_version"] == 1
     assert result["approved_by"] in {manager_id, second_manager_id}
     assert result["cron_id"]

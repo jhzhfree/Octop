@@ -9,6 +9,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
+from weakref import WeakValueDictionary
 
 from octop_gateway.channel import ChannelCredentialsError
 from octop_gateway.channels import ChannelKind
@@ -124,6 +125,9 @@ class Gateway:
         self._cli_channel: CliChannel | None = None
         self._runtime_status: dict[str, ChannelRuntimeStatus] = {}
         self._history_backfill = HistoryBackfillQueue()
+        # Internal scene runs have no inbound or outbound IM channel. Keep one
+        # lock while a session is in use without retaining completed run IDs.
+        self._internal_cron_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
 
     def replace_repos(self, repos: RepoBundle) -> None:
         """Point channel/thread persistence at a rebound control-plane pool."""
@@ -411,6 +415,12 @@ class Gateway:
     ) -> None:
         """Serialize a proactive operation with inbound turns for its session."""
         session = self.require_session(agent_id, session_key)
+        if session.channel_type == ThreadRegistry.CHANNEL_INTERNAL_CRON:
+            self._assert_internal_cron_session(session)
+            lock = self._internal_cron_locks.setdefault(session_key, asyncio.Lock())
+            async with lock:
+                await operation()
+            return
         manager = self._require_channel_manager()
         channel_id = self._channel_id_for_session(session)
         await manager.run_in_session(channel_id, session_key, operation)
@@ -439,6 +449,12 @@ class Gateway:
         title_source: str | None = None,
     ) -> None:
         """Deliver one complete proactive message to a resolved session."""
+        if session.channel_type == ThreadRegistry.CHANNEL_INTERNAL_CRON:
+            self._assert_internal_cron_session(session)
+            # CronDeliveryService has already persisted the transcript. Internal
+            # scene results stay in that run, never route to an arbitrary channel.
+            self._bump_virtual_session(session, title_source or text)
+            return
         channel_id = self._channel_id_for_session(session)
         await self.push_text(
             session.channel_type,
@@ -448,6 +464,11 @@ class Gateway:
         )
         if ThreadRegistry.is_virtual_channel(session.channel_type):
             self._bump_virtual_session(session, title_source or text)
+
+    @staticmethod
+    def _assert_internal_cron_session(session: SessionRow) -> None:
+        if session.channel_id:
+            raise ValueError("internal cron sessions cannot bind an outbound channel")
 
     @staticmethod
     def _channel_id_for_session(session: SessionRow) -> str:

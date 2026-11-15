@@ -9,6 +9,7 @@ import importlib
 import io
 import os
 import ssl
+import time
 from collections.abc import Callable
 from typing import Any
 from urllib.parse import quote, urlsplit, urlunsplit
@@ -139,11 +140,34 @@ async def collect(config: ConnectionConfig, secret: str, flags: Features) -> lis
             value = await json_request(client, "GET", config.url)
             if not isinstance(value, dict):
                 raise WorkflowError("HEALTH_JSON_OBJECT_REQUIRED")
-            # Store only health facts, never an arbitrary monitoring response containing secrets.
-            status = str(value.get("status", "unknown"))[:80]
-            if status.lower() not in {"ok", "healthy", "up", "pass"}:
-                raise WorkflowError("HEALTH_CHECK_FAILED")
-            return [{"type": "health", "name": config.name, "status": status}]
+            # Normalize untrusted text; never persist arbitrary monitoring fields or secrets.
+            raw_status = value.get("status")
+            status = raw_status.strip().lower() if isinstance(raw_status, str) else "unknown"
+            if status in {"ok", "healthy", "up", "pass"}:
+                status = "healthy"
+            elif status in {"degraded", "unhealthy", "down", "fail", "failed", "critical"}:
+                status = "abnormal"
+            else:
+                status = "unknown"
+            fact: dict[str, Any] = {
+                "type": "health",
+                "name": config.name,
+                "status": status,
+                "collected_at": int(time.time()),
+            }
+            # Explicit percentage schema, not arbitrary response retention or inferred thresholds.
+            metrics = {}
+            for key in ("cpu_percent", "memory_percent", "disk_percent"):
+                metric = value.get(key)
+                if (
+                    isinstance(metric, (int, float))
+                    and not isinstance(metric, bool)
+                    and 0 <= metric <= 100
+                ):
+                    metrics[key] = metric
+            if metrics:
+                fact["metrics"] = metrics
+            return [fact]
         if config.kind != "jira":
             raise WorkflowError("READ_CONNECTOR_REQUIRED")
         records: list[dict[str, Any]] = []

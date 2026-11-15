@@ -300,3 +300,38 @@ async def test_push_text_from_session_does_not_project_history(gateway: Gateway)
     sk = _insert_dashboard_session(gateway, thread_id="thr_text")
     await gateway.push_text_from_session("a1", sk, "记得喝水")
     gateway._repos.thread_message_repo.append_if_ready.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_internal_cron_operations_are_serialized_without_channel_manager(
+    gateway: Gateway,
+) -> None:
+    import asyncio
+
+    sk = ThreadRegistry.make_key(agent_id="a1", channel_type="cron", channel_subject_id="job")
+    await gateway.thread_registry.get_or_create_by_key(
+        session_key=sk, agent_id="a1", user_id=1, channel_type="cron"
+    )
+    gateway._channel_manager = None
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    order = []
+
+    async def first():
+        order.append("first")
+        entered.set()
+        await release.wait()
+        order.append("released")
+
+    async def second():
+        order.append("second")
+
+    one = asyncio.create_task(gateway.run_in_session("a1", sk, first))
+    await entered.wait()
+    two = asyncio.create_task(gateway.run_in_session("a1", sk, second))
+    await asyncio.sleep(0)
+    assert order == ["first"]
+    release.set()
+    await asyncio.gather(one, two)
+    assert order == ["first", "released", "second"]
+    assert not gateway._internal_cron_locks

@@ -60,6 +60,7 @@ import ServerPlanReadiness from "./ServerPlanReadiness";
 import DeliveryAcceptance from "./DeliveryAcceptance";
 import OrganizationProgress from "./OrganizationProgress";
 import RunQueue from "./RunQueue";
+import ScenePlanGuide from "./ScenePlanGuide";
 import GoalStatusAction from "./GoalStatusAction";
 import PlanningDialogue from "./PlanningDialogue";
 import KnowledgeMappings from "./KnowledgeMappings";
@@ -138,6 +139,15 @@ export default function OrganizationsPage() {
   const [editingPlan, setEditingPlan] = useState<DigitalWorkerPlan>();
   const [runRequestPlan, setRunRequestPlan] = useState<DigitalWorkerPlan>();
   const [runRequestOpen, setRunRequestOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState("chart");
+  const [guideScene, setGuideScene] = useState<EnterpriseScene>();
+  const [preferredSceneId, setPreferredSceneId] = useState<string>();
+  useEffect(() => {
+    setGuideScene(undefined);
+    setPreferredSceneId(undefined);
+    setRunRequestOpen(false);
+    setRunRequestPlan(undefined);
+  }, [organizationId]);
   const [goalModalOpen, setGoalModalOpen] = useState(false);
   const selectedWorkerId = selectedWorker?.worker_id;
   const selectedGoalId = selectedGoal?.goal_id;
@@ -587,17 +597,26 @@ export default function OrganizationsPage() {
   }
 
   function openPlanRunModal(plan: DigitalWorkerPlan) {
-    if (!selectedWorker) return;
+    if (
+      !selectedWorker ||
+      selectedWorker.status !== "active" ||
+      selectedGoal?.status !== "active" ||
+      plan.status !== "ready"
+    )
+      return;
     const matching = scenes.filter(
       (scene) =>
         scene.enabled &&
+        scene.organization_id === organizationId &&
         scene.position_id === selectedWorker.position_id &&
         scene.agent_id === selectedWorker.agent_id,
     );
     setRunRequestPlan(plan);
     runRequestForm.resetFields();
     runRequestForm.setFieldsValue({
-      scene_id: matching[0]?.scene_id,
+      scene_id:
+        matching.find((scene) => scene.scene_id === preferredSceneId)
+          ?.scene_id ?? matching[0]?.scene_id,
       use_memory: true,
       capture_memory: true,
     });
@@ -777,17 +796,6 @@ export default function OrganizationsPage() {
         await organizationsApi.sceneVersions(organizationId, scene.scene_id),
       );
       setVersionsModalScene(scene);
-    } catch {
-      message.error(t("organizations.operationFailed"));
-    }
-  }
-
-  async function requestSceneRun(scene: EnterpriseScene) {
-    if (!organizationId) return;
-    try {
-      await organizationsApi.requestSceneRun(organizationId, scene.scene_id);
-      await load(organizationId);
-      message.success(t("organizations.runSubmitted"));
     } catch {
       message.error(t("organizations.operationFailed"));
     }
@@ -1334,6 +1342,10 @@ export default function OrganizationsPage() {
               <Button
                 type="primary"
                 icon={<Play size={14} />}
+                disabled={
+                  selectedWorker?.status !== "active" ||
+                  selectedGoal?.status !== "active"
+                }
                 onClick={() => openPlanRunModal(plan)}
               >
                 {t("organizations.requestRun")}
@@ -1449,9 +1461,9 @@ export default function OrganizationsPage() {
           <Button
             icon={<Play size={14} />}
             disabled={!scene.enabled}
-            onClick={() => void requestSceneRun(scene)}
+            onClick={() => setGuideScene(scene)}
           >
-            {t("organizations.requestRun")}
+            {t("organizations.scenePlanGuideTitle")}
           </Button>
           {canManage && (
             <Button
@@ -1713,6 +1725,8 @@ export default function OrganizationsPage() {
           </Card>
         ) : (
           <Tabs
+            activeKey={activeTab}
+            onChange={setActiveTab}
             items={[
               {
                 key: "chart",
@@ -2751,6 +2765,23 @@ export default function OrganizationsPage() {
           </Form.List>
         </Form>
       </Modal>
+      {guideScene && guideScene.organization_id === organizationId && (
+        <ScenePlanGuide
+          key={`${organizationId}:${guideScene.scene_id}`}
+          scene={guideScene}
+          workers={digitalWorkers}
+          canManage={canManage}
+          onClose={() => setGuideScene(undefined)}
+          onSelect={(worker) => {
+            setSelectedGoal(undefined);
+            setWorkerPlans([]);
+            setSelectedWorker(worker);
+            setPreferredSceneId(guideScene.scene_id);
+            setGuideScene(undefined);
+            setActiveTab("digital-workers");
+          }}
+        />
+      )}
       <Modal
         open={runRequestOpen}
         title={t("organizations.requestPlanRun")}
@@ -2779,6 +2810,7 @@ export default function OrganizationsPage() {
                       .filter(
                         (scene) =>
                           scene.enabled &&
+                          scene.organization_id === organizationId &&
                           scene.position_id === selectedWorker.position_id &&
                           scene.agent_id === selectedWorker.agent_id,
                       )
