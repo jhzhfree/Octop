@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
-RECOVERY_QUARANTINE_FILE = ".octop-recovery-quarantine"
+from octop.infra.db.sqlite_path import prepare_sqlite_path, validate_open_path
 
 
 def qmark_to_pyformat(sql: str) -> str:
@@ -38,26 +38,15 @@ class SqlitePool:
     dialect: str = "sqlite"
 
     def __init__(self, path: Path):
-        self.path = Path(path)
-        # A SQLite query can replay a hot journal before seeing the in-DB marker.
-        # Directory images also carry an external marker, checked before connect.
-        try:
-            (self.path.parent / RECOVERY_QUARANTINE_FILE).lstat()
-        except FileNotFoundError:
-            pass
-        else:
-            from octop.infra.errors import ErrorCode, OctopError
-
-            raise OctopError.localized(ErrorCode.BACKUP_RECOVERY_QUARANTINED)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        first_create = not self.path.exists()
+        self.path, identity = prepare_sqlite_path(Path(path))
         self._conn = sqlite3.connect(
             str(self.path),
             check_same_thread=False,
             isolation_level=None,
         )
         try:
-            # Recovery images are for offline review, never an implicitly activated home.
+            # Do not execute any SQL before the post-connect identity check.
+            validate_open_path(self.path, identity)
             if self._conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE name='octop_recovery_quarantine'"
             ).fetchone():
@@ -70,9 +59,9 @@ class SqlitePool:
         except Exception:
             self._conn.close()
             raise
+        if identity is None and os.name == "posix":
+            os.chmod(self.path, 0o600, follow_symlinks=False)
         self._lock = threading.RLock()
-        if first_create and os.name == "posix":
-            os.chmod(self.path, 0o600)
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:

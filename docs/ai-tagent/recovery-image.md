@@ -1,13 +1,19 @@
 # SQLite 隔离恢复镜像
 
-2026-11-15，本轮基线 `a10f64728ca09cbfbebe6d2c478c7e1320d79723`。
+2026-11-15，本轮基线 `7a7cd9c1352c67c454ebe66f686e02c2438244fa`。
 
-**安全更正：该基线的裸 SQLite 文件发布存在已复现的 hot-journal 漏洞。**
+**安全更正：历史 a10f647 的裸 SQLite 文件发布存在已复现的 hot-journal 漏洞。**
 目标主文件不存在也不代表 SQLite 命名空间为空：旧 journal 可在首次查询前回滚掉
 隔离表并恢复历史管理员，integrity_check 仍可通过。此前 212 项测试没有覆盖此情况，
 不能作为旧镜像安全的证据。不要继续使用该版本生成的裸文件；从受信任原归档重新
 生成新格式目录。不要把旧文件/sidecar 搬入新目录，也不要手工删除隔离标记激活。
 本轮不操作任何已有业务库或历史用户制品。
+
+**第二次更正：7a7cd9c 的目录门禁仍可被文件路径别名绕过。** 文件 symlink 的父目录
+没有外部标记；SQLite 通过别名打开实际主库后可回放被注入的 journal。这是本地文件
+访问边界的复现，不是已证明的远程漏洞。当前修复采用真实路径门禁、硬链接拒绝与
+绑定 inode 的扩展属性标记；新镜像格式为 3。旧格式 1/2 不会自动获得 inode 属性保护，必须
+从可信原归档重新生成，不能把旧镜像脱离原目录单独使用。
 
 本阶段交付可实际读取业务数据的**新建数据库镜像**，不是系统原地恢复、服务接管或
 可登录部署。在线和旧 CLI/底层恢复入口继续关闭。受控管理员初始化、ACL 审核后启用、
@@ -30,13 +36,26 @@ octop backup recover-image /path/to/completed-backup.tar.gz \
 
 `--output` 现在是**尚不存在的目录**，不是 SQLite 文件名；这是安全必需的开发版
 兼容性变更，无旧裸文件发布开关。目录含 `octop.db`（0600）与外部隔离标记
-`.octop-recovery-quarantine`，目录本身为 0700。成功 JSON 的 `format` 为 2，
-`output` 为目录，新增 `database` 为主库路径，并含源归档/镜像 SHA-256、schema、
+`.octop-recovery-quarantine`，目录本身为 0700。成功 JSON 的 `format` 为 3，
+`output` 为目录，`database` 为主库路径，并含源归档/镜像 SHA-256、schema、
 账号数和 `application_start_allowed: false`。
 
-应用 SqlitePool 在调用 SQLite connect **之前**检查外部标记（包括悬空符号链接），
-因此外部进程在发布后加入的 hot journal 也不会被该连接池自动回放。内部表门禁仍
-保留，但不能单独防止 SQLite 的查询前恢复；不相信任何标记中的布尔值。
+应用 SqlitePool 在调用 SQLite connect **之前**检查传入及解析后的真实目录标记
+（包括悬空标记 symlink），并把普通文件/目录 symlink 规范化到实际主库路径，避免
+别名各自使用不同 sidecar。硬链接数不为 1、非普通文件或检测到路径替换均拒绝，
+错误码 `SQLITE_UNSAFE_PATH`；这是对普通数据库也适用的兼容性变化。
+
+格式 3 必须设置 Linux 扩展属性 `user.octop.recovery_quarantine`，属性绑定到主库
+inode，不依赖传入文件名。生成时设置并验证属性，文件 fsync 后与目录一起发布；
+文件系统不支持该属性则拒绝发布，不降级。门禁使用 stat/getxattr 检查，不打开
+额外的原始文件描述符、不执行 SQLite 查询；属性存在即拒绝，不信任其真假文本。
+硬链接原名被删除而链接数恢复为 1 时，属性仍跟随 inode。
+
+连接后、首条 SQL 前再次核对真实路径、inode、链接数、目录标记及扩展属性；
+检测到替换则关闭连接。普通数据库缺少属性或所在文件系统不支持属性时仍可正常
+打开，但后者不能生成恢复镜像。内部表门禁继续保留，不能单独防止查询前回滚。
+不读取原始文件头作为门禁：在 POSIX 上关闭同一数据库的额外文件描述符可能释放
+该进程其他 SQLite 连接的锁，因此没有采用此前探索的原始文件描述符方案。
 服务启动提前打开并复用实际控制面连接，在插件加载/依赖安装、移动能力探测、目录
 扫描之前拒绝隔离镜像；准备阶段失败关闭连接。此处仍会解析本地环境/配置，不能
 称为启动完全无本地副作用。正常空目录继续延迟数据库绑定。
@@ -95,7 +114,7 @@ DELETE journal，检查私有准备副本无 WAL/SHM/journal sidecar；随后数
 发布/目录同步失败，以及目录发布完成后才抛错的结果判定。新增真实异常退出写入者
 留下 hot journal 的攻击对照、旧 WAL/SHM/符号链接、不配合锁的跨进程目录占位、
 发布后 journal 注入、启动副作用哨兵、失败关闭连接、空库延迟绑定与 FIFO 输入拒绝。
-### 本轮修复阶段
+### 历史 7a7cd9c 修复阶段（未覆盖路径别名）
 
 - `uv run pytest tests/unit/backup tests/unit/db/test_db_pool.py tests/unit/db/test_db_factory.py tests/unit/db/test_setup_lifecycle.py tests/unit/api/test_backup_restore_rehydrate.py tests/integration/test_online_restore_gate.py tests/unit/i18n tests/unit/auth/test_access_state.py tests/unit/gateway/test_versioned_history.py::test_backup_includes_archive_and_restore_refuses_partial_overwrite -q`：245 passed，2 项既有 ldap3 弃用提示；恢复镜像文件含 48 项测试。
 - `make lint-all typecheck-all` 通过；mypy 660 个源文件，ESLint 69 warnings / 0 errors。
@@ -119,6 +138,31 @@ Python 检查使用 `UV_CACHE_DIR=/tmp/octop-uv-cache UV_OFFLINE=1`；没有安�
 激活后管理员可操作性、真实身份/模型/AKB/Mattermost。Docker/bubblewrap 本轮不作为
 部署证明；受限遥测和全量 make all/testmon 不运行。SQLite 版本证据见
 [WAL 核查](sqlite-wal-review.md)，不能外推到生产镜像。
+
+## 本轮路径别名修复验证
+
+使用临时合成库测试文件 symlink、目录 symlink、symlink 链、硬链接的原名及别名、
+保留扩展属性的单链接副本、删除原名后的硬链接；各类 hot journal 均由 SQLite 子进程
+真实写事务异常退出产生。拒绝后主库/journal 字节不变，未靠 integrity_check 证明
+身份安全。另在 connect 位置注入文件、目录和 symlink 替换，证明被检测的替换在
+第一条 SQL 前被拒绝；配置指定文件 symlink 也在启动副作用哨兵前拒绝。
+普通数据库 symlink 保留读写能力并复用规范路径，硬链接数据库明确拒绝。
+新增独立子进程竞争写事务的回归，确认路径预检不释放同进程现有 SQLite 的 POSIX
+锁；还覆盖 xattr 不支持时拒绝发布、把属性值改为 false 仍拒绝。
+本轮 `uv run pytest tests/unit/backup tests/unit/db/test_db_pool.py tests/unit/db/test_db_factory.py tests/unit/db/test_setup_lifecycle.py tests/unit/api/test_backup_restore_rehydrate.py tests/integration/test_online_restore_gate.py tests/unit/i18n tests/unit/auth/test_access_state.py tests/unit/gateway/test_versioned_history.py::test_backup_includes_archive_and_restore_refuses_partial_overwrite -q`：265 passed，2 项既有 ldap3 提示；其中恢复镜像 64 项。
+前文 212/245 项均为历史范围。前端备份页 2 passed，`npm run build` 通过。
+所有数据均为临时合成库，未触达真实凭据或服务；本轮无测试失败。
+`make lint-all typecheck-all` 通过（mypy 661 个源文件，ESLint 69 warnings / 0 errors）；
+不执行受限遥测或全量 make all。
+
+**不能外推的边界：** Python sqlite3 没有将连接绑定到已验证文件描述符的公共接口。
+前后身份核对不是原子打开协议；同 UID 写入者可以做 ABA 路径替换、原地修改同一
+inode、删除外部标记/扩展属性，或直接用原生 SQLite 打开文件。上述校验
+不证明能阻止所有这类竞争，也不是跨进程停写证明。扩展属性不是密码学认证；
+只复制数据库字节的 copy/write、部分归档工具或不支持 xattr 的文件系统会丢失该属性。
+这类拆散目录/丢失元数据的副本不是受支持的恢复镜像，必须从可信归档重新生成；
+已被回滚、标记被删除或脱离可信保管的文件不能仅凭门禁证明安全。
+仍不开放激活/原地/在线恢复，不把这些本地合成回归当成远程漏洞或整机安全认证。
 
 ## 服务恢复闭环设计门槛（尚未实现）
 

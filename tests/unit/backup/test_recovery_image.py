@@ -790,3 +790,178 @@ async def test_normal_startup_reuses_checked_pool_with_runtime_mocked(tmp_path, 
     finally:
         for pool in opened:
             pool.close()
+
+
+@pytest.mark.parametrize("alias_kind", ["file_symlink", "directory_symlink", "symlink_chain"])
+@pytest.mark.parametrize("inject_journal", [False, True])
+def test_recovery_aliases_reject_before_journal_replay(
+    source, tmp_path, alias_kind, inject_journal
+):
+    archive, _, _ = source
+    image = tmp_path / "alias-image"
+    recover(archive, image)
+    target = image / "octop.db"
+    if alias_kind == "directory_symlink":
+        parent = tmp_path / "directory-alias"
+        parent.symlink_to(image, target_is_directory=True)
+        alias = parent / "octop.db"
+    else:
+        alias = tmp_path / "file-alias.db"
+        destination = target
+        if alias_kind == "symlink_chain":
+            destination = tmp_path / "intermediate.db"
+            destination.symlink_to(target)
+        alias.symlink_to(destination)
+    journal = Path(str(target) + "-journal")
+    if inject_journal:
+        hot = hot_journal(archive, tmp_path / "journal-source.db")
+        journal.write_bytes(hot.read_bytes())
+    before = sha(target)
+    before_journal = sha(journal) if inject_journal else None
+    with pytest.raises(OctopError) as error:
+        SqlitePool(alias)
+    assert error.value.code == ErrorCode.BACKUP_RECOVERY_QUARANTINED
+    assert sha(target) == before
+    if inject_journal:
+        assert sha(journal) == before_journal
+
+
+@pytest.mark.parametrize("opened_name", ["original", "alias"])
+def test_hardlinked_image_is_rejected_without_sqlite_io(source, tmp_path, opened_name, monkeypatch):
+    archive, _, _ = source
+    image = tmp_path / "hardlinked-image"
+    recover(archive, image)
+    target = image / "octop.db"
+    alias = tmp_path / "hardlink.db"
+    os.link(target, alias)
+    before = sha(target)
+    monkeypatch.setattr(
+        sqlite3, "connect", lambda *a, **kw: pytest.fail("must reject before SQLite")
+    )
+    with pytest.raises(OctopError) as error:
+        SqlitePool(target if opened_name == "original" else alias)
+    assert error.value.code in (ErrorCode.BACKUP_RECOVERY_QUARANTINED, ErrorCode.SQLITE_UNSAFE_PATH)
+    assert sha(target) == before
+
+
+@pytest.mark.parametrize("detached", ["copy", "unlinked_original"])
+def test_inode_attribute_blocks_detached_inode_with_hot_journal(source, tmp_path, detached):
+    archive, _, _ = source
+    image = tmp_path / "detached-image"
+    recover(archive, image)
+    target = image / "octop.db"
+    alias = tmp_path / "detached.db"
+    if detached == "copy":
+        import shutil
+
+        shutil.copy2(target, alias)
+    else:
+        os.link(target, alias)
+        target.unlink()
+    assert alias.stat().st_nlink == 1
+    hot = hot_journal(archive, tmp_path / "old-journal.db")
+    journal = Path(str(alias) + "-journal")
+    journal.write_bytes(hot.read_bytes())
+    before, before_journal = sha(alias), sha(journal)
+    with pytest.raises(OctopError) as error:
+        SqlitePool(alias)
+    assert error.value.code == ErrorCode.BACKUP_RECOVERY_QUARANTINED
+    assert sha(alias) == before and sha(journal) == before_journal
+
+
+@pytest.mark.parametrize("replacement", ["file", "directory", "symlink"])
+def test_replacement_during_connect_rejected_before_first_query(
+    source, tmp_path, monkeypatch, replacement
+):
+    archive, _, _ = source
+    image = tmp_path / "replacement-image"
+    recover(archive, image)
+    directory = tmp_path / "normal-directory"
+    directory.mkdir()
+    target = directory / "normal.db"
+    with sqlite3.connect(target) as conn:
+        conn.execute("CREATE TABLE ordinary(value TEXT)")
+    saved = tmp_path / "saved.db"
+    target_copy = tmp_path / "replacement-content.db"
+    target_copy.write_bytes((image / "octop.db").read_bytes())
+    hot = hot_journal(archive, tmp_path / "replacement-journal.db")
+    connect = sqlite3.connect
+    before = sha(target_copy)
+    before_journal = sha(hot)
+
+    def replaced(name, *args, **kwargs):
+        # Deterministic replacement after preflight, before SQLite's first SQL.
+        if replacement == "directory":
+            directory.rename(tmp_path / "saved-directory")
+            directory.mkdir()
+        else:
+            target.rename(saved)
+        if replacement == "symlink":
+            target.symlink_to(target_copy)
+            Path(str(target_copy) + "-journal").write_bytes(hot.read_bytes())
+        else:
+            target.write_bytes(target_copy.read_bytes())
+            Path(str(target) + "-journal").write_bytes(hot.read_bytes())
+        return connect(name, *args, **kwargs)
+
+    monkeypatch.setattr(sqlite3, "connect", replaced)
+    with pytest.raises(OctopError) as error:
+        SqlitePool(target)
+    assert error.value.code == ErrorCode.SQLITE_UNSAFE_PATH
+    assert sha(target) == before
+    journal_target = target_copy if replacement == "symlink" else target
+    assert sha(Path(str(journal_target) + "-journal")) == before_journal
+
+
+@pytest.mark.asyncio
+async def test_configured_symlink_image_rejects_before_startup_side_effects(
+    source, tmp_path, monkeypatch
+):
+    from octop.infra import server
+
+    archive, _, _ = source
+    image = tmp_path / "configured-alias-image"
+    recover(archive, image)
+    alias = tmp_path / "configured-alias.db"
+    alias.symlink_to(image / "octop.db")
+    home = tmp_path / "configured-alias-home"
+    home.mkdir()
+    (home / "config.json").write_text(
+        json.dumps({"database": {"driver": "sqlite", "sqlite_path": str(alias)}})
+    )
+    monkeypatch.setattr(
+        server.OctopServer, "_setup_logging", lambda *a: pytest.fail("startup side effect")
+    )
+    with pytest.raises(OctopError) as error:
+        await server.OctopServer(home=home).start()
+    assert error.value.code == ErrorCode.BACKUP_RECOVERY_QUARANTINED
+
+
+def test_missing_xattr_support_refuses_publication(source, tmp_path, monkeypatch):
+    import errno
+
+    archive, _, _ = source
+    output = tmp_path / "no-xattr"
+
+    def unsupported(*args, **kwargs):
+        raise OSError(errno.ENOTSUP, "synthetic xattr unsupported")
+
+    monkeypatch.setattr(recovery.os, "setxattr", unsupported)
+    with pytest.raises(OctopError) as error:
+        recover(archive, output)
+    assert error.value.code == ErrorCode.BACKUP_RECOVERY_REJECTED
+    assert not output.exists()
+
+
+def test_xattr_boolean_cannot_activate_detached_image(source, tmp_path):
+    import shutil
+
+    archive, _, _ = source
+    image = tmp_path / "attribute-value"
+    recover(archive, image)
+    detached = tmp_path / "attribute.db"
+    shutil.copy2(image / "octop.db", detached)
+    os.setxattr(detached, recovery.RECOVERY_QUARANTINE_XATTR, b"false")
+    with pytest.raises(OctopError) as error:
+        SqlitePool(detached)
+    assert error.value.code == ErrorCode.BACKUP_RECOVERY_QUARANTINED

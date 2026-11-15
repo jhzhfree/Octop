@@ -818,3 +818,71 @@ def test_transaction_completes_while_a_competing_writer_waits(
         keys = {row["k"] for row in conn.execute("SELECT k FROM scratch").fetchall()}
     assert keys == {"competitor", "ours"}
     competitor.close()
+
+
+@pytest.mark.parametrize("kind", ["file", "directory"])
+def test_normal_database_symlink_resolves_to_canonical_file(tmp_path, kind):
+    directory = tmp_path / "real"
+    directory.mkdir()
+    target = directory / "ordinary.db"
+    pool = SqlitePool(target)
+    with pool.transaction() as conn:
+        conn.execute("CREATE TABLE ordinary(value TEXT)")
+    pool.close()
+    if kind == "file":
+        alias = tmp_path / "alias.db"
+        alias.symlink_to(target)
+    else:
+        parent = tmp_path / "alias-dir"
+        parent.symlink_to(directory, target_is_directory=True)
+        alias = parent / "ordinary.db"
+    pool = SqlitePool(alias)
+    try:
+        assert pool.path == target
+        with pool.transaction() as conn:
+            conn.execute("INSERT INTO ordinary VALUES('normal write')")
+        with pool.connect() as conn:
+            assert conn.execute("SELECT value FROM ordinary").fetchone()[0] == "normal write"
+    finally:
+        pool.close()
+
+
+def test_normal_database_hardlink_is_explicitly_rejected(tmp_path):
+    from octop.infra.errors import ErrorCode, OctopError
+
+    target = tmp_path / "ordinary.db"
+    SqlitePool(target).close()
+    alias = tmp_path / "hardlink.db"
+    os.link(target, alias)
+    with pytest.raises(OctopError) as error:
+        SqlitePool(alias)
+    assert error.value.code == ErrorCode.SQLITE_UNSAFE_PATH
+
+
+def test_path_preflight_does_not_release_existing_posix_transaction_locks(tmp_path):
+    import subprocess
+    import sys
+
+    from octop.infra.db.sqlite_path import prepare_sqlite_path
+
+    path = tmp_path / "locked.db"
+    pool = SqlitePool(path)
+    try:
+        with pool.connect() as conn:
+            conn.execute("PRAGMA journal_mode=DELETE")
+        with pool.transaction() as conn:
+            conn.execute("CREATE TABLE retained_lock(value TEXT)")
+            prepare_sqlite_path(path)
+            script = """
+import sqlite3, sys
+conn = sqlite3.connect(sys.argv[1], timeout=0)
+try:
+    conn.execute('BEGIN IMMEDIATE')
+except sqlite3.OperationalError as exc:
+    assert 'locked' in str(exc)
+    sys.exit(0)
+sys.exit(1)
+"""
+            subprocess.run([sys.executable, "-c", script, str(path)], check=True, timeout=10)
+    finally:
+        pool.close()

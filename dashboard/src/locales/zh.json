@@ -92,6 +92,7 @@
     "DATABASE_NOT_EMPTY": "目标数据库已有用户。请改用空库，或直接登录现有管理员账户。",
     "BACKUP_DRIVER_MISMATCH": "该备份与当前数据库引擎不一致（SQLite 与 PostgreSQL 不能互恢）。请将运行时切回备份所用引擎后再恢复，或在当前引擎上重新备份。暂不支持跨引擎恢复。",
     "BACKUP_SCHEMA_INCOMPATIBLE": "该备份使用数据库结构版本 {{archive_schema_version}}，当前 AI-TAgent 版本无法恢复（最高支持版本：{{runtime_schema_version}}）。",
+    "SQLITE_UNSAFE_PATH": "SQLite 路径不安全或在打开期间发生变化。请使用无硬链接的稳定常规文件；恢复镜像不能激活。",
     "BACKUP_RECOVERY_REJECTED": "恢复镜像被拒绝。请使用受支持的 SQLite 归档、显式隔离策略及本地文件系统上的新私有目录。未替换任何目标。",
     "BACKUP_RECOVERY_QUARANTINED": "此数据库为隔离恢复镜像。禁止启动应用；审查与激活流程尚未实现。",
     "BACKUP_RECOVERY_COMMIT_UNCERTAIN": "恢复镜像可能已发布，但持久化确认失败。请勿覆盖或自动重试；应检查隔离目标。",

@@ -17,7 +17,8 @@ from typing import IO, Any
 
 from octop.infra.backup.manifest import MANIFEST_VERSION, BackupManifest
 from octop.infra.db.migrate import _max_discovered_version, run_migrations
-from octop.infra.db.pool import RECOVERY_QUARANTINE_FILE, SqlitePool
+from octop.infra.db.pool import SqlitePool
+from octop.infra.db.sqlite_path import RECOVERY_QUARANTINE_FILE, RECOVERY_QUARANTINE_XATTR
 from octop.infra.errors import ErrorCode, OctopError
 
 _MAX_ARCHIVE = 512 * 1024 * 1024
@@ -142,7 +143,7 @@ def _prepare_database(path: Path, manifest: BackupManifest, source_hash: str) ->
                 (os.urandom(32),),
             )
             metadata = {
-                "format": 2,
+                "format": 3,
                 "identity_policy": "quarantine-all",
                 "source_sha256": source_hash,
                 "schema_version": int(
@@ -166,6 +167,11 @@ def _prepare_database(path: Path, manifest: BackupManifest, source_hash: str) ->
             "SELECT 1 FROM users WHERE disabled != 1 OR password_hash IS NOT NULL OR permissions != '[]' OR role != 'user'"
         ).fetchone():
             raise _reject("identity_quarantine_failed")
+    # Required inode-bound marker survives file/directory aliases and hard links.
+    # Unsupported filesystems must fail before publication, without a fallback.
+    os.setxattr(path, RECOVERY_QUARANTINE_XATTR, b"3", follow_symlinks=False)
+    if os.getxattr(path, RECOVERY_QUARANTINE_XATTR, follow_symlinks=False) != b"3":
+        raise _reject("quarantine_attribute_failed")
     os.chmod(path, 0o600)
     return metadata
 
