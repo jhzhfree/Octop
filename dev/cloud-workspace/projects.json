@@ -1,0 +1,22 @@
+{
+  "Octop": {
+    "repository": "jhzhfree/Octop",
+    "branch": "feature/akb-octop-litellm-dev",
+    "baseline": "cf26472aebe3d4fe246d0e98d10f505eaf5852af"
+  },
+  "akb": {
+    "repository": "jhzhfree/akb",
+    "branch": "feature/akb-octop-litellm-dev",
+    "baseline": "b0bf8e50f417a29b778e7a7d205279271d201664"
+  },
+  "litellm": {
+    "repository": "jhzhfree/litellm",
+    "branch": "feature/akb-octop-litellm-dev",
+    "baseline": "eea51cb186de83e47d05883af4eddb8930b43224"
+  },
+  "mattermost": {
+    "repository": "jhzhfree/mattermost",
+    "branch": "feature/ai-tagent-integration",
+    "baseline": "527ce3ef112809969948e0342b976c9f16343202"
+  }
+}
