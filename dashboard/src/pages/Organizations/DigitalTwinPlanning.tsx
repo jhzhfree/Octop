@@ -5,7 +5,7 @@ import type { DigitalWorkerPlan } from "../../api/modules/organizations";
 import {
   buildDigitalTwinPlanDraft,
   type DigitalTwinPlanningIntake,
-} from "./digitalTwinPlanning";
+} from "./digitalTwinPlanningModel";
 
 interface Props {
   goalTitle: string;

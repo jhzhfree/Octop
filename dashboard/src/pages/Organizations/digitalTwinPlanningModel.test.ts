@@ -2,7 +2,7 @@ import { createInstance } from "i18next";
 import { describe, expect, it } from "vitest";
 import en from "../../locales/en.json";
 import zh from "../../locales/zh.json";
-import { buildDigitalTwinPlanDraft } from "./digitalTwinPlanning";
+import { buildDigitalTwinPlanDraft } from "./digitalTwinPlanningModel";
 
 async function translator(language: string) {
   const i18n = createInstance();

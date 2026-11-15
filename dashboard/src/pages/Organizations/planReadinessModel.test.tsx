@@ -7,7 +7,7 @@ import type {
   EnterpriseScene,
   EnterpriseSceneRun,
 } from "../../api/modules/organizations";
-import { inspectPlanReadiness, selectPlanRuns } from "./planReadiness";
+import { inspectPlanReadiness, selectPlanRuns } from "./planReadinessModel";
 import PlanReadiness from "./PlanReadiness";
 import en from "../../locales/en.json";
 
