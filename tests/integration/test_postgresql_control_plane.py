@@ -170,9 +170,9 @@ def test_pg_probe_ok() -> None:
 
 @requires_postgresql
 @pytest.mark.postgresql
-def test_pg_backup_roundtrip(tmp_path: Path) -> None:
-    if not shutil.which("pg_dump") or not shutil.which("pg_restore"):
-        pytest.skip("pg_dump/pg_restore not on PATH")
+def test_pg_backup_export_and_restore_refusal(tmp_path: Path) -> None:
+    if not shutil.which("pg_dump"):
+        pytest.skip("pg_dump not on PATH")
 
     from octop.config import DatabaseConfig
     from octop.infra.backup.system_archive import create_system_backup, restore_system_backup
@@ -217,16 +217,13 @@ def test_pg_backup_roundtrip(tmp_path: Path) -> None:
             dest=archive,
         )
 
-        _reset_public_schema(pool)
-        run_migrations(pool)
-        result = restore_system_backup(
-            archive,
-            paths=layout,
-            pool=pool,
-            db_config=db_config,
-            restore_config=False,
-        )
-        assert result["database_driver"] == "postgresql"
+        from octop.infra.errors import ErrorCode, OctopError
+
+        with pytest.raises(OctopError) as error:
+            restore_system_backup(
+                archive, paths=layout, pool=pool, db_config=db_config, restore_config=False
+            )
+        assert error.value.code == ErrorCode.BACKUP_RESTORE_UNAVAILABLE
         found = repo.get_by_username(username)
         assert found is not None
     finally:

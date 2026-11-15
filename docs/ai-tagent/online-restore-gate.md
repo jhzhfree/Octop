@@ -3,6 +3,9 @@
 2026-11-15，基线 `7233eaaa78a1fcb903c28ae21d5c24072abd2c0c`。
 本阶段关闭未经安全协调的在线恢复入口；**没有完成安全恢复协议，仍是 1.0 阻断**。
 
+> 后续状态：CLI、系统恢复与 SQLite 恢复原语也已[默认拒绝](offline-restore-gate.md)，
+> 原非原子流水线已移除。下文保留本阶段分析，不再意味着 CLI 仍能恢复。
+
 ## 已核实的调用链和风险
 
 原 HTTP `POST /api/admin/backup/files/{filename}/restore` 在取得进程内 BACKUP_LOCK 后，

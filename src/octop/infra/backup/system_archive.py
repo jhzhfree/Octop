@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import io
 import json
 import logging
-import os
 import shutil
 import tarfile
 import tempfile
@@ -21,28 +19,14 @@ from octop.infra.agents.workspace.dir import (
 )
 from octop.infra.backup.chats import (
     CHAT_TABLES_CHILD_FIRST,
-    capture_chat_tables,
     is_chat_workspace_rel,
-    restore_preserved_chats,
     strip_chat_tables_from_sqlite_file,
 )
 from octop.infra.backup.manifest import MANIFEST_VERSION, AgentBackupEntry, BackupManifest
-from octop.infra.backup.pg_dump import dump_postgres, restore_postgres
-from octop.infra.backup.snapshot import (
-    capture_jwt_secret_from_pool,
-    capture_users_from_pool,
-    infer_owner_user_id,
-    prune_users_not_in,
-    remap_ownership_to_user,
-    restore_jwt_secret_into_pool,
-    restore_sqlite_into_pool,
-    snapshot_sqlite_file,
-    upsert_users_into_pool,
-)
-from octop.infra.db.migrate import _current_version, _max_discovered_version, run_migrations
+from octop.infra.backup.pg_dump import dump_postgres
+from octop.infra.backup.snapshot import snapshot_sqlite_file
+from octop.infra.db.migrate import _current_version
 from octop.infra.db.pool import DatabasePool, SqlitePool
-from octop.infra.db.repos.agents import AgentRepo
-from octop.infra.db.repos.secrets import SecretRepo
 from octop.infra.errors import ErrorCode, OctopError
 from octop.infra.utils.env_file import env_file_path
 from octop.infra.utils.paths import PathLayout
@@ -58,7 +42,6 @@ _KNOWLEDGE_DIR = "knowledge"
 _MANIFEST_NAME = "manifest.json"
 _SQLITE_DB_ARC = f"{_DB_DIR}/octop.db"
 _PG_DUMP_ARC = f"{_DB_DIR}/octop.dump"
-_MIGRATION_VERSION_SUFFIX = "-migrated-from-lightclaw"
 
 # Align with workspace zip export; keep backups smaller / faster.
 _SKIP_DIR_NAMES = frozenset(
@@ -349,73 +332,6 @@ def create_system_backup(
     return filename
 
 
-def _extract_manifest_from_dir(extracted: Path) -> BackupManifest:
-    manifest_path = extracted / _MANIFEST_NAME
-    if not manifest_path.is_file():
-        raise OctopError(ErrorCode.SLASH_BAD_ARGS, "backup archive missing manifest.json")
-    try:
-        manifest = BackupManifest.load_text(manifest_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, ValueError, TypeError, OSError) as exc:
-        raise OctopError(ErrorCode.SLASH_BAD_ARGS, f"invalid manifest: {exc}") from exc
-    if manifest.manifest_version != MANIFEST_VERSION:
-        raise OctopError(
-            ErrorCode.SLASH_BAD_ARGS,
-            f"unsupported manifest version {manifest.manifest_version}",
-        )
-    return manifest
-
-
-def _extract_archive(source: Path | bytes, dest_dir: Path) -> None:
-    """Extract *source* into *dest_dir* without holding the whole archive in a dict."""
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    if isinstance(source, bytes):
-        with tarfile.open(fileobj=io.BytesIO(source), mode="r:*") as tf:
-            # Python 3.12+: refuse path traversal / special files.
-            tf.extractall(dest_dir, filter=tarfile.data_filter)
-        return
-    if not Path(source).is_file():
-        raise OctopError(ErrorCode.NOT_FOUND, f"backup not found: {source}")
-    with tarfile.open(source, mode="r:*") as tf:
-        tf.extractall(dest_dir, filter=tarfile.data_filter)
-
-
-def _is_migration_backup(manifest: BackupManifest) -> bool:
-    """Return True when the backup was produced by the LightClaw migration tool."""
-    return manifest.octop_version.endswith(_MIGRATION_VERSION_SUFFIX)
-
-
-def _iter_extracted_files(root: Path, prefix: str) -> list[tuple[str, Path]]:
-    """Return ``(archive-relative-posix, on-disk path)`` under *prefix*."""
-    base = root / prefix
-    if not base.is_dir():
-        return []
-    out: list[tuple[str, Path]] = []
-    for path in sorted(base.rglob("*")):
-        if not path.is_file():
-            continue
-        rel = path.relative_to(root).as_posix()
-        out.append((rel, path))
-    return out
-
-
-def _replace_tree_from_archive(extracted: Path, dest: Path, arc_name: str) -> int:
-    """Replace *dest* with files packed under *arc_name* in the extracted archive."""
-    if dest.exists():
-        shutil.rmtree(dest)
-    dest.mkdir(parents=True, exist_ok=True)
-    count = 0
-    prefix = f"{arc_name}/"
-    for rel, src_file in _iter_extracted_files(extracted, arc_name):
-        rest = rel[len(prefix) :]
-        if not rest:
-            continue
-        out = dest / rest
-        out.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src_file, out)
-        count += 1
-    return count
-
-
 def restore_system_backup(
     source: Path | bytes,
     *,
@@ -426,237 +342,10 @@ def restore_system_backup(
     preserve_users: bool | None = None,
     owner_user_id: int | None = None,
 ) -> dict[str, Any]:
-    """Restore database, workspaces, and optional config from a tar.gz archive.
+    """Compatibility entry point: refuse until coordinated recovery is implemented.
 
-    Legacy offline primitive, not a coordinated recovery protocol. The HTTP
-    entry point rejects restores. This function does not preserve all current
-    permissions/ACLs, atomically preserve identity, or stop other processes;
-    callers must not interpret preserve_users as an authorization-safety policy.
-
-    *source* may be a filesystem path (preferred) or in-memory bytes (tests / legacy).
-
-    ``preserve_users`` controls whether the *current* Octop instance's login
-    credentials (``users`` rows + ``secrets.jwt``) are written back after the
-    database is replaced:
-
-    * ``None`` (default) — auto-detect: preserves credentials when the backup
-      was produced by an external migration tool (``octop_version`` ends with
-      ``"-migrated-from-lightclaw"``).
-    * ``True`` — always preserve current users + JWT secret (cross-system
-      import where passwords and outstanding sessions must remain valid).
-    * ``False`` — restore the users/secrets tables as-is from the backup
-      (normal same-instance restore).
-
-    For LightClaw migration archives, ``owner_user_id`` (typically the admin
-    performing the restore) receives all imported ``user_id`` ownership. When
-    omitted, the first preserved admin (else first preserved user) is used.
+    No source, destination, credentials or filesystem content is inspected.
+    Legacy preserve_users/owner/restore_config arguments are not maintenance
+    proof. No force flag can opt into the retired non-atomic pipeline.
     """
-    with tempfile.TemporaryDirectory() as tmp:
-        extracted = Path(tmp) / "extracted"
-        _extract_archive(source, extracted)
-        manifest = _extract_manifest_from_dir(extracted)
-        if (
-            (paths.root / "history_v2.required").exists()
-            or (paths.root / "history_v2.sqlite").exists()
-            or (extracted / "history/history_v2.sqlite").exists()
-        ):
-            raise OctopError(
-                ErrorCode.SLASH_BAD_ARGS,
-                "Versioned history requires a coordinated offline restore; no database was changed",
-            )
-        is_migration = _is_migration_backup(manifest)
-
-        # Resolve effective preserve_users flag before touching the DB.
-        effective_preserve_users = is_migration if preserve_users is None else preserve_users
-
-        archive_driver = manifest.database_driver or "sqlite"
-        if archive_driver != pool.dialect:
-            raise OctopError(
-                ErrorCode.BACKUP_DRIVER_MISMATCH,
-                f"backup database_driver={archive_driver!r} does not match "
-                f"runtime dialect={pool.dialect!r}; cross-engine restore is refused",
-                status=400,
-                details={"archive_driver": archive_driver, "runtime_driver": pool.dialect},
-            )
-
-        runtime_schema_version = _max_discovered_version(pool.dialect)
-        if manifest.schema_version > runtime_schema_version:
-            details = {
-                "archive_schema_version": manifest.schema_version,
-                "runtime_schema_version": runtime_schema_version,
-            }
-            raise OctopError(
-                ErrorCode.BACKUP_SCHEMA_INCOMPATIBLE,
-                f"backup schema version {manifest.schema_version} is newer than "
-                f"the maximum supported version {runtime_schema_version}",
-                details=details,
-            )
-
-        db_path = extracted / manifest.db_file
-        if not db_path.is_file():
-            raise OctopError(ErrorCode.SLASH_BAD_ARGS, "backup archive missing database file")
-
-        saved_chats = (
-            capture_chat_tables(pool, Path(tmp) / "preserved-chats.sqlite")
-            if not manifest.includes_chats
-            else None
-        )
-
-        # Capture current login credentials before overwriting the DB (only when needed).
-        saved_users: list[tuple[object, ...]] = []
-        saved_jwt: bytes | None = None
-        if effective_preserve_users and pool is not None:
-            saved_users = capture_users_from_pool(pool)
-            saved_jwt = capture_jwt_secret_from_pool(pool)
-
-        effective_owner: int | None = None
-        if is_migration:
-            effective_owner = owner_user_id
-            if effective_owner is None:
-                effective_owner = infer_owner_user_id(saved_users)
-            if effective_owner is not None and saved_users:
-                saved_ids = {int(str(row[0])) for row in saved_users}
-                if int(effective_owner) not in saved_ids:
-                    raise OctopError(
-                        ErrorCode.SLASH_BAD_ARGS,
-                        f"owner_user_id={effective_owner} is not among current users",
-                        status=400,
-                    )
-
-        ownership_remap: dict[str, int] | None = None
-        if pool.dialect == "postgresql":
-            restore_postgres(db_config.postgresql_conninfo(), db_path)
-        else:
-            if isinstance(pool, SqlitePool):
-                restore_sqlite_into_pool(db_path, pool)
-            else:
-                raise OctopError(ErrorCode.INTERNAL_ERROR, "sqlite restore requires SqlitePool")
-
-        # Upgrade the restored database before any current-version repository or
-        # preservation helper queries it. This keeps old backups usable after
-        # tables gain required columns or are rebuilt by later migrations.
-        try:
-            run_migrations(pool)
-        except Exception as exc:
-            details = {
-                "archive_schema_version": manifest.schema_version,
-                "runtime_schema_version": runtime_schema_version,
-            }
-            raise OctopError(
-                ErrorCode.BACKUP_SCHEMA_INCOMPATIBLE,
-                f"failed to upgrade backup schema version {manifest.schema_version} "
-                f"to {runtime_schema_version}: {exc}",
-                details=details,
-            ) from exc
-
-        if restore_config:
-            cfg_path = extracted / _CONFIG_DIR / "config.json"
-            if cfg_path.is_file():
-                paths.config.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(cfg_path, paths.config)
-            env_blob_path = extracted / _CONFIG_DIR / "env"
-            if env_blob_path.is_file():
-                env_path = env_file_path(paths.root)
-                env_path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(env_blob_path, env_path)
-
-        # Migration ownership remap must run after the target owner exists and
-        # before pruning backup placeholder users (avoids ON DELETE CASCADE).
-        if saved_users and pool is not None:
-            upsert_users_into_pool(pool, saved_users)
-            if is_migration and effective_owner is not None:
-                ownership_remap = remap_ownership_to_user(pool, int(effective_owner))
-            prune_users_not_in(pool, [row[0] for row in saved_users])
-
-        # Migration backups ship a foreign ``secrets`` table. Prefer the current
-        # instance's JWT secret so outstanding sessions stay valid; only seed a
-        # fresh key when this instance never had one.
-        if effective_preserve_users and pool is not None:
-            if saved_jwt is not None:
-                restore_jwt_secret_into_pool(pool, saved_jwt)
-            else:
-                SecretRepo(pool).get_or_create("jwt", lambda: os.urandom(32))
-
-        restored_workspaces = 0
-        prefix = f"{_WORKSPACES_DIR}/"
-        agent_repo = AgentRepo(pool)
-        workspace_by_agent: dict[str, Path] = {}
-        system_path_by_agent: dict[str, str] = {}
-        for rel, src_file in _iter_extracted_files(extracted, _WORKSPACES_DIR):
-            file_rel = rel[len(prefix) :]
-            if "/" not in file_rel:
-                continue
-            agent_id, _, rest = file_rel.partition("/")
-            if not agent_id or not rest:
-                continue
-            dest_root = workspace_by_agent.get(agent_id)
-            if dest_root is None:
-                agent_row = agent_repo.get(agent_id)
-                dest_root = workspace_dir_from_config_json(
-                    None if agent_row is None else agent_row.config_json,
-                    paths=paths,
-                    agent_id=agent_id,
-                )
-                workspace_by_agent[agent_id] = dest_root
-                system_path_by_agent[agent_id] = (
-                    _system_files_path_from_row(agent_row) if agent_row is not None else ""
-                )
-            dest = dest_root / rest
-            if not manifest.includes_chats and is_chat_workspace_rel(
-                Path(rest),
-                system_files_path=system_path_by_agent.get(agent_id, ""),
-            ):
-                continue
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src_file, dest)
-            restored_workspaces += 1
-
-        restored_skill_package_files = 0
-        if manifest.includes_skill_packages:
-            restored_skill_package_files = _replace_tree_from_archive(
-                extracted,
-                paths.skill_packages_dir,
-                _SKILL_PACKAGES_DIR,
-            )
-
-        restored_plugin_files = 0
-        if manifest.includes_plugins:
-            restored_plugin_files = _replace_tree_from_archive(
-                extracted,
-                paths.plugins_dir,
-                _PLUGINS_DIR,
-            )
-
-        restored_knowledge_files = 0
-        if manifest.includes_knowledge:
-            restored_knowledge_files = _replace_tree_from_archive(
-                extracted,
-                paths.knowledge_dir,
-                _KNOWLEDGE_DIR,
-            )
-
-        preserved_chat_rows, skipped_chat_rows = (
-            restore_preserved_chats(pool, saved_chats) if saved_chats is not None else (0, 0)
-        )
-        schema_version = _current_version(pool)
-
-    result: dict[str, Any] = {
-        "schema_version": schema_version,
-        "octop_version": manifest.octop_version,
-        "agents": len(manifest.agents),
-        "workspace_files": restored_workspaces,
-        "skill_package_files": restored_skill_package_files,
-        "plugin_files": restored_plugin_files,
-        "knowledge_files": restored_knowledge_files,
-        "restore_config": restore_config,
-        "chats_restored": manifest.includes_chats,
-        "preserved_chat_rows": preserved_chat_rows,
-        "skipped_chat_rows": skipped_chat_rows,
-        "users_preserved": effective_preserve_users,
-        "jwt_preserved": bool(saved_jwt is not None and effective_preserve_users),
-        "database_driver": archive_driver,
-    }
-    if ownership_remap is not None:
-        result["owner_user_id"] = int(effective_owner) if effective_owner is not None else None
-        result["ownership_remap"] = ownership_remap
-    return result
+    raise OctopError.localized(ErrorCode.BACKUP_RESTORE_UNAVAILABLE)

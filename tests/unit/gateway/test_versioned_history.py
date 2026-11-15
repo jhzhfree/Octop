@@ -378,7 +378,7 @@ def test_backup_includes_archive_and_restore_refuses_partial_overwrite(archive, 
         assert "history/history_v2.sqlite" in tf.getnames()
         assert "history/history_v2.required" in tf.getnames()
     old_rows = archive.messages.range_rows("t", 0, 100)
-    with pytest.raises(OctopError, match="offline restore"):
+    with pytest.raises(OctopError, match="System restore is unavailable"):
         restore_system_backup(dest, paths=paths, pool=db, db_config=DatabaseConfig())
     assert archive.messages.range_rows("t", 0, 100) == old_rows
 

@@ -564,5 +564,6 @@ agents, channels or schedules. No query flag or administrator override enables i
 This applies to SQLite and PostgreSQL, including old clients and migration archives.
 Create, import/upload, list, export/download and delete retain their existing semantics.
 Coordinated maintenance, identity/ACL recovery and rollback are not yet implemented;
-the legacy offline CLI is not a verified safe substitute. See
+the offline CLI and system/SQLite restore functions also refuse with
+`BACKUP_RESTORE_UNAVAILABLE`; no force/maintenance flag enables them. See
 [recovery gate and remaining design requirements](ai-tagent/online-restore-gate.md).

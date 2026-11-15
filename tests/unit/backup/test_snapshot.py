@@ -9,11 +9,8 @@ from pathlib import Path
 import pytest
 
 from octop.infra.backup.snapshot import (
-    capture_jwt_secret_from_pool,
-    restore_jwt_secret_into_pool,
     snapshot_sqlite_file,
 )
-from octop.infra.db.migrate import run_migrations
 from octop.infra.db.pool import SqlitePool
 
 
@@ -36,29 +33,52 @@ def test_snapshot_sqlite_file_with_special_chars_in_path(tmp_path: Path) -> None
     assert row[0] == "ok"
 
 
-def test_jwt_secret_capture_and_restore(tmp_path: Path) -> None:
-    pool = SqlitePool(tmp_path / "octop.db")
-    run_migrations(pool)
-    secret = b"session-jwt-secret-value-32bytes!!"
+def test_snapshot_includes_committed_wal_without_copying_sidecars(tmp_path):
+    """Synthetic WAL-only commit is readable from the standalone backup file."""
+    import shutil
 
-    assert capture_jwt_secret_from_pool(pool) is None
+    source = tmp_path / "source.sqlite"
+    pool = SqlitePool(source)
+    try:
+        with pool.connect() as conn:
+            conn.execute("CREATE TABLE probe(value TEXT)")
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            conn.execute("PRAGMA wal_autocheckpoint=0")  # This synthetic connection only.
+            conn.execute("INSERT INTO probe VALUES('committed in WAL')")
+        wal = Path(str(source) + "-wal")
+        assert wal.stat().st_size > 0
+        backup = tmp_path / "snapshot.sqlite"
+        snapshot_sqlite_file(source, backup)
+        isolated = tmp_path / "isolated"
+        isolated.mkdir()
+        standalone = isolated / "copy.sqlite"
+        shutil.copy2(backup, standalone)
+        assert len(list(isolated.iterdir())) == 1
+        with sqlite3.connect(standalone) as check:
+            assert check.execute("SELECT value FROM probe").fetchone()[0] == "committed in WAL"
+            assert check.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        with pool.connect() as conn:
+            assert conn.execute("SELECT COUNT(*) FROM probe").fetchone()[0] == 1
+    finally:
+        pool.close()
 
-    with pool.connect() as conn:
-        conn.execute(
-            "INSERT INTO secrets(k, v, created_at) VALUES (?, ?, ?)",
-            ("jwt", secret, 1),
-        )
-    assert capture_jwt_secret_from_pool(pool) == secret
 
-    # Overwrite with a foreign secret, then restore the captured one.
-    with pool.connect() as conn:
-        conn.execute("UPDATE secrets SET v = ? WHERE k = ?", (b"foreign", "jwt"))
-    restore_jwt_secret_into_pool(pool, secret)
-    assert capture_jwt_secret_from_pool(pool) == secret
-
-    # Insert path when the row is missing after a restore wipe.
-    with pool.connect() as conn:
-        conn.execute("DELETE FROM secrets WHERE k = ?", ("jwt",))
-    restore_jwt_secret_into_pool(pool, secret)
-    assert capture_jwt_secret_from_pool(pool) == secret
-    pool.close()
+def test_snapshot_refuses_existing_destination_without_overwriting(tmp_path):
+    source = tmp_path / "source.sqlite"
+    dest = tmp_path / "existing.sqlite"
+    with sqlite3.connect(source) as conn:
+        conn.execute("CREATE TABLE archived(value TEXT)")
+    pool = SqlitePool(dest)
+    try:
+        with pool.connect() as conn:
+            conn.execute("CREATE TABLE current(value TEXT)")
+            conn.execute("INSERT INTO current VALUES('keep')")
+        with pytest.raises(FileExistsError):
+            snapshot_sqlite_file(source, dest)
+        with pool.connect() as conn:
+            assert conn.execute("SELECT value FROM current").fetchone()[0] == "keep"
+            assert (
+                conn.execute("SELECT 1 FROM sqlite_master WHERE name='archived'").fetchone() is None
+            )
+    finally:
+        pool.close()

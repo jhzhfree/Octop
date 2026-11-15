@@ -1,37 +1,56 @@
-"""Synthetic SQLite backup/restore/reopen, with real signed-token verification."""
+"""Refusal preserves security state; these are not successful recovery tests."""
 
 import hashlib
+from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import Mock
 
 import pytest
+from click.testing import CliRunner
 
+from octop.cli.commands import backup as backup_cli
 from octop.config import DatabaseConfig
 from octop.infra.auth import sessions
-from octop.infra.auth.tokens import decode_token, sign_token
-from octop.infra.backup.system_archive import create_system_backup, restore_system_backup
+from octop.infra.auth.tokens import InvalidToken, decode_token, sign_token
+from octop.infra.backup import restore_system_backup
+from octop.infra.backup.snapshot import restore_sqlite_file, restore_sqlite_into_pool
+from octop.infra.backup.system_archive import create_system_backup
 from octop.infra.db.migrate import run_migrations
 from octop.infra.db.pool import SqlitePool
 from octop.infra.errors import ErrorCode, OctopError
 from octop.infra.utils.paths import PathLayout
 
 
-@pytest.mark.parametrize("preserve_users", [False, True])
-def test_restore_and_reopen_never_resurrect_revoked_session_families(tmp_path, preserve_users):
+def rejected(call):
+    with pytest.raises(OctopError) as error:
+        call()
+    assert error.value.code == ErrorCode.BACKUP_RESTORE_UNAVAILABLE
+    assert error.value.status == 409
+
+
+def digest(pool):
+    with pool.connect() as conn:
+        return hashlib.sha256(conn.serialize()).hexdigest()
+
+
+@pytest.fixture
+def security_fixture(tmp_path):
     paths = PathLayout(tmp_path / "synthetic")
     pool = SqlitePool(paths.db)
     run_migrations(pool)
-    secret = b"synthetic-test-only-not-a-real-secret"
+    old_key = b"synthetic-archive-key-only-for-tests-0001"
+    current_key = b"synthetic-current-key-only-for-tests-0002"
     with pool.transaction() as conn:
         conn.execute(
-            "INSERT INTO users(username,password_hash,role,created_at) VALUES('fixture','not-a-password','admin',1)"
+            "INSERT INTO users(id,username,password_hash,role,created_at) VALUES(1,'fixture','old-password','admin',1)"
         )
-        conn.execute("INSERT INTO secrets(k,v,created_at) VALUES('jwt',?,1)", (secret,))
-
-    def token(sid):
-        return sign_token(secret, sub=1, uname="fixture", role="admin", session_id=sid)
-
-    archived, later, active = [token(sid) for sid in ("archive-revoked", "later-revoked", "active")]
-    sessions.revoke(pool, decode_token(secret, archived), archived)
-    archive = tmp_path / "synthetic.tar.gz"
+        conn.execute("INSERT INTO secrets(k,v,created_at) VALUES('jwt',?,1)", (old_key,))
+        conn.execute(
+            "INSERT INTO organizations(organization_id,owner_user_id,name,created_at,updated_at) VALUES('o',1,'fixture',1,1)"
+        )
+        conn.execute(
+            "INSERT INTO organization_members(organization_id,user_id,role,created_at) VALUES('o',1,'owner',1)"
+        )
+    archive = tmp_path / "old.tar.gz"
     create_system_backup(
         paths=paths,
         agent_rows=[],
@@ -44,183 +63,163 @@ def test_restore_and_reopen_never_resurrect_revoked_session_families(tmp_path, p
         include_plugins=False,
         include_knowledge=False,
     )
-    before = hashlib.sha256(archive.read_bytes()).hexdigest()
-    sessions.revoke(pool, decode_token(secret, later), later)
-    renewal = sign_token(
-        secret, sub=1, uname="fixture", role="admin", session_id="later-revoked", ttl_seconds=7200
-    )
-    assert renewal != later
-    restore_system_backup(
-        archive,
-        paths=paths,
-        pool=pool,
-        db_config=DatabaseConfig(),
-        restore_config=False,
-        preserve_users=preserve_users,
-    )
-    pool.close()
-    reopened = SqlitePool(paths.db)
-    try:
-        run_migrations(reopened)
-        with reopened.connect() as conn:
-            restored_secret = bytes(
-                conn.execute("SELECT v FROM secrets WHERE k='jwt'").fetchone()[0]
-            )
-            assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
-        for revoked in (archived, later, renewal):
-            with pytest.raises(OctopError, match="session revoked"):
-                sessions.require_active(reopened, decode_token(restored_secret, revoked), revoked)
-        sessions.require_active(reopened, decode_token(restored_secret, active), active)
-        assert hashlib.sha256(archive.read_bytes()).hexdigest() == before
-    finally:
-        reopened.close()
-
-
-def _prepared_fixture(tmp_path):
-    from octop.infra.backup.snapshot import snapshot_sqlite_file
-
-    pool = SqlitePool(tmp_path / "target.sqlite")
-    run_migrations(pool)
     with pool.transaction() as conn:
+        conn.execute("UPDATE secrets SET v=? WHERE k='jwt'", (current_key,))
         conn.execute(
-            "INSERT INTO users(username,password_hash,role,created_at) VALUES('archive','fixture','user',1)"
+            "UPDATE users SET password_hash='new-password',role='user',permissions='[]',disabled=1 WHERE id=1"
         )
-    backup = tmp_path / "source.sqlite"
-    snapshot_sqlite_file(pool.path, backup)
-    with pool.transaction() as conn:
-        conn.execute("UPDATE users SET username='live'")
-        conn.execute("INSERT INTO auth_session_revocations VALUES(?,1)", ("a" * 64,))
-    return pool, backup
+        conn.execute("DELETE FROM organization_members")
+    revoked = sign_token(current_key, sub=1, uname="fixture", role="user", session_id="revoked")
+    sessions.revoke(pool, decode_token(current_key, revoked), revoked)
+    sentinel = paths.root / "current-workspace.txt"
+    sentinel.write_text("current data")
+    yield paths, pool, archive, sentinel, revoked, current_key
+    pool.close()
 
 
-@pytest.mark.parametrize("phase", ["prepare", "merge"])
-def test_preparation_failure_does_not_replace_target_or_modify_source(tmp_path, monkeypatch, phase):
-    from octop.infra.backup import snapshot
-
-    pool, backup = _prepared_fixture(tmp_path)
-    digest = hashlib.sha256(backup.read_bytes()).hexdigest()
-
-    def failed(*args):
-        raise RuntimeError("synthetic preparation failure")
-
-    monkeypatch.setattr(
-        snapshot, "run_migrations" if phase == "prepare" else "_merge_session_revocations", failed
+@pytest.mark.parametrize("preserve_users", [None, False, True])
+@pytest.mark.parametrize("source_kind", ["valid", "invalid", "missing", "bytes"])
+def test_no_restore_option_rolls_back_identity_or_files(
+    security_fixture, tmp_path, preserve_users, source_kind
+):
+    paths, pool, archive, sentinel, revoked, key = security_fixture
+    source = archive
+    if source_kind == "invalid":
+        source = tmp_path / "invalid.tar.gz"
+        source.write_bytes(b"invalid archive")
+    elif source_kind == "missing":
+        source = tmp_path / "missing.tar.gz"
+    elif source_kind == "bytes":
+        source = archive.read_bytes()
+    before = digest(pool)
+    archive_hash = hashlib.sha256(archive.read_bytes()).hexdigest()
+    rejected(
+        lambda: restore_system_backup(
+            source,
+            paths=paths,
+            pool=pool,
+            db_config=DatabaseConfig(),
+            preserve_users=preserve_users,
+            owner_user_id=1,
+        )
     )
-    try:
-        with pytest.raises(OctopError if phase == "prepare" else RuntimeError) as error:
-            snapshot.restore_sqlite_into_pool(backup, pool)
-        if phase == "prepare":
-            assert error.value.code == ErrorCode.BACKUP_SCHEMA_INCOMPATIBLE
-        with pool.connect() as conn:
-            assert conn.execute("SELECT username FROM users").fetchone()[0] == "live"
-            assert conn.execute("SELECT COUNT(*) FROM auth_session_revocations").fetchone()[0] == 1
-        assert hashlib.sha256(backup.read_bytes()).hexdigest() == digest
-    finally:
-        pool.close()
+    assert digest(pool) == before
+    assert hashlib.sha256(archive.read_bytes()).hexdigest() == archive_hash
+    assert sentinel.read_text() == "current data"
+    archived_token = sign_token(
+        b"synthetic-archive-key-only-for-tests-0001", sub=1, uname="fixture", role="admin"
+    )
+    with pool.connect() as conn:
+        assert bytes(conn.execute("SELECT v FROM secrets WHERE k='jwt'").fetchone()[0]) == key
+        assert tuple(
+            conn.execute("SELECT role,permissions,disabled FROM users WHERE id=1").fetchone()
+        ) == ("user", "[]", 1)
+        assert conn.execute("SELECT COUNT(*) FROM organization_members").fetchone()[0] == 0
+    with pytest.raises(InvalidToken):
+        decode_token(key, archived_token)
+    with pytest.raises(OctopError, match="session revoked"):
+        sessions.require_active(pool, decode_token(key, revoked), revoked)
 
 
-def test_same_pool_auth_read_waits_until_revocations_are_in_restored_image(tmp_path, monkeypatch):
-    from concurrent.futures import ThreadPoolExecutor
-    from threading import Event
-
-    from octop.infra.backup import snapshot
-    from octop.infra.db.repos.auth_session_revocations import AuthSessionRevocationRepo
-
-    pool, backup = _prepared_fixture(tmp_path)
-    entered, release, attempted, finished = Event(), Event(), Event(), Event()
-    original = snapshot._merge_session_revocations
-
-    def paused(live, prepared):
-        original(live, prepared)
-        entered.set()
-        assert release.wait(5)
-
-    def read():
-        attempted.set()
-        result = AuthSessionRevocationRepo(pool).is_revoked("a" * 64)
-        finished.set()
-        return result
-
-    monkeypatch.setattr(snapshot, "_merge_session_revocations", paused)
-    try:
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            restore = executor.submit(snapshot.restore_sqlite_into_pool, backup, pool)
-            assert entered.wait(5)
-            reader = executor.submit(read)
-            assert attempted.wait(5)
-            try:
-                assert not finished.wait(0.05)
-            finally:
-                release.set()
-            restore.result(timeout=5)
-            assert reader.result(timeout=5) is True
-    finally:
-        release.set()
-        pool.close()
-
-
-def test_missing_current_revocation_history_fails_closed(tmp_path):
+@pytest.mark.parametrize("entry", ["system", "pool", "file"])
+def test_refusal_precedes_disk_access_or_replacement(monkeypatch, tmp_path, entry):
+    # I/O failures are injected as tripwires: refusal must not reach any of them.
+    import os
+    import shutil
     import sqlite3
 
-    from octop.infra.backup.snapshot import restore_sqlite_into_pool
+    from octop.infra.backup import system_archive
 
-    pool, backup = _prepared_fixture(tmp_path)
+    tripwire = Mock(side_effect=OSError("synthetic disk failure"))
+    monkeypatch.setattr(sqlite3, "connect", tripwire)
+    monkeypatch.setattr(shutil, "copy2", tripwire)
+    monkeypatch.setattr(os, "replace", tripwire)
+    monkeypatch.setattr(system_archive.tarfile, "open", tripwire)
+    source, target = tmp_path / "missing", tmp_path / "new" / "target.sqlite"
+    if entry == "system":
+        rejected(
+            lambda: restore_system_backup(
+                source,
+                paths=PathLayout(target.parent),
+                pool=Mock(dialect="postgresql"),
+                db_config=DatabaseConfig(),
+            )
+        )
+    elif entry == "pool":
+        rejected(lambda: restore_sqlite_into_pool(source, Mock()))
+    else:
+        rejected(lambda: restore_sqlite_file(source, target))
+    tripwire.assert_not_called()
+    assert not target.parent.exists()
+
+
+@pytest.mark.parametrize("entry", ["pool", "file", "system"])
+def test_competing_connection_does_not_make_refusal_wait_or_overwrite(security_fixture, entry):
+    paths, pool, archive, _, _, _ = security_fixture
+    second = SqlitePool(paths.db)
     try:
-        with pool.transaction() as conn:
-            conn.execute("DROP TABLE auth_session_revocations")
-        with pytest.raises(sqlite3.DatabaseError, match="history is missing"):
-            restore_sqlite_into_pool(backup, pool)
+        with second.transaction() as conn:
+            conn.execute("UPDATE users SET display_name='concurrent change' WHERE id=1")
+            with ThreadPoolExecutor(max_workers=1) as executor:
+
+                def call():
+                    if entry == "pool":
+                        restore_sqlite_into_pool(archive, pool)
+                    elif entry == "file":
+                        restore_sqlite_file(archive, paths.db)
+                    else:
+                        restore_system_backup(
+                            archive, paths=paths, pool=pool, db_config=DatabaseConfig()
+                        )
+
+                executor.submit(rejected, call).result(timeout=2)
         with pool.connect() as conn:
-            assert conn.execute("SELECT username FROM users").fetchone()[0] == "live"
-    finally:
-        pool.close()
-
-
-def test_restore_into_empty_target(tmp_path):
-    from octop.infra.backup.snapshot import restore_sqlite_into_pool
-
-    pool, backup = _prepared_fixture(tmp_path)
-    empty = SqlitePool(tmp_path / "empty.sqlite")
-    try:
-        restore_sqlite_into_pool(backup, empty)
-        with empty.connect() as conn:
-            assert conn.execute("SELECT username FROM users").fetchone()[0] == "archive"
-            assert conn.execute("SELECT COUNT(*) FROM auth_session_revocations").fetchone()[0] == 0
-    finally:
-        empty.close()
-        pool.close()
-
-
-def test_pre_revocation_archive_is_upgraded_before_merge(tmp_path, monkeypatch):
-    from octop.infra.backup.snapshot import restore_sqlite_into_pool
-    from octop.infra.db import migrate
-
-    pool, _ = _prepared_fixture(tmp_path)
-    old = SqlitePool(tmp_path / "old.sqlite")
-    discover = migrate._discover
-    try:
-        with monkeypatch.context() as scoped:
-            scoped.setattr(
-                migrate,
-                "_discover",
-                lambda dialect="sqlite": [(v, p) for v, p in discover(dialect) if v <= 37],
-            )
-            migrate.run_migrations(old)
-        with old.connect() as conn:
             assert (
-                conn.execute(
-                    "SELECT 1 FROM sqlite_master WHERE name='auth_session_revocations'"
-                ).fetchone()
-                is None
-            )
-        old.close()
-        restore_sqlite_into_pool(tmp_path / "old.sqlite", pool)
-        with pool.connect() as conn:
-            assert conn.execute("SELECT version FROM _schema_version").fetchone()[0] == 42
-            assert (
-                conn.execute("SELECT session_digest FROM auth_session_revocations").fetchone()[0]
-                == "a" * 64
+                conn.execute("SELECT display_name FROM users WHERE id=1").fetchone()[0]
+                == "concurrent change"
             )
     finally:
-        old.close()
-        pool.close()
+        second.close()
+
+
+@pytest.mark.parametrize("flags", [[], ["--yes"], ["--yes", "--no-config", "--owner-user-id", "1"]])
+def test_cli_refuses_before_home_config_or_database_access(tmp_path, monkeypatch, flags):
+    archive = tmp_path / "archive.tar.gz"
+    archive.write_bytes(b"synthetic old archive")
+    home = tmp_path / "uncreated-home"
+    tripwire = Mock(side_effect=AssertionError("must not read config or open database"))
+    monkeypatch.setattr(backup_cli, "load_config", tripwire)
+    monkeypatch.setattr(backup_cli, "open_database", tripwire)
+    result = CliRunner().invoke(
+        backup_cli.backup, ["restore", str(archive), "--home", str(home), *flags]
+    )
+    assert result.exit_code != 0
+    assert "System restore is unavailable" in result.output
+    assert "Continue?" not in result.output
+    tripwire.assert_not_called()
+    assert not home.exists()
+
+
+def test_cli_create_remains_available(tmp_path):
+    import tarfile
+
+    dest = tmp_path / "created.tar.gz"
+    result = CliRunner().invoke(
+        backup_cli.backup,
+        [
+            "create",
+            "--home",
+            str(tmp_path / "fresh-home"),
+            "--output",
+            str(dest),
+            "--no-config",
+            "--no-workspaces",
+            "--no-skill-packages",
+            "--no-plugins",
+            "--no-knowledge",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    with tarfile.open(dest) as archive:
+        assert "manifest.json" in archive.getnames()
+        assert "db/octop.db" in archive.getnames()

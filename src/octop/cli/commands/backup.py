@@ -10,10 +10,11 @@ import click
 from octop.config import load_config
 from octop.infra.backup.auto import create_and_store_auto_backup
 from octop.infra.backup.store import place_backup_file
-from octop.infra.backup.system_archive import create_system_backup, restore_system_backup
+from octop.infra.backup.system_archive import create_system_backup
 from octop.infra.db.factory import open_database
 from octop.infra.db.migrate import run_migrations
 from octop.infra.db.services import build_shared_services
+from octop.infra.errors import ErrorCode, OctopError
 from octop.infra.utils.paths import PathLayout
 
 
@@ -167,22 +168,7 @@ def restore(
     owner_user_id: int | None,
     yes: bool,
 ) -> None:
-    """Restore from a backup archive. Stop ``octop run`` first for a clean restore."""
-    if not yes:
-        click.confirm(
-            "This overwrites the database and local workspaces. Continue?",
-            abort=True,
-        )
-    paths = _paths(home)
-    config = load_config(paths.config)
-    db = open_database(config, paths)
-    result = restore_system_backup(
-        archive,
-        paths=paths,
-        pool=db,
-        db_config=config.database,
-        restore_config=not no_config,
-        owner_user_id=owner_user_id,
-    )
-    db.close()
-    click.echo(f"restored: {result}")
+    """Legacy restore command; coordinated recovery is not yet available."""
+    # Fail before config loading / database opening, even with --yes. A caller's
+    # assertion that the service stopped is not a cross-process maintenance gate.
+    raise click.ClickException(OctopError.localized(ErrorCode.BACKUP_RESTORE_UNAVAILABLE).message)
