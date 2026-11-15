@@ -45,6 +45,7 @@ const worker: DigitalWorker = {
   updated_at: 0,
 };
 const goal: DigitalWorkerGoal = {
+  version: 1,
   goal_id: "g",
   worker_id: "w",
   title: "Report",

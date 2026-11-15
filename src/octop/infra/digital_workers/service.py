@@ -210,13 +210,20 @@ class DigitalWorkerService:
         return goal
 
     def update_goal(
-        self, organization_id: str, worker_id: str, goal_id: str, updates: dict[str, Any]
+        self,
+        organization_id: str,
+        worker_id: str,
+        goal_id: str,
+        updates: dict[str, Any],
+        *,
+        expected_version: int,
     ) -> dict[str, Any]:
         self._require_manager(organization_id)
         self._worker(organization_id, worker_id)
         current = self.repos.digital_worker_repo.get_goal(goal_id)
         if current is None or current["worker_id"] != worker_id:
             raise DigitalWorkerError("DIGITAL_WORKER_GOAL_NOT_FOUND", "worker goal not found", 404)
+        self._check_goal_version(current, expected_version)
         normalized = dict(updates)
         next_status = normalized.get("status")
         allowed_transitions = {
@@ -257,17 +264,32 @@ class DigitalWorkerService:
         assert updated is not None
         return updated
 
-    def delete_goal(self, organization_id: str, worker_id: str, goal_id: str) -> None:
+    def delete_goal(
+        self,
+        organization_id: str,
+        worker_id: str,
+        goal_id: str,
+        *,
+        expected_version: int,
+    ) -> None:
         self._require_manager(organization_id)
         self._worker(organization_id, worker_id)
         goal = self.repos.digital_worker_repo.get_goal(goal_id)
         if goal is None or goal["worker_id"] != worker_id:
             raise DigitalWorkerError("DIGITAL_WORKER_GOAL_NOT_FOUND", "worker goal not found", 404)
+        self._check_goal_version(goal, expected_version)
         if goal["status"] != "draft":
             raise DigitalWorkerError(
                 "DIGITAL_WORKER_GOAL_LOCKED", "only draft goals can be deleted", 409
             )
         self._mutate_goal(organization_id, goal, None)
+
+    @staticmethod
+    def _check_goal_version(goal: dict[str, Any], expected_version: int) -> None:
+        if expected_version != goal["version"]:
+            raise DigitalWorkerError(
+                "DIGITAL_WORKER_GOAL_STATUS_INVALID", "goal changed; reload before retrying", 409
+            )
 
     def _mutate_goal(
         self, organization_id: str, expected: dict[str, Any], updates: dict[str, Any] | None

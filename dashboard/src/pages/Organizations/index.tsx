@@ -517,7 +517,10 @@ export default function OrganizationsPage() {
       organizationId,
       selectedWorker.worker_id,
       goal.goal_id,
-      { status: goal.status === "draft" ? "active" : "completed" },
+      {
+        expected_version: goal.version,
+        status: goal.status === "draft" ? "active" : "completed",
+      },
     );
     if (scope !== context.current.generation) return;
     setWorkerGoals((rows) =>
@@ -525,6 +528,21 @@ export default function OrganizationsPage() {
     );
     setSelectedGoal((current) =>
       current?.goal_id === goal.goal_id ? updated : current,
+    );
+  }
+
+  async function reloadGoals() {
+    if (!organizationId || !selectedWorker || !canManage)
+      throw new Error("Unavailable goal");
+    const scope = context.current.generation;
+    const rows = await organizationsApi.digitalWorkerGoals(
+      organizationId,
+      selectedWorker.worker_id,
+    );
+    if (scope !== context.current.generation) return;
+    setWorkerGoals(rows);
+    setSelectedGoal((current) =>
+      rows.find((row) => row.goal_id === current?.goal_id),
     );
   }
 
@@ -1309,6 +1327,7 @@ export default function OrganizationsPage() {
               key={`${organizationId}:${selectedWorkerId}:${goal.goal_id}:${goal.status}`}
               goal={goal}
               onChange={() => changeGoalStatus(goal)}
+              onReload={reloadGoals}
             />
           )}
         </Space>

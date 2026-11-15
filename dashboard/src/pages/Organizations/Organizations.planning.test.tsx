@@ -151,6 +151,7 @@ beforeEach(() => {
   vi.mocked(organizationsApi.digitalWorkerGoals).mockResolvedValue([
     {
       goal_id: "goal1",
+      version: 1,
       worker_id: "worker1",
       title: "Weekly market review",
       description: "",
@@ -843,6 +844,7 @@ describe("goal completion integration", { timeout: 15000 }, () => {
   it("requires confirmation and updates the selected goal so active planning disappears", async () => {
     vi.mocked(organizationsApi.updateDigitalWorkerGoal).mockResolvedValue({
       goal_id: "goal1",
+      version: 2,
       worker_id: "worker1",
       title: "Weekly market review",
       description: "",
@@ -869,7 +871,7 @@ describe("goal completion integration", { timeout: 15000 }, () => {
         "org1",
         "worker1",
         "goal1",
-        { status: "completed" },
+        { expected_version: 1, status: "completed" },
       ),
     );
     await waitFor(() =>
@@ -1024,3 +1026,52 @@ it(
     );
   },
 );
+
+it("reloads a conflicted goal and sends its new displayed version only after reconfirmation", async () => {
+  vi.mocked(organizationsApi.updateDigitalWorkerGoal).mockRejectedValueOnce(
+    new Error("Request failed: 409"),
+  );
+  const user = await openPlans();
+  await user.click(
+    screen.getByRole("button", { name: en.organizations.completeGoal }),
+  );
+  await user.click(
+    within(await screen.findByRole("dialog")).getByRole("button", {
+      name: en.goalLifecycle.confirm,
+    }),
+  );
+  await screen.findByText(en.goalLifecycle.reloadRequired);
+  expect(organizationsApi.updateDigitalWorkerGoal).toHaveBeenCalledTimes(1);
+  const fresh = {
+    ...(await organizationsApi.digitalWorkerGoals("org1", "worker1"))[0],
+    version: 2,
+    success_criteria: "Revised criteria",
+  };
+  vi.mocked(organizationsApi.digitalWorkerGoals).mockResolvedValue([fresh]);
+  await user.click(
+    screen.getByRole("button", { name: en.goalLifecycle.reload }),
+  );
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(organizationsApi.updateDigitalWorkerGoal).toHaveBeenCalledTimes(1);
+  vi.mocked(organizationsApi.updateDigitalWorkerGoal).mockResolvedValue({
+    ...fresh,
+    status: "completed",
+    version: 3,
+  });
+  await user.click(
+    screen.getByRole("button", { name: en.organizations.completeGoal }),
+  );
+  const dialog = await screen.findByRole("dialog");
+  expect(within(dialog).getByText("Revised criteria")).toBeInTheDocument();
+  await user.click(
+    within(dialog).getByRole("button", { name: en.goalLifecycle.confirm }),
+  );
+  await waitFor(() =>
+    expect(organizationsApi.updateDigitalWorkerGoal).toHaveBeenLastCalledWith(
+      "org1",
+      "worker1",
+      "goal1",
+      { expected_version: 2, status: "completed" },
+    ),
+  );
+}, 15000);

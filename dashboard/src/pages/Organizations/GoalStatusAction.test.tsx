@@ -12,6 +12,7 @@ vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }));
 const goal: DigitalWorkerGoal = {
+  version: 1,
   goal_id: "g1",
   worker_id: "w1",
   title: "Quarterly report",
@@ -123,4 +124,32 @@ it("ignores late completion after unmount", async () => {
   view.unmount();
   await act(async () => resolve());
   expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+it("blocks failed mutation retries until explicit reload, then requires a new confirmation", async () => {
+  const change = vi.fn().mockRejectedValue(new Error("Request failed: 409"));
+  const reload = vi.fn().mockResolvedValue(undefined);
+  render(<GoalStatusAction goal={goal} onChange={change} onReload={reload} />);
+  open();
+  confirm();
+  await screen.findByText("goalLifecycle.reloadRequired");
+  confirm();
+  expect(change).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByText("goalLifecycle.reload"));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(reload).toHaveBeenCalledTimes(1);
+  expect(change).toHaveBeenCalledTimes(1);
+  open();
+  confirm();
+  await waitFor(() => expect(change).toHaveBeenCalledTimes(2));
+});
+it("invalidates confirmation when only the goal version changes", async () => {
+  const change = vi.fn();
+  const view = render(<GoalStatusAction goal={goal} onChange={change} />);
+  open();
+  view.rerender(
+    <GoalStatusAction goal={{ ...goal, version: 2 }} onChange={change} />,
+  );
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(change).not.toHaveBeenCalled();
 });

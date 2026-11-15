@@ -190,6 +190,7 @@ export interface DigitalWorker {
   updated_at: number;
 }
 export interface DigitalWorkerGoal {
+  version: number;
   goal_id: string;
   worker_id: string;
   title: string;
@@ -502,7 +503,7 @@ export const organizationsApi = {
     id: string,
     workerId: string,
     goalId: string,
-    body: Partial<
+    body: { expected_version: number } & Partial<
       Pick<
         DigitalWorkerGoal,
         | "title"

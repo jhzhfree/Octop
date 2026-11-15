@@ -7,6 +7,7 @@ interface Props {
   goal: DigitalWorkerGoal;
   disabled?: boolean;
   onChange: () => Promise<void>;
+  onReload?: () => Promise<void>;
 }
 
 /** Reset confirmation when its goal, revision or permission changes. */
@@ -18,6 +19,7 @@ export default function GoalStatusAction(props: Props) {
         props.goal.goal_id,
         props.goal.status,
         props.goal.updated_at,
+        props.goal.version,
         props.disabled,
       ])}
       {...props}
@@ -25,7 +27,7 @@ export default function GoalStatusAction(props: Props) {
   );
 }
 
-function GoalActionSession({ goal, disabled, onChange }: Props) {
+function GoalActionSession({ goal, disabled, onChange, onReload }: Props) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -40,7 +42,7 @@ function GoalActionSession({ goal, disabled, onChange }: Props) {
   }, []);
   if (goal.status !== "draft" && goal.status !== "active") return null;
   const submit = async () => {
-    if (disabled || busy.current) return;
+    if (disabled || busy.current || (failed && onReload)) return;
     busy.current = true;
     setLoading(true);
     setFailed(false);
@@ -56,10 +58,48 @@ function GoalActionSession({ goal, disabled, onChange }: Props) {
       }
     }
   };
+  const reload = async () => {
+    if (!onReload || busy.current || disabled) return;
+    busy.current = true;
+    setLoading(true);
+    try {
+      await onReload();
+      if (mounted.current) {
+        setFailed(false);
+        setOpen(false);
+      }
+    } catch {
+      if (mounted.current) setFailed(true);
+    } finally {
+      if (mounted.current) {
+        busy.current = false;
+        setLoading(false);
+      }
+    }
+  };
+  const failure = (
+    <Space direction="vertical">
+      <Alert
+        type="error"
+        message={t(
+          onReload ? "goalLifecycle.reloadRequired" : "goalLifecycle.failed",
+        )}
+      />
+      {onReload && (
+        <Button
+          loading={loading}
+          disabled={disabled}
+          onClick={() => void reload()}
+        >
+          {t("goalLifecycle.reload")}
+        </Button>
+      )}
+    </Space>
+  );
   return (
     <>
       <Button
-        disabled={disabled}
+        disabled={disabled || (!!onReload && failed)}
         loading={loading}
         onClick={() => {
           if (busy.current) return;
@@ -74,16 +114,16 @@ function GoalActionSession({ goal, disabled, onChange }: Props) {
             : "organizations.completeGoal",
         )}
       </Button>
-      {failed && !open && (
-        <Alert type="error" message={t("goalLifecycle.failed")} />
-      )}
+      {failed && !open && failure}
       <Modal
         open={open && !disabled}
         title={t("goalLifecycle.confirmTitle")}
         okText={t("goalLifecycle.confirm")}
         cancelText={t("common.cancel")}
         confirmLoading={loading}
-        okButtonProps={{ disabled: disabled || loading }}
+        okButtonProps={{
+          disabled: disabled || loading || (!!onReload && failed),
+        }}
         cancelButtonProps={{ disabled: loading }}
         closable={!loading}
         maskClosable={!loading}
@@ -105,7 +145,7 @@ function GoalActionSession({ goal, disabled, onChange }: Props) {
             {goal.success_criteria || t("goalLifecycle.noCriteria")}
           </Typography.Paragraph>
           <Alert type="warning" message={t("goalLifecycle.notice")} />
-          {failed && <Alert type="error" message={t("goalLifecycle.failed")} />}
+          {failed && failure}
         </Space>
       </Modal>
     </>

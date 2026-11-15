@@ -63,6 +63,8 @@ def test_concurrent_terminal_writes_have_one_winner_across_connections(goal_env,
     assert logs[0]["actor"] == "1"
     assert json.loads(logs[0]["payload"]) == {
         "organization_id": "o",
+        "from_version": snapshot["version"],
+        "to_version": snapshot["version"] + 1,
         "from_status": "active",
         "to_status": winner,
     }
@@ -87,7 +89,12 @@ def test_service_race_returns_conflict_without_overwrite(goal_env, monkeypatch, 
     monkeypatch.setattr(repos.digital_worker_repo, "mutate_goal", competing)
     with pytest.raises(DigitalWorkerError) as caught:
         if operation == "delete":
-            service.delete_goal("o", "w", goal_id)
+            service.delete_goal(
+                "o",
+                "w",
+                goal_id,
+                expected_version=repos.digital_worker_repo.get_goal(goal_id)["version"],
+            )
         else:
             service.update_goal(
                 "o",
@@ -96,6 +103,7 @@ def test_service_race_returns_conflict_without_overwrite(goal_env, monkeypatch, 
                 {"status": "completed"}
                 if operation == "complete"
                 else {"title": "Stale overwrite"},
+                expected_version=repos.digital_worker_repo.get_goal(goal_id)["version"],
             )
     assert caught.value.status == 409
     goal = repos.digital_worker_repo.get_goal(goal_id)
@@ -140,9 +148,20 @@ def test_audit_failure_rolls_back_goal_change(goal_env, delete):
         )
     with pytest.raises(Exception, match="fixture audit failure"):
         if delete:
-            service.delete_goal("o", "w", goal_id)
+            service.delete_goal(
+                "o",
+                "w",
+                goal_id,
+                expected_version=repos.digital_worker_repo.get_goal(goal_id)["version"],
+            )
         else:
-            service.update_goal("o", "w", goal_id, {"status": "completed"})
+            service.update_goal(
+                "o",
+                "w",
+                goal_id,
+                {"status": "completed"},
+                expected_version=repos.digital_worker_repo.get_goal(goal_id)["version"],
+            )
     assert repos.digital_worker_repo.get_goal(goal_id) == before
     assert audit_rows(db, goal_id) == []
 
@@ -166,7 +185,13 @@ def test_revocation_after_service_validation_is_rejected(goal_env, monkeypatch, 
 
     monkeypatch.setattr(repos.digital_worker_repo, "mutate_goal", revoked)
     with pytest.raises(DigitalWorkerError) as caught:
-        service.update_goal("o", "w", goal_id, {"status": "completed"})
+        service.update_goal(
+            "o",
+            "w",
+            goal_id,
+            {"status": "completed"},
+            expected_version=repos.digital_worker_repo.get_goal(goal_id)["version"],
+        )
     assert caught.value.status == 403
     assert repos.digital_worker_repo.get_goal(goal_id)["status"] == "active"
     assert audit_rows(db, goal_id) == []
@@ -178,7 +203,13 @@ def test_stale_admin_and_foreign_scope_never_write(goal_env):
     with db.transaction() as conn:
         conn.execute("DELETE FROM organization_members WHERE user_id=1")
     with pytest.raises(DigitalWorkerError) as caught:
-        service.update_goal("o", "w", goal_id, {"status": "completed"})
+        service.update_goal(
+            "o",
+            "w",
+            goal_id,
+            {"status": "completed"},
+            expected_version=repos.digital_worker_repo.get_goal(goal_id)["version"],
+        )
     assert caught.value.status == 403
     with pytest.raises(GoalMutationError, match="forbidden"):
         repos.digital_worker_repo.mutate_goal(
@@ -198,13 +229,47 @@ def test_normal_lifecycle_and_draft_deletion_preserve_existing_contract(goal_env
         "w",
         goal_id,
         {"title": "Updated goal", "period_start": "2026-01-01", "period_end": None},
+        expected_version=repos.digital_worker_repo.get_goal(goal_id)["version"],
     )
     assert edited["title"] == "Updated goal"
-    assert service.update_goal("o", "w", goal_id, {}) == edited
-    assert service.update_goal("o", "w", goal_id, {"status": "active"})["status"] == "active"
-    assert service.update_goal("o", "w", goal_id, {"status": "completed"})["status"] == "completed"
+    assert (
+        service.update_goal(
+            "o",
+            "w",
+            goal_id,
+            {},
+            expected_version=repos.digital_worker_repo.get_goal(goal_id)["version"],
+        )
+        == edited
+    )
+    assert (
+        service.update_goal(
+            "o",
+            "w",
+            goal_id,
+            {"status": "active"},
+            expected_version=repos.digital_worker_repo.get_goal(goal_id)["version"],
+        )["status"]
+        == "active"
+    )
+    assert (
+        service.update_goal(
+            "o",
+            "w",
+            goal_id,
+            {"status": "completed"},
+            expected_version=repos.digital_worker_repo.get_goal(goal_id)["version"],
+        )["status"]
+        == "completed"
+    )
     with pytest.raises(DigitalWorkerError):
-        service.update_goal("o", "w", goal_id, {"status": "cancelled"})
+        service.update_goal(
+            "o",
+            "w",
+            goal_id,
+            {"status": "cancelled"},
+            expected_version=repos.digital_worker_repo.get_goal(goal_id)["version"],
+        )
     draft = repos.digital_worker_repo.create_goal(
         worker_id="w",
         title="Delete draft",
@@ -214,7 +279,12 @@ def test_normal_lifecycle_and_draft_deletion_preserve_existing_contract(goal_env
         period_end=None,
         created_by=1,
     )
-    service.delete_goal("o", "w", draft["goal_id"])
+    service.delete_goal(
+        "o",
+        "w",
+        draft["goal_id"],
+        expected_version=repos.digital_worker_repo.get_goal(draft["goal_id"])["version"],
+    )
     assert repos.digital_worker_repo.get_goal(draft["goal_id"]) is None
     logs = audit_rows(db, draft["goal_id"])
     assert len(logs) == 1 and logs[0]["action"] == "digital_worker.goal_delete"
@@ -244,15 +314,31 @@ async def test_http_conflict_and_authenticated_actor_contract(goal_env, monkeypa
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
         monkeypatch.setattr(repos.digital_worker_repo, "mutate_goal", competing)
-        response = await client.patch(path, json={"status": "completed", "actor_id": 999})
+        response = await client.patch(
+            path,
+            json={
+                "expected_version": repos.digital_worker_repo.get_goal(goal_id)["version"],
+                "status": "completed",
+                "actor_id": 999,
+            },
+        )
         assert response.status_code == 409
         assert response.json()["detail"]["code"] == "DIGITAL_WORKER_GOAL_STATUS_INVALID"
         monkeypatch.setattr(repos.digital_worker_repo, "mutate_goal", original)
         repos.digital_worker_repo.update_goal(goal_id, {"status": "draft"})
-        updated = await client.patch(path, json={"status": "active", "actor_id": 999})
+        updated = await client.patch(
+            path,
+            json={
+                "expected_version": repos.digital_worker_repo.get_goal(goal_id)["version"],
+                "status": "active",
+                "actor_id": 999,
+            },
+        )
         assert updated.status_code == 200
         assert updated.json()["status"] == "active"
-        assert (await client.delete(path)).status_code == 409
+        assert (
+            await client.delete(path, params={"expected_version": updated.json()["version"]})
+        ).status_code == 409
         assert (await client.get("/api/docs")).status_code == 200
         schema = (await client.get("/api/openapi.json")).json()
         assert (
@@ -269,5 +355,83 @@ def test_persisted_admin_can_mutate_without_membership(goal_env):
     with db.transaction() as conn:
         conn.execute("UPDATE users SET role='admin' WHERE id=3")
     service = DigitalWorkerService(repos, User(3, "outsider", "admin", None))
-    assert service.update_goal("o", "w", goal_id, {"status": "completed"})["status"] == "completed"
+    assert (
+        service.update_goal(
+            "o",
+            "w",
+            goal_id,
+            {"status": "completed"},
+            expected_version=repos.digital_worker_repo.get_goal(goal_id)["version"],
+        )["status"]
+        == "completed"
+    )
     assert audit_rows(db, goal_id)[0]["actor"] == "3"
+
+
+async def test_old_page_and_legacy_client_cannot_overwrite_or_delete(goal_env):
+    db, repos, service, goal_id = goal_env
+    repos.digital_worker_repo.update_goal(goal_id, {"status": "draft"})
+    old = repos.digital_worker_repo.get_goal(goal_id)
+    app = FastAPI()
+    app.include_router(router, prefix="/api")
+    app.dependency_overrides[current_user] = lambda: service.actor
+    app.dependency_overrides[get_server] = lambda: SimpleNamespace(
+        services=SimpleNamespace(repos=repos)
+    )
+    path = f"/api/organizations/o/digital-workers/w/goals/{goal_id}"
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        for value in (None, {}, {"title": "Legacy"}):
+            body = {"title": "Legacy", "expected_version": None} if value is None else value
+            assert (await client.patch(path, json=body)).status_code == 428
+        assert (await client.delete(path)).status_code == 428
+        for value in (0, -1, True, "1"):
+            assert (
+                await client.patch(path, json={"expected_version": value, "title": "Invalid"})
+            ).status_code == 422
+        edited = await client.patch(
+            path, json={"expected_version": old["version"], "success_criteria": "New criteria"}
+        )
+        assert edited.status_code == 200
+        assert edited.json()["version"] == old["version"] + 1
+        for update in ({"title": "Old title"}, {"status": "active"}):
+            assert (
+                await client.patch(path, json={"expected_version": old["version"], **update})
+            ).status_code == 409
+        assert (
+            await client.delete(path, params={"expected_version": old["version"]})
+        ).status_code == 409
+        # Even restoring identical data cannot revive an old version (ABA).
+        restored = await client.patch(
+            path,
+            json={
+                "expected_version": edited.json()["version"],
+                "success_criteria": old["success_criteria"],
+            },
+        )
+        assert restored.json()["version"] == old["version"] + 2
+        assert (
+            await client.patch(path, json={"expected_version": old["version"], "status": "active"})
+        ).status_code == 409
+        assert len(audit_rows(db, goal_id)) == 2
+        deleted = await client.delete(path, params={"expected_version": restored.json()["version"]})
+        assert deleted.status_code == 204
+        assert len(audit_rows(db, goal_id)) == 3
+
+
+def test_version_migration_preserves_existing_goal_and_is_repeatable(goal_env):
+    from octop.infra.db.migrate import run_migrations, schema_baseline_version
+
+    db, repos, _, goal_id = goal_env
+    before = repos.digital_worker_repo.get_goal(goal_id)
+    before.pop("version")
+    # Reconstruct the exact v41 goal layout with existing rows, then upgrade.
+    with db.transaction() as conn:
+        conn.execute("ALTER TABLE digital_worker_goals DROP COLUMN version")
+        conn.execute("UPDATE _schema_version SET version=41")
+    run_migrations(db)
+    assert repos.digital_worker_repo.get_goal(goal_id) == {**before, "version": 1}
+    run_migrations(db)
+    assert repos.digital_worker_repo.get_goal(goal_id) == {**before, "version": 1}
+    assert schema_baseline_version("sqlite") == schema_baseline_version("postgresql") == 42

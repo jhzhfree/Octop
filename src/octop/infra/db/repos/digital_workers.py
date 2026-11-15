@@ -367,7 +367,7 @@ class DigitalWorkerRepo:
         values = [value for _, value in fields]
         with self._db.transaction() as conn:
             conn.execute(
-                f"UPDATE digital_worker_goals SET {assignments}, updated_at = ? WHERE goal_id = ?",
+                f"UPDATE digital_worker_goals SET {assignments}, version = version + 1, updated_at = ? WHERE goal_id = ?",
                 (*values, now_ts(), goal_id),
             )
         return self.get_goal(goal_id)
@@ -394,8 +394,8 @@ class DigitalWorkerRepo:
             "period_end",
             "status",
         )
-        conditions = ["goal_id = ?", "worker_id = ?"]
-        bindings: list[Any] = [goal_id, worker_id]
+        conditions = ["goal_id = ?", "worker_id = ?", "version = ?"]
+        bindings: list[Any] = [goal_id, worker_id, expected["version"]]
         for column in columns:
             value = expected[column]
             conditions.append(f"{column} IS NULL" if value is None else f"{column} = ?")
@@ -420,6 +420,8 @@ class DigitalWorkerRepo:
             else:
                 fields = [(key, value) for key, value in updates.items() if key in columns]
                 assignments = [f"{key} = ?" for key, _ in fields] + ["updated_at = ?"]
+                if fields:
+                    assignments.append("version = version + 1")
                 values = [value for _, value in fields] + [
                     now_ts() if fields else expected["updated_at"]
                 ]
@@ -447,6 +449,8 @@ class DigitalWorkerRepo:
                     json.dumps(
                         {
                             "organization_id": organization_id,
+                            "from_version": expected["version"],
+                            "to_version": result["version"] if result else None,
                             "from_status": expected["status"],
                             "to_status": result["status"] if result else None,
                         }

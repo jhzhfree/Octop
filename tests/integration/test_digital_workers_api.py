@@ -167,14 +167,14 @@ async def test_digital_worker_profile_and_stage_goals(env, monkeypatch):
     invalid_period = await client.patch(
         f"/api/organizations/{organization_id}/digital-workers/{worker['worker_id']}/goals/{goal['goal_id']}",
         headers=owner_auth,
-        json={"period_start": "2027-01-01"},
+        json={"expected_version": goal["version"], "period_start": "2027-01-01"},
     )
     assert invalid_period.status_code == 422
 
     activated_goal = await client.patch(
         f"/api/organizations/{organization_id}/digital-workers/{worker['worker_id']}/goals/{goal['goal_id']}",
         headers=owner_auth,
-        json={"status": "active"},
+        json={"expected_version": goal["version"], "status": "active"},
     )
     assert activated_goal.status_code == 200, activated_goal.text
     plan_response = await client.post(
@@ -734,13 +734,16 @@ async def test_digital_worker_profile_and_stage_goals(env, monkeypatch):
     locked_goal = await client.patch(
         f"/api/organizations/{organization_id}/digital-workers/{worker['worker_id']}/goals/{goal['goal_id']}",
         headers=owner_auth,
-        json={"success_criteria": "changed after activation"},
+        json={
+            "expected_version": activated_goal.json()["version"],
+            "success_criteria": "changed after activation",
+        },
     )
     assert locked_goal.status_code == 409
     completed_goal = await client.patch(
         f"/api/organizations/{organization_id}/digital-workers/{worker['worker_id']}/goals/{goal['goal_id']}",
         headers=owner_auth,
-        json={"status": "completed"},
+        json={"expected_version": activated_goal.json()["version"], "status": "completed"},
     )
     assert completed_goal.status_code == 200, completed_goal.text
 

@@ -62,6 +62,7 @@ class WorkerGoalCreateBody(BaseModel):
 
 
 class WorkerGoalPatchBody(BaseModel):
+    expected_version: int | None = Field(default=None, ge=1, strict=True)
     title: str | None = Field(default=None, min_length=1, max_length=200)
     description: str | None = Field(default=None, max_length=4000)
     success_criteria: str | None = Field(default=None, min_length=1, max_length=4000)
@@ -307,7 +308,7 @@ async def create_goal(
 @router.patch(
     "/organizations/{organization_id}/digital-workers/{worker_id}/goals/{goal_id}",
     summary="Update a virtual worker goal",
-    description="Compares the server-validated goal snapshot at write time. Concurrent changes return 409; reload before retrying. The account audit commits with the mutation.",
+    description="Requires the displayed expected_version (missing: 428). Compares both the client version and server-validated snapshot at write time. Concurrent changes return 409; reload before retrying. The account audit commits with the mutation.",
 )
 async def update_goal(
     organization_id: str,
@@ -317,10 +318,23 @@ async def update_goal(
     user: Any = Depends(current_user),
     server: Any = Depends(get_server),
 ) -> dict[str, Any]:
+    expected_version = body.expected_version
+    if expected_version is None:
+        raise HTTPException(
+            status_code=428,
+            detail={
+                "code": "GOAL_VERSION_REQUIRED",
+                "message": "Reload the goal and provide expected_version",
+            },
+        )
     service = _service(server, user)
     return _call(
         lambda: service.update_goal(
-            organization_id, worker_id, goal_id, _updates(body, {"period_start", "period_end"})
+            organization_id,
+            worker_id,
+            goal_id,
+            _updates(body, {"period_start", "period_end"}),
+            expected_version=expected_version,
         )
     )
 
@@ -329,16 +343,29 @@ async def update_goal(
     "/organizations/{organization_id}/digital-workers/{worker_id}/goals/{goal_id}",
     status_code=204,
     summary="Delete a draft virtual worker goal",
-    description="Deletes only the validated draft snapshot. Concurrent activation or edits return 409; deletion and account audit commit together.",
+    description="Requires expected_version query parameter (missing: 428). Deletes only the displayed version of the validated draft snapshot. Concurrent activation or edits return 409; deletion and account audit commit together.",
 )
 async def delete_goal(
     organization_id: str,
     worker_id: str,
     goal_id: str,
+    expected_version: int | None = Query(default=None, ge=1),
     user: Any = Depends(current_user),
     server: Any = Depends(get_server),
 ) -> None:
-    _call(lambda: _service(server, user).delete_goal(organization_id, worker_id, goal_id))
+    if expected_version is None:
+        raise HTTPException(
+            status_code=428,
+            detail={
+                "code": "GOAL_VERSION_REQUIRED",
+                "message": "Reload the goal and provide expected_version",
+            },
+        )
+    _call(
+        lambda: _service(server, user).delete_goal(
+            organization_id, worker_id, goal_id, expected_version=expected_version
+        )
+    )
 
 
 @router.get(

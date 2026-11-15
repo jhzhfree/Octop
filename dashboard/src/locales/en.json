@@ -7398,7 +7398,9 @@
     "confirm": "Mark completed",
     "noCriteria": "No success criteria recorded",
     "notice": "Check the success criteria before completing this goal. This records your decision; it does not verify deliveries, stop running tasks or write knowledge.",
-    "failed": "The status could not be updated. Please retry."
+    "failed": "The status could not be updated. Please retry.",
+    "reloadRequired": "The goal may have changed or the operation could not be confirmed. Reload and review before deciding again; no automatic retry.",
+    "reload": "Reload goals"
   },
   "operationTrace": {
     "actions": {

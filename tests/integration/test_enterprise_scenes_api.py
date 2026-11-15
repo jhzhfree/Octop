@@ -122,7 +122,11 @@ async def test_scene_run_is_snapshotted_and_requires_another_org_manager(env):
     )
     assert goal_response.status_code == 201, goal_response.text
     goal_path = f"{worker_path}/goals/{goal_response.json()['goal_id']}"
-    active_goal = await client.patch(goal_path, headers=owner_auth, json={"status": "active"})
+    active_goal = await client.patch(
+        goal_path,
+        headers=owner_auth,
+        json={"expected_version": goal_response.json()["version"], "status": "active"},
+    )
     assert active_goal.status_code == 200, active_goal.text
     plan_response = await client.post(
         f"{goal_path}/plans",

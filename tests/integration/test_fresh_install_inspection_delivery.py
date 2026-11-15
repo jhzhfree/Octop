@@ -117,7 +117,7 @@ async def test_fresh_sqlite_inspection_delivery_via_http(tmp_path, monkeypatch):
             code=201,
         )
         gp = wp + "/goals/" + goal["goal_id"]
-        await req("PATCH", gp, {"status": "active"})
+        await req("PATCH", gp, {"expected_version": goal["version"], "status": "active"})
         plan = await req(
             "POST",
             gp + "/plans",
