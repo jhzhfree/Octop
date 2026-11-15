@@ -58,6 +58,7 @@ import DigitalTwinPlanning from "./DigitalTwinPlanning";
 import PlanReadiness from "./PlanReadiness";
 import ServerPlanReadiness from "./ServerPlanReadiness";
 import DeliveryAcceptance from "./DeliveryAcceptance";
+import ReportAttachment from "./ReportAttachment";
 import OrganizationProgress from "./OrganizationProgress";
 import RunQueue from "./RunQueue";
 import ScenePlanGuide from "./ScenePlanGuide";
@@ -2360,6 +2361,20 @@ export default function OrganizationsPage() {
                                   {run.error_summary}
                                 </Typography.Paragraph>
                               )}
+                              {currentUser &&
+                                Number.isSafeInteger(currentUser.id) && (
+                                  <ReportAttachment
+                                    currentUserId={currentUser.id}
+                                    target={{
+                                      organizationId: run.organization_id,
+                                      runId: run.run_id,
+                                    }}
+                                    canAttach={
+                                      run.status === "succeeded" &&
+                                      run.requested_by === currentUser.id
+                                    }
+                                  />
+                                )}
                               {currentUser &&
                                 Number.isSafeInteger(currentUser.id) && (
                                   <DeliveryAcceptance

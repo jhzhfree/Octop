@@ -976,5 +976,10 @@
   },
   "scenes": {
     "plan_required": "A ready digital-worker plan is required. Submit a new run with a plan."
+  },
+  "report_attachment": {
+    "invalid": "A successful scene and an inspection-only report draft for the same owned Agent are required.",
+    "forbidden": "You do not have access to share or read this report attachment.",
+    "conflict": "The report or run changed, was already attached, or has already been reviewed."
   }
 }

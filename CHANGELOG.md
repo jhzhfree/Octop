@@ -9,6 +9,7 @@
 - Separate connection identity management from resource mounts; version resource checks, preserve concurrent edits, and support resumable key rotation (schema 031).
 
 ### 新增
+- 晨检报告可由申请人显式关联为成功场景运行的不可变快照，供独立验收；不自动执行、不批准外发，附版本/权限/并发校验与离线服务链测试。
 - 场景单次执行链修复：新运行要求就绪计划，旧无计划记录可读/可拒绝；内部 Cron 本地串行交付，转录存储失败不计成功，新增无网络真实审批至人工验收测试。
 - 组织待办支持最小化运行详情；目标完成增加成功标准确认、防重复提交与选中状态同步，隔离切换上下文后的旧响应
 - 组织运行待办：按待审批、失败、待验收和需修改分类分页查看运行编号与时间，提供下一步提示，不自动执行或审批

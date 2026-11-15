@@ -11,6 +11,7 @@ from octop.infra.db.repos.scene_acceptance import (
     SceneAcceptanceRepo,
     snapshot_hash,
 )
+from octop.infra.db.repos.scene_report_attachment import SceneReportAttachmentRepo, attachment_hash
 from octop.infra.scenes.service import EnterpriseSceneService, SceneError
 
 EvidenceLoader = Callable[[dict[str, Any]], Awaitable[str | None]]
@@ -48,6 +49,22 @@ class SceneAcceptanceService:
         answer = await self.evidence_loader(run)
         if not answer or not answer.strip():
             raise SceneError("ACCEPTANCE_NO_EVIDENCE", "delivery summary unavailable", 409)
+        attachment_digest = run.get("report_attachment_sha256")
+        if attachment_digest:
+            attachment = SceneReportAttachmentRepo(self.repo.db).get(organization_id, run_id)
+            if (
+                attachment is None
+                or attachment["attachment_sha256"] != attachment_digest
+                or attachment_hash(attachment) != attachment_digest
+            ):
+                raise SceneError("ACCEPTANCE_STALE", "report attachment integrity changed", 409)
+            # Stable protocol marker: sharing is manual, not proof the Agent generated this report.
+            answer += (
+                "\n\n[owner_shared_report_snapshot "
+                + attachment_digest
+                + "]\n"
+                + attachment["content"]
+            )
         # Permission and snapshot must still hold after asynchronous evidence I/O.
         current = self._authorized_run(organization_id, run_id)
         if snapshot_hash(current) != snapshot_hash(run):

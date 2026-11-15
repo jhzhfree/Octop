@@ -11,6 +11,7 @@ from octop.api.deps import current_user, get_server
 from octop.infra.db.repos.scene_acceptance import SceneAcceptanceRepo
 from octop.infra.scenes.acceptance import SceneAcceptanceService
 from octop.infra.scenes.evidence import scene_run_evidence
+from octop.infra.scenes.report_attachment import SceneReportAttachmentService
 from octop.infra.scenes.service import EnterpriseSceneService, SceneError
 
 router = APIRouter()
@@ -105,5 +106,95 @@ async def decide_delivery(
     response.headers["Cache-Control"] = "no-store"
     try:
         return await _service(server, user).decide(organization_id, run_id, **body.model_dump())
+    except SceneError as exc:
+        raise _http_error(exc) from exc
+
+
+class ReportAttachmentPreview(BaseModel):
+    report_run_id: str
+    report_version: int
+    report_content_hash: str
+    content: str
+
+
+class ReportAttachmentRecord(ReportAttachmentPreview):
+    run_id: str
+    organization_id: str
+    attachment_sha256: str
+    attached_by: int
+    attached_at: int
+
+
+class ReportAttachmentBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    report_run_id: str = Field(min_length=1, max_length=128)
+    expected_report_version: int = Field(gt=0)
+    expected_content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    share_with_reviewer: Literal[True]
+
+
+def _attachments(server: Any, user: Any) -> SceneReportAttachmentService:
+    if server.services is None:
+        raise HTTPException(status_code=503, detail="database is not ready")
+    return SceneReportAttachmentService(EnterpriseSceneService(server.services.repos, user))
+
+
+@router.get(
+    "/organizations/{organization_id}/scene-runs/{run_id}/report-attachment/preview",
+    response_model=ReportAttachmentPreview,
+    summary="Preview an owned inspection report before explicitly sharing a snapshot",
+)
+def preview_report_attachment(
+    organization_id: str,
+    run_id: str,
+    report_run_id: str,
+    response: Response,
+    user: Any = Depends(current_user),
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return _attachments(server, user).preview(organization_id, run_id, report_run_id)
+    except SceneError as exc:
+        raise _http_error(exc) from exc
+
+
+@router.get(
+    "/organizations/{organization_id}/scene-runs/{run_id}/report-attachment",
+    response_model=ReportAttachmentRecord | None,
+    summary="Read the immutable report shared with this run's authorized reviewer",
+)
+def get_report_attachment(
+    organization_id: str,
+    run_id: str,
+    response: Response,
+    user: Any = Depends(current_user),
+    server: Any = Depends(get_server),
+) -> dict[str, Any] | None:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return _attachments(server, user).get(organization_id, run_id)
+    except SceneError as exc:
+        raise _http_error(exc) from exc
+
+
+@router.post(
+    "/organizations/{organization_id}/scene-runs/{run_id}/report-attachment",
+    response_model=ReportAttachmentRecord,
+    summary="Share a single immutable inspection report snapshot for independent review",
+    description="Requester only. Explicitly shares content, never approves outbound delivery. "
+    "Forbidden after review or a prior attachment. A retry must read the existing attachment.",
+)
+def attach_report(
+    organization_id: str,
+    run_id: str,
+    body: ReportAttachmentBody,
+    response: Response,
+    user: Any = Depends(current_user),
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return _attachments(server, user).attach(organization_id, run_id, **body.model_dump())
     except SceneError as exc:
         raise _http_error(exc) from exc
