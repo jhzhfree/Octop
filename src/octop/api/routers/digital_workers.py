@@ -19,6 +19,9 @@ from octop.infra.connectors.probe import probe_connector
 from octop.infra.connectors.service import ConnectorService
 from octop.infra.digital_workers import DigitalWorkerError, DigitalWorkerService
 from octop.infra.digital_workers.mattermost import (
+    MattermostIntentReport,
+    MattermostIntentRequest,
+    MattermostIntentService,
     MattermostReadinessReport,
     MattermostReadinessRequest,
     MattermostReadinessService,
@@ -815,6 +818,47 @@ def mattermost_readiness(
     return _call(
         lambda: MattermostReadinessService(service.repos, user).inspect(
             organization_id, worker_id, expected_worker_version=body.expected_worker_version
+        )
+    )
+
+
+@_mattermost_router.put(
+    "/organizations/{organization_id}/digital-workers/{worker_id}/mattermost-intent",
+    summary="Save an unverified Mattermost identity intent",
+    description="Credential-free local draft only. Revision zero creates; later changes require current revision. Revocation retains revision. No network access or delivery authorization.",
+    response_model=MattermostIntentReport,
+)
+def put_mattermost_intent(
+    organization_id: str,
+    worker_id: str,
+    body: MattermostIntentRequest,
+    user: Any = Depends(current_user),
+    server: Any = Depends(get_server),
+) -> MattermostIntentReport:
+    service = _service(server, user)
+    return _call(
+        lambda: MattermostIntentService(service.repos, user).save_intent(
+            organization_id, worker_id, body
+        )
+    )
+
+
+@_mattermost_router.get(
+    "/organizations/{organization_id}/digital-workers/{worker_id}/mattermost-intent",
+    summary="Read an unverified Mattermost identity intent",
+    response_model=MattermostIntentReport | None,
+)
+def get_mattermost_intent(
+    organization_id: str,
+    worker_id: str,
+    expected_worker_version: int = Query(ge=1),
+    user: Any = Depends(current_user),
+    server: Any = Depends(get_server),
+) -> MattermostIntentReport | None:
+    service = _service(server, user)
+    return _call(
+        lambda: MattermostIntentService(service.repos, user).get_intent(
+            organization_id, worker_id, expected_worker_version=expected_worker_version
         )
     )
 

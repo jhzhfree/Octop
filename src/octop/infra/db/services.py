@@ -19,6 +19,7 @@ from octop.infra.db.repos.enterprise_scenes import EnterpriseSceneRepo
 from octop.infra.db.repos.external_knowledge import ExternalKnowledgeRepo
 from octop.infra.db.repos.invites import InviteRepo
 from octop.infra.db.repos.knowledge import KnowledgeRepo
+from octop.infra.db.repos.mattermost_intents import MattermostIntentRepo
 from octop.infra.db.repos.organizations import OrganizationRepo
 from octop.infra.db.repos.proactive_care_config import ProactiveCareConfigRepo
 from octop.infra.db.repos.providers import ProviderRepo
@@ -65,6 +66,7 @@ class RepoBundle:
     published_expert_repo: PublishedExpertRepo
     knowledge_repo: KnowledgeRepo
     external_knowledge_repo: ExternalKnowledgeRepo
+    mattermost_intent_repo: MattermostIntentRepo
     organization_repo: OrganizationRepo
     enterprise_scene_repo: EnterpriseSceneRepo
     digital_worker_repo: DigitalWorkerRepo
@@ -101,6 +103,7 @@ class RepoBundle:
             knowledge_repo=KnowledgeRepo(db),
             external_knowledge_repo=ExternalKnowledgeRepo(db),
             organization_repo=OrganizationRepo(db),
+            mattermost_intent_repo=MattermostIntentRepo(db),
             enterprise_scene_repo=EnterpriseSceneRepo(db),
             digital_worker_repo=DigitalWorkerRepo(db),
             worker_knowledge_mapping_repo=WorkerKnowledgeMappingRepo(db),

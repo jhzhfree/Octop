@@ -10,7 +10,12 @@ from pathlib import Path
 
 import pytest
 
-from octop.infra.db.migrate import run_migrations, schema_baseline_version
+from octop.infra.db.migrate import (
+    _apply_sqlite_migration,
+    _discover,
+    run_migrations,
+    schema_baseline_version,
+)
 from octop.infra.db.pool import SqlitePool
 
 
@@ -681,17 +686,35 @@ def test_v7_sqlite_sql_upgrades_legacy_text_pks(tmp_path: Path) -> None:
     assert doc["filename"] == "a.md"
 
 
-def test_v14_to_v15_adds_sso_provider_kind_without_rebuilding(tmp_path: Path) -> None:
+@pytest.mark.parametrize("partial_upgrade", [False, True])
+def test_v14_to_v15_adds_sso_provider_kind_without_rebuilding(
+    tmp_path: Path, partial_upgrade: bool
+) -> None:
     pool = SqlitePool(tmp_path / "octop.db")
-    run_migrations(pool)
+    migrations = dict(_discover("sqlite"))
+    # Use canonical historical SQL: current repair helpers can add newer fields.
+    # Build a real v14 schema, not a current schema with a lowered watermark:
+    # the latter incorrectly replays later non-idempotent ALTER TABLE scripts.
+    for version, path in migrations.items():
+        if version <= 14:
+            with pool.connect() as conn:
+                conn.executescript(path.read_text(encoding="utf-8"))
     with pool.connect() as conn:
-        conn.execute("DROP TABLE enterprise_scene_versions")
-        conn.execute("ALTER TABLE enterprise_scene_runs DROP COLUMN scene_version")
-        conn.execute("ALTER TABLE enterprise_scenes DROP COLUMN version")
-        conn.execute("DROP INDEX IF EXISTS idx_sso_providers_kind")
-        conn.execute("ALTER TABLE sso_providers DROP COLUMN extra")
-        conn.execute("ALTER TABLE sso_providers DROP COLUMN kind")
-        conn.execute("UPDATE _schema_version SET version = 14")
+        assert conn.execute("SELECT version FROM _schema_version").fetchone()[0] == 14
+        columns = {r["name"] for r in conn.execute("PRAGMA table_info(sso_providers)")}
+        assert "kind" not in columns
+        assert "extra" not in columns
+        assert (
+            conn.execute(
+                "SELECT name FROM sqlite_master WHERE name = 'enterprise_scene_runs'"
+            ).fetchone()
+            is None
+        )
+        # A caller-owned index must survive: checking row IDs alone would not
+        # detect a destructive rebuild that copies IDs into a new table.
+        conn.execute("CREATE INDEX legacy_sso_display_name ON sso_providers(display_name)")
+        if partial_upgrade:
+            conn.execute("ALTER TABLE sso_providers ADD COLUMN kind TEXT NOT NULL DEFAULT 'oidc'")
         conn.execute(
             """
             INSERT INTO sso_providers(
@@ -707,6 +730,15 @@ def test_v14_to_v15_adds_sso_provider_kind_without_rebuilding(tmp_path: Path) ->
             """,
             (provider_id,),
         )
+    _apply_sqlite_migration(pool, 15, migrations[15])
+    with pool.connect() as conn:
+        assert conn.execute("SELECT version FROM _schema_version").fetchone()[0] == 15
+        identity = conn.execute("SELECT provider_id, subject FROM user_sso_identities").fetchone()
+        assert identity is not None
+        assert int(identity["provider_id"]) == int(provider_id)
+        assert identity["subject"] == "sub-1"
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    # Verify the entire real upgrade path, including v35+, and repeated boot.
     run_migrations(pool)
     run_migrations(pool)
     with pool.connect() as conn:
@@ -716,11 +748,14 @@ def test_v14_to_v15_adds_sso_provider_kind_without_rebuilding(tmp_path: Path) ->
         bound = conn.execute(
             "SELECT sso_provider_id FROM users WHERE username = 'sso-admin'"
         ).fetchone()[0]
+        assert conn.execute("SELECT COUNT(*) FROM user_sso_identities").fetchone()[0] == 1
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     assert version == schema_baseline_version()
     assert int(row["id"]) == int(provider_id)
     assert row["kind"] == "oidc"
     assert row["extra"] == "{}"
     assert "idx_sso_providers_kind" in indexes
+    assert "legacy_sso_display_name" in indexes
     assert int(bound) == int(provider_id)
 
 
