@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import tempfile
 from pathlib import Path
 from urllib.parse import quote
 
+from octop.infra.db.migrate import run_migrations
 from octop.infra.db.pool import DatabasePool, SqlitePool
 from octop.infra.db.repos._base import now_ts
+from octop.infra.errors import ErrorCode, OctopError
 
 _JWT_SECRET_KEY = "jwt"
 
@@ -60,15 +63,63 @@ def restore_sqlite_file(backup_file: Path, target: Path) -> None:
         src.close()
 
 
+def _merge_session_revocations(live: sqlite3.Connection, prepared: sqlite3.Connection) -> None:
+    """Union durable logout tombstones into a private prepared restore image."""
+    exists = live.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='auth_session_revocations'"
+    ).fetchone()
+    if exists is None:
+        schema_exists = live.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='_schema_version'"
+        ).fetchone()
+        version = (
+            live.execute("SELECT version FROM _schema_version").fetchone()
+            if schema_exists
+            else None
+        )
+        if version and int(version[0]) >= 38:
+            raise sqlite3.DatabaseError("current session revocation history is missing")
+        return  # Empty or pre-session-revocation targets have no tombstones.
+    cursor = live.execute("SELECT session_digest,revoked_at FROM auth_session_revocations")
+    while rows := cursor.fetchmany(500):
+        prepared.executemany(
+            "INSERT INTO auth_session_revocations(session_digest,revoked_at) VALUES (?,?) "
+            "ON CONFLICT(session_digest) DO NOTHING",
+            rows,
+        )
+
+
 def restore_sqlite_into_pool(backup_file: Path, pool: SqlitePool) -> None:
-    """Merge a backup file into the live pooled connection."""
-    src = sqlite3.connect(_readonly_sqlite_uri(backup_file), uri=True)
-    try:
-        with pool.connect() as live:
-            src.backup(live)
-            live.execute("PRAGMA wal_checkpoint(FULL)")
-    finally:
-        src.close()
+    """Restore a prepared image without rolling back durable session revocations.
+
+    Preparation never changes the supplied backup or target. Hold the shared
+    pool lock across tombstone capture and replacement, so readers using this pool cannot
+    authenticate against an intermediate image. Other connections/processes must be
+    stopped by the operator; this is not a cross-process maintenance barrier.
+    """
+    with tempfile.TemporaryDirectory(prefix="octop-restore-") as tmp:
+        staged_path = Path(tmp) / "prepared.sqlite"
+        snapshot_sqlite_file(backup_file, staged_path)
+        staged_pool = SqlitePool(staged_path)
+        try:
+            run_migrations(staged_pool)
+        except Exception as exc:
+            raise OctopError(
+                ErrorCode.BACKUP_SCHEMA_INCOMPATIBLE, "failed to prepare backup schema"
+            ) from exc
+        finally:
+            staged_pool.close()
+        prepared = sqlite3.connect(staged_path)
+        try:
+            if prepared.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                raise sqlite3.DatabaseError("prepared restore image failed integrity check")
+            with pool.connect() as live:
+                with prepared:
+                    _merge_session_revocations(live, prepared)
+                prepared.backup(live)
+                live.execute("PRAGMA wal_checkpoint(FULL)")
+        finally:
+            prepared.close()
 
 
 # ---------------------------------------------------------------------------
