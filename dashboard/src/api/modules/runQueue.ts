@@ -5,6 +5,7 @@ export const queueCategories = [
   "failed",
   "unreviewed_success",
   "changes_requested",
+  "accepted",
 ] as const;
 export type QueueCategory = (typeof queueCategories)[number];
 export interface RunQueue {
@@ -15,7 +16,7 @@ export interface RunQueue {
     run_id: string;
     status: "awaiting_approval" | "failed" | "succeeded";
     created_at: number;
-    decision: "changes_requested" | null;
+    decision: "accepted" | "changes_requested" | null;
   }[];
   next_before: number | null;
   execution_authorized: false;
@@ -53,7 +54,9 @@ export function validRunQueue(
             ? category
             : "succeeded") &&
         item.decision ===
-          (category === "changes_requested" ? "changes_requested" : null),
+          (category === "changes_requested" || category === "accepted"
+            ? category
+            : null),
     )
   );
 }

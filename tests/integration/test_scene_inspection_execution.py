@@ -7,6 +7,7 @@ import json
 import httpx
 import pytest
 
+from octop.infra.db.repos.organization_progress import OrganizationProgressRepo
 from octop.infra.db.repos.scene_inspection import SceneInspectionRepo
 from octop.infra.enterprise_assistant import adapters
 from octop.infra.enterprise_assistant.models import (
@@ -18,6 +19,7 @@ from octop.infra.enterprise_assistant.models import (
 from octop.infra.enterprise_assistant.service import FLAGS_KEY, AssistantService
 from octop.infra.scenes.delivery_evidence import SceneDeliveryEvidenceService
 from octop.infra.scenes.inspection import candidates, execute_inspection
+from octop.infra.scenes.progress import OrganizationProgressService
 from octop.infra.scenes.service import SceneError
 from tests.integration.test_scene_execution_offline import approve_and_wait
 from tests.integration.test_scene_execution_offline import scene_runtime as scene_runtime
@@ -133,6 +135,11 @@ async def test_same_run_fresh_sources_report_and_acceptance(scene_runtime, monke
             "content_sha256": batch["content_sha256"],
         }
     ]
+    progress = OrganizationProgressService(OrganizationProgressRepo(scene_runtime.db), 2)
+    assert run["run_id"] in [
+        r["run_id"] for r in progress.queue("o", category="unreviewed_success")["items"]
+    ]
+    assert progress.queue("o", category="accepted")["items"] == []
     accepted = await scene_runtime.acceptance.decide(
         "o",
         run["run_id"],
@@ -141,6 +148,11 @@ async def test_same_run_fresh_sources_report_and_acceptance(scene_runtime, monke
         expected_snapshot_sha256=review["snapshot_sha256"],
     )
     assert accepted["decision"] == "accepted"
+    assert progress.queue("o", category="unreviewed_success")["items"] == []
+    archived = progress.queue("o", category="accepted")
+    assert [r["run_id"] for r in archived["items"]] == [run["run_id"]]
+    assert archived["items"][0]["decision"] == "accepted"
+    assert progress.detail("o", run["run_id"])["decision"] == "accepted"
     assert scene_runtime.gateway._channel_manager is None
     assert scene_runtime.model.calls == []
 

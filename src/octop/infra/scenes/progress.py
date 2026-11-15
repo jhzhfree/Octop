@@ -46,6 +46,7 @@ class OrganizationProgressService:
             "failed",
             "unreviewed_success",
             "changes_requested",
+            "accepted",
         }:
             raise ValueError("invalid queue category")
         if type(limit) is not int or not 1 <= limit <= 50:

@@ -200,3 +200,87 @@ it("removes displayed evidence on a denied reread and on observed permission rev
   await open();
   expect(screen.queryByText("organizations.viewEvidence")).toBeNull();
 });
+
+it("lets a human revisit the accepted run and its blocked publication without sending", async () => {
+  vi.mocked(deliveryAcceptanceApi.decide).mockResolvedValue({
+    run_id: "r",
+    organization_id: "o",
+    decision: "accepted",
+    reviewer_id: 2,
+    reviewed_at: 2,
+    evidence_sha256: "a".repeat(64),
+    snapshot_sha256: "b".repeat(64),
+    evidence_length: 13,
+    scene_version: 1,
+  });
+  render(<RunQueue organizationId="o" canManage />);
+  await open();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Review delivery summary" }),
+  );
+  await screen.findByText("REVIEW REPORT");
+  fireEvent.click(screen.getByRole("button", { name: "Accept summary" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Confirm permanent decision" }),
+  );
+  await screen.findByText("Accepted by a human");
+  vi.mocked(runQueueApi.read).mockResolvedValue({
+    organization_id: "o",
+    category: "accepted",
+    as_of: 3,
+    items: [
+      { run_id: "r", status: "succeeded", created_at: 1, decision: "accepted" },
+    ],
+    next_before: null,
+    execution_authorized: false,
+    persisted_state_may_lag: true,
+  });
+  fireEvent.change(screen.getByRole("combobox"), {
+    target: { value: "accepted" },
+  });
+  expect(screen.queryByText("REVIEW REPORT")).toBeNull();
+  await open();
+  expect(runQueueApi.read).toHaveBeenLastCalledWith("o", "accepted", undefined);
+  expect(runQueueApi.detail).toHaveBeenLastCalledWith("o", "r");
+  expect(screen.getByText("runQueue.actions.accepted")).toBeTruthy();
+  fireEvent.click(screen.getByText("organizations.viewEvidence"));
+  await screen.findByText("SAME RUN REPORT");
+  vi.mocked(mattermostPublicationApi.get).mockResolvedValue({
+    organization_id: "o",
+    run_id: "r",
+    worker_id: "worker",
+    worker_version: 1,
+    intent_revision: 1,
+    configuration_revision: 1,
+    instance_key: "fixture",
+    team_id: "t".repeat(26),
+    channel_id: "c".repeat(26),
+    bot_id: "b".repeat(26),
+    report_sha256: "a".repeat(64),
+    publication_sha256: "b".repeat(64),
+    content: "EXISTING LOCAL PREVIEW",
+    proposed_by: 1,
+    approved_by: 2,
+    status: "blocked_not_connected",
+    created_at: 2,
+    updated_at: 3,
+    connected: false,
+    dispatch_enabled: false,
+    execution_authorized: false,
+  });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Mattermost publication review" }),
+  );
+  await screen.findByText("EXISTING LOCAL PREVIEW");
+  expect(
+    screen.getByText("Approved locally · blocked: not connected · not sent"),
+  ).toBeTruthy();
+  expect(mattermostPublicationApi.get).toHaveBeenCalledWith({
+    organizationId: "o",
+    runId: "r",
+  });
+  expect(deliveryAcceptanceApi.decide).toHaveBeenCalledTimes(1);
+  expect(mattermostPublicationApi.candidate).not.toHaveBeenCalled();
+  expect(mattermostPublicationApi.create).not.toHaveBeenCalled();
+  expect(mattermostPublicationApi.decide).not.toHaveBeenCalled();
+});

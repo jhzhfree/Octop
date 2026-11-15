@@ -198,6 +198,7 @@ def test_queue_categories_and_no_side_effects(setup):
         "awaiting_approval": ["r6"],
         "failed": ["r5"],
         "changes_requested": ["r2"],
+        "accepted": ["r1"],
         "unreviewed_success": ["end", "old", "r3"],
     }
     for category, ids in expected.items():
@@ -225,22 +226,23 @@ def test_queue_keyset_pagination_and_new_insert(setup):
     assert third["next_before"] is None
 
 
-def test_queue_org_and_current_membership(setup):
+@pytest.mark.parametrize("category", ["failed", "accepted"])
+def test_queue_org_and_current_membership(setup, category):
     db, repo, service = setup
     with pytest.raises(ProgressAccessError):
-        service.queue("other", category="failed")
+        service.queue("other", category=category)
     with pytest.raises(ProgressAccessError):
-        OrganizationProgressService(repo, 2).queue("o", category="failed")
+        OrganizationProgressService(repo, 2).queue("o", category=category)
     with db.connect() as c:
         c.execute("DELETE FROM organization_members WHERE user_id=1")
     with pytest.raises(ProgressAccessError):
-        service.queue("o", category="failed")
+        service.queue("o", category=category)
 
 
 @pytest.mark.parametrize(
     "kwargs",
     [
-        {"category": "accepted"},
+        {"category": "sent"},
         {"category": "failed", "limit": 51},
         {"category": "failed", "limit": True},
         {"category": "failed", "before": 0},
@@ -252,12 +254,13 @@ def test_queue_invalid_arguments(setup, kwargs):
         setup[2].queue("o", **kwargs)
 
 
-def test_queue_rechecks_disabled_admin_and_revocation(setup, monkeypatch):
+@pytest.mark.parametrize("category", ["failed", "accepted"])
+def test_queue_rechecks_disabled_admin_and_revocation(setup, monkeypatch, category):
     db, repo, service = setup
     with db.connect() as c:
         c.execute("UPDATE users SET disabled=1 WHERE id=3")
     with pytest.raises(ProgressAccessError):
-        OrganizationProgressService(repo, 3).queue("o", category="failed")
+        OrganizationProgressService(repo, 3).queue("o", category=category)
     original = repo._authorize
     calls = 0
 
@@ -270,7 +273,7 @@ def test_queue_rechecks_disabled_admin_and_revocation(setup, monkeypatch):
 
     monkeypatch.setattr(repo, "_authorize", authorize)
     with pytest.raises(ProgressAccessError):
-        service.queue("o", category="failed")
+        service.queue("o", category=category)
 
 
 def test_queue_http_contract(setup):
@@ -297,7 +300,13 @@ def test_queue_http_contract(setup):
         assert client.get(path.replace("/o/", "/other/")).status_code == 403
         for suffix in ["&limit=51", "&before=0", "&before=9223372036854775808"]:
             assert client.get(path + suffix).status_code == 422
-        assert client.get(path.replace("unreviewed_success", "accepted")).status_code == 422
+        assert client.get(path.replace("unreviewed_success", "sent")).status_code == 422
+        accepted = client.get(path.replace("unreviewed_success", "accepted"))
+        assert accepted.status_code == 200
+        assert accepted.headers["cache-control"] == "no-store"
+        assert accepted.json()["items"] == [
+            {"run_id": "r1", "status": "succeeded", "created_at": 100, "decision": "accepted"}
+        ]
         app.dependency_overrides[get_server] = lambda: SimpleNamespace(services=None)
         assert client.get(path).status_code == 503
 
@@ -377,3 +386,29 @@ def test_detail_rechecks_revocation(setup, monkeypatch):
     monkeypatch.setattr(repo, "_authorize", authorize)
     with pytest.raises(ProgressAccessError):
         service.detail("o", "missing")
+
+
+def test_accepted_pagination_excludes_wrong_org_and_inconsistent_states(setup):
+    db, _, service = setup
+    with db.connect() as c:
+        c.executescript("""
+        INSERT INTO scene_run_acceptances VALUES('end','o','accepted'),('old','o','accepted');
+        INSERT INTO scene_run_acceptances VALUES('r3','other','accepted'),('r5','o','accepted');
+        INSERT INTO scene_run_acceptances VALUES('other','other','accepted');
+        """)
+    first = service.queue("o", category="accepted", limit=1)
+    assert first["items"][0]["run_id"] == "end"
+    with db.connect() as c:
+        c.execute("INSERT INTO enterprise_scene_runs VALUES(11,'new','o','succeeded',NULL,110)")
+        c.execute("INSERT INTO scene_run_acceptances VALUES('new','o','accepted')")
+    second = service.queue("o", category="accepted", limit=1, before=first["next_before"])
+    third = service.queue("o", category="accepted", limit=1, before=second["next_before"])
+    assert second["items"][0]["run_id"] == "old"
+    assert third["items"][0]["run_id"] == "r1"
+    assert third["next_before"] is None
+    assert [row["run_id"] for row in service.queue("o", category="accepted")["items"]] == [
+        "new",
+        "end",
+        "old",
+        "r1",
+    ]

@@ -10,16 +10,16 @@
 
 **AI-TAgent 企业场景仍处于开发阶段，尚不满足 1.0 发布条件。**
 当前开发分支为 `feature/akb-octop-litellm-dev`；本轮开始核对的远端提交为
-`de62ab99dfda74bd911b52c35ffca221d656f796`。后续提交以 Git 实际记录为准，
+`e1eae7ad14b2653ff35e6c9f79537e8e3965e39a`。后续提交以 Git 实际记录为准，
 本文件不是发布批准，也不授权生产操作、合并、部署或外部消息发送。
 
 已实现的基础链路包括同 run 单次 HTTP 巡检、本地报告、独立人工验收、
-组织待办直达、来源类型/指纹标识和 Mattermost 本地发布预览/审批。
+组织待办直达及已验收交付回看、来源类型/指纹标识和 Mattermost 本地发布预览/审批。
 巡检报告可以自动生成，但每次申请、审批、验收和发布意向仍由明确的人为操作发起；
 这不是周期自主执行系统。批准本地发布后仍是 `blocked_not_connected`，没有发送器。
 
 当前静态核对迁移文件 001–041 的 SQLite/PostgreSQL 配对完整；**这不是实际数据库
-迁移验收**。本轮报告读取加固的验证记录见
+迁移验收**。报告读取加固及已验收交付回看的分项验证记录见
 [组织运行待办](ai-tagent/organization-run-queue.md) 的 2026-11-15 后续记录。
 其他增量证据见[验收来源标识](ai-tagent/delivery-acceptance-ui.md)及
 [初始化类型修复](ai-tagent/setup-lifecycle-hardening.md)。每份记录仅覆盖其标明的

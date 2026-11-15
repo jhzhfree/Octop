@@ -7355,7 +7355,7 @@
     "search": "Filter sources by name or ID"
   },
   "runQueue": {
-    "title": "Organization run follow-ups",
+    "title": "Organization runs and deliveries",
     "notice": "Read-only queue, newest inserted runs first. State may lag. No automatic retry, approval, acceptance, or goal completion.",
     "forbidden": "Manager permission is required to read the follow-up queue.",
     "category": "Follow-up category",
@@ -7364,12 +7364,14 @@
     "empty": "No matching runs.",
     "error": "Queue unavailable: access denied or service unavailable.",
     "categories": {
+      "accepted": "Accepted by a human",
       "awaiting_approval": "Awaiting approval",
       "failed": "Execution failed",
       "unreviewed_success": "Awaiting human acceptance",
       "changes_requested": "Delivery changes requested"
     },
     "actions": {
+      "accepted": "Open this run to reread its report, human acceptance or existing publication preview. Preparing a preview remains in the scene run record. Accepted does not mean sent to Mattermost or goal completed.",
       "awaiting_approval": "Next: review the request in its scene run record. Requesters cannot approve their own request.",
       "failed": "Next: inspect the failure in its scene run record before deciding whether to request another run.",
       "unreviewed_success": "Next: open human acceptance in its scene run record and review delivery evidence.",

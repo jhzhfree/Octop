@@ -88,6 +88,7 @@ class OrganizationProgressRepo:
             "failed": "r.status='failed' AND a.decision IS NULL",
             "unreviewed_success": "r.status='succeeded' AND a.decision IS NULL",
             "changes_requested": "r.status='succeeded' AND a.decision='changes_requested'",
+            "accepted": "r.status='succeeded' AND a.decision='accepted'",
         }
         predicate = predicates[category]
         with self.db.connect() as conn:

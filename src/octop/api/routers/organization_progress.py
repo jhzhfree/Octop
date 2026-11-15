@@ -87,12 +87,14 @@ class QueueItem(BaseModel):
     run_id: str
     status: Literal["awaiting_approval", "failed", "succeeded"]
     created_at: int
-    decision: Literal["changes_requested"] | None
+    decision: Literal["accepted", "changes_requested"] | None
 
 
 class RunQueue(BaseModel):
     organization_id: str
-    category: Literal["awaiting_approval", "failed", "unreviewed_success", "changes_requested"]
+    category: Literal[
+        "awaiting_approval", "failed", "unreviewed_success", "changes_requested", "accepted"
+    ]
     as_of: int
     items: list[QueueItem]
     next_before: int | None
@@ -104,12 +106,14 @@ class RunQueue(BaseModel):
     "/organizations/{organization_id}/run-queue",
     response_model=RunQueue,
     summary="List organization run follow-ups with bounded keyset pagination",
-    description="Managers only. Newest inserted runs first. Read-only; no dispatch, retry, or acceptance.",
+    description="Managers only. Newest inserted runs first. Includes accepted deliveries for follow-up; acceptance does not mean publication or goal completion. Read-only; no dispatch, retry, or acceptance.",
 )
 def organization_run_queue(
     organization_id: str,
     response: Response,
-    category: Literal["awaiting_approval", "failed", "unreviewed_success", "changes_requested"],
+    category: Literal[
+        "awaiting_approval", "failed", "unreviewed_success", "changes_requested", "accepted"
+    ],
     limit: int = Query(default=20, ge=1, le=50),
     before: int | None = Query(default=None, ge=1, le=2**63 - 1),
     user: Any = Depends(current_user),
