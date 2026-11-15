@@ -46,3 +46,36 @@
 第一场景为企业运营团队的数字分析员：管理员先在 Octop 选定数字员工、保存拟用的 Mattermost 实例/团队/频道/Bot ID，审阅草稿后再由后续独立流程配置服务端凭据。下一道验收门是只读确认当前 token 对应真实 Bot、Bot 未禁用、团队/频道归属与成员资格，禁止将普通用户 token 作为 Bot。真正发送还需要明确目的地、人工授权或已批准任务执行身份、幂等记录与审计。草稿或本地 readiness 不能替代这些验收门。
 
 一致性边界：SQL 在配置写入语句快照中重新检查权限，不声明 PostgreSQL 下成员/Agent 权限撤销与本配置提交完全串行化。此表没有任何执行能力；未来验证或发消息必须在执行时重新授权，不能信任旧草稿或旧 readiness。当前回归覆盖双 SQLite 连接同 revision 仅一写入成功，以及审计落库失败时意向回滚。
+
+## 只读身份核验内核（未接入产品路由）
+
+新增 `infra/digital_workers/mattermost_verification.py` 是安全基础，不是可用的
+“连接 Mattermost”功能。现有 readiness/intent 响应与数据库状态保持不变，仍未验证。
+没有新增 API、UI、配置读取、凭据保存、调度、发送、建 Bot 或生产调用点。
+
+内核只允许部署者固定配置的规范 HTTPS **公网 IP origin**，不接受域名、
+URL 路径、userinfo、query/fragment、私网、loopback、link-local、保留/多播地址；
+固定只读 `GET /api/v4/users/me`，TLS 必须验证 IP SAN，不能关闭验证。
+不跟随重定向、不使用环境代理，不提供用户自选请求目标或 HTTP client。
+当前刻意不支持企业私网部署：下一阶段须加入管理员精确出站目标策略与可靠
+TLS 身份验证，不能以 `verify=False` 或仅校验域名替代。
+
+响应只接受 200 JSON、未压缩且至多 16 KiB，整次操作 10 秒总时限。
+要求稳定 ID 精确匹配、`is_bot` 严格为 true、`delete_at` 严格整数 0，
+roles 严格为 `system_user`；普通人类 token、禁用 Bot、错误 ID 或带管理权限均拒绝。
+返回固定结果码，不包含上游 profile、响应内容、异常、地址或 token。
+凭据字段不参加对象 repr/序列化；这不是外部 Secret Manager 或完整凭据管理方案。
+
+网络前后必须调用授权快照复核回调。快照携带组织、员工、实际操作者、员工版本、
+意向 revision、配置 revision 和实例别名。**该回调的数据库实现尚未接入**：
+生产适配必须以组织+实例确定配置，读取当前账号启用/组织管理/Agent权限、
+同组织员工、draft 意向、实际 Bot ID 和所有版本，并复核凭据/实例撤权。
+不得使用恒真回调或将用户提交的 scope 作为授权证明。前后复核仍不能消除网络
+请求在途撤权的竞态，所以结果明确 `observation_not_atomic`，所有发送/执行权限
+始终 false。团队/频道成员资格、发送目的地授权也尚未核验。
+
+现有 Connector 的 Fernet 主密钥与密文在同一数据库，因此不能声称可抵抗整库泄露；
+通用 decrypt 也不是组织授权边界。生产接入前需实现只给后端的凭据配置/轮换/
+撤销及上述数据库复核，补 SQLite 与 PostgreSQL 运行测试和真实实例验收。
+本轮只增加数据库无关内核与 MockTransport 测试，没有修改 SQL 或迁移，
+不声称实现了两种数据库的生产授权一致性。
