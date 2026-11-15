@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import Depends, Header, Query, Request
 
+from octop.infra.auth import sessions
 from octop.infra.auth.tokens import InvalidToken as InvalidToken
 from octop.infra.auth.tokens import TokenExpired as TokenExpired
 from octop.infra.auth.tokens import decode_token as decode_token
@@ -99,7 +100,9 @@ def _decode(server: OctopServer, token: str) -> dict[str, Any]:
     if secret is None:
         raise OctopError(ErrorCode.INTERNAL_ERROR, "jwt secret missing")
     try:
-        return decode_token(secret, token)
+        payload = decode_token(secret, token)
+        sessions.require_active(server.services.db, payload, token)
+        return payload
     except TokenExpired as exc:
         raise OctopError(ErrorCode.TOKEN_EXPIRED, "token expired") from exc
     except InvalidToken as exc:
@@ -137,6 +140,7 @@ def maybe_sliding_renew_token(server: OctopServer, token: str, user: User) -> st
         uname=user.username,
         role=user.role,
         ttl_seconds=ttl,
+        session_id=sessions.session_id(payload, token),
     )
 
 

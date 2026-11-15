@@ -62,7 +62,7 @@ def install(app: Any, server: Any) -> None:
             return JSONResponse(status_code=exc.status, content=exc.to_envelope())
 
         response = await call_next(request)
-        if raw is not None:
+        if raw is not None and path != "/api/auth/logout":
             try:
                 renewed = maybe_sliding_renew_token(server, raw, request.state.octop_user)
             except OctopError:

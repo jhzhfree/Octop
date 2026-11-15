@@ -10,7 +10,8 @@ from fastapi import APIRouter, Depends, File, Request, Response, UploadFile
 from pydantic import BaseModel, Field
 
 from octop.api.common.client_ip import resolve_client_ip
-from octop.api.deps import current_user, get_server, sign_token
+from octop.api.deps import _decode, current_user, extract_raw_token, get_server, sign_token
+from octop.infra.auth import sessions
 from octop.infra.auth.captcha import current_env, ensure_captcha, load_effective, public_config
 from octop.infra.errors import ErrorCode, OctopError
 from octop.infra.users.email import normalize_email
@@ -208,8 +209,20 @@ async def login(
 
 
 @router.post("/logout", status_code=204, summary="Sign out")
-async def logout(user: Any = Depends(current_user), server: Any = Depends(get_server)) -> Response:
-    """Record an audit event for the current session. JWTs are stateless and not revoked server-side."""
+async def logout(
+    request: Request, user: Any = Depends(current_user), server: Any = Depends(get_server)
+) -> Response:
+    """Revoke this login and its sliding tokens, without signing out other sessions.
+
+    Already admitted requests and open streams are not interrupted.
+    """
+    raw = extract_raw_token(
+        authorization=request.headers.get("authorization"),
+        access_token=request.query_params.get("access_token"),
+    )
+    if not raw:
+        raise OctopError(ErrorCode.AUTH_FAILED, "missing credentials")
+    sessions.revoke(server.services.db, _decode(server, raw), raw)
     server.services.audit_repo.write(actor=user.username, action="auth.logout")
     return Response(status_code=204)
 

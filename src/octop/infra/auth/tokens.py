@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import uuid
 from typing import Any
 
 import jwt
@@ -21,9 +22,11 @@ def sign_token(
     uname: str,
     role: str,
     ttl_seconds: int = 86400,
+    session_id: str | None = None,
 ) -> str:
     now = int(time.time())
     payload = {
+        "sid": session_id if session_id is not None else uuid.uuid4().hex,
         "sub": str(sub),
         "uname": uname,
         "role": role,
