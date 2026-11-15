@@ -22,7 +22,7 @@ class SetupLifecycleRepo:
                 "WHERE id=1 AND phase=?",
                 (target, admin_id, expected),
             )
-            return result.rowcount == 1
+            return bool(result.rowcount == 1)
 
     def token_matches(self, digest: str) -> bool:
         with self._db.connect() as conn:
@@ -38,4 +38,4 @@ class SetupLifecycleRepo:
                 "UPDATE setup_lifecycle SET token_digest=? WHERE id=1 AND phase='active'",
                 (digest,),
             )
-            return result.rowcount == 1
+            return bool(result.rowcount == 1)

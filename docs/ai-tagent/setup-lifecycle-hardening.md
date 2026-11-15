@@ -27,3 +27,36 @@ SQLite 与 PostgreSQL 同时提供 037 迁移。旧库只要存在任意用户�
 ## 验证范围
 
 离线 ASGI 集成测试覆盖真实首次安装、旧令牌、匿名恢复、重复完成、重启、禁用管理员、并发创建/完成、输入失败重试、创建事务回滚、完成中断关闭及旧库迁移。provider 探测使用离线替身，网络 socket 被禁止。PostgreSQL 迁移使用兼容 SQL 并与 SQLite 脚本对齐；未运行真实 PostgreSQL 服务验证。
+
+## 类型检查修复与安全门禁（2026-11-15）
+
+`DatabasePool.connect/transaction` 的连接、游标类型为 `Any`，导致
+`result.rowcount == 1` 被 mypy 推导为 `Any`。`transition` 与 `rotate_token`
+现沿用其他 repo 的 `bool(result.rowcount == 1)` 写法，明确返回布尔值。
+比较仍要求恰好一行；没有改为 rowcount 真值判断，也没有修改 SQL、事务、
+expected phase 条件、active 限制或初始管理员绑定。
+
+新增 SQLite repo 回归覆盖：条件抢占成功/失败、重复抢占不能替换管理员、
+finishing/completed 阶段不能旋转令牌、旋转使旧摘要失效、缺失生命周期行时
+保持关闭且不能报告更新成功。既有初始化向导测试另覆盖并发、回滚和重启关闭。
+
+执行前检查 Makefile：`all = lint-all + typecheck-all + test`。
+静态部分为 Ruff、ESLint、Prettier、mypy、TypeScript；`test` 是
+`pytest -n auto -m "not live"`，排除 live 标记并非禁网保证。
+公共 fixture 清除代理也不代表禁止遥测；因此本轮不执行 `make all`、
+全量 pytest 或可能退化为全量的 testmon，不重试此前被拒绝的遥测相关测试。
+只运行静态门禁和明确选定的本地测试：repo 测试使用临时 SQLite；
+`test_setup_wizard.py` 沿用现有禁止 socket connect/create_connection 的
+fixture，provider probe 和 harness 使用替身，HTTP 为内存 ASGI。
+uv 使用已安装依赖、`UV_OFFLINE=1` 和可写临时缓存；没有更改安全审查、
+网络策略或禁网 fixture。此范围不构成真实服务或完整测试套件验收。
+
+本轮结果：
+
+- `UV_CACHE_DIR=/tmp/octop-uv-cache UV_OFFLINE=1 make lint-all typecheck-all`：
+  全部通过，mypy 检查 656 个源文件无错误，TypeScript 检查通过。
+- `UV_CACHE_DIR=/tmp/octop-uv-cache UV_OFFLINE=1 uv run --frozen pytest
+  tests/unit/db/test_setup_lifecycle.py tests/integration/test_setup_wizard.py -q`：
+  **42 通过**（新增 repo 3 项、既有向导 39 项）；两条 ldap3 依赖弃用警告。
+- `git diff --check` 通过。未运行全量测试、testmon、真实 PostgreSQL、模型、
+  AKB 或 Mattermost；没有真实发送、部署或合并。未修改前端，不重复构建产物。
