@@ -44,9 +44,20 @@ class SqlitePool:
             check_same_thread=False,
             isolation_level=None,
         )
-        self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA foreign_keys = ON")
-        self._conn.execute("PRAGMA journal_mode = WAL")
+        try:
+            # Recovery images are for offline review, never an implicitly activated home.
+            if self._conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE name='octop_recovery_quarantine'"
+            ).fetchone():
+                from octop.infra.errors import ErrorCode, OctopError
+
+                raise OctopError.localized(ErrorCode.BACKUP_RECOVERY_QUARANTINED)
+            self._conn.row_factory = sqlite3.Row
+            self._conn.execute("PRAGMA foreign_keys = ON")
+            self._conn.execute("PRAGMA journal_mode = WAL")
+        except Exception:
+            self._conn.close()
+            raise
         self._lock = threading.RLock()
         if first_create and os.name == "posix":
             os.chmod(self.path, 0o600)

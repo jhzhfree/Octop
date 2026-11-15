@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
 from pathlib import Path
 
 import click
 
 from octop.config import load_config
+from octop.i18n import tr
 from octop.infra.backup.auto import create_and_store_auto_backup
 from octop.infra.backup.store import place_backup_file
 from octop.infra.backup.system_archive import create_system_backup
@@ -172,3 +174,31 @@ def restore(
     # Fail before config loading / database opening, even with --yes. A caller's
     # assertion that the service stopped is not a cross-process maintenance gate.
     raise click.ClickException(OctopError.localized(ErrorCode.BACKUP_RESTORE_UNAVAILABLE).message)
+
+
+@backup.command("recover-image", help=tr("backupRecovery.help"))
+@click.argument("archive", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option(
+    "--output",
+    required=True,
+    type=click.Path(path_type=Path),
+    help=tr("backupRecovery.output"),
+)
+@click.option(
+    "--identity-policy",
+    required=True,
+    type=click.Choice(["quarantine-all"]),
+    help=tr("backupRecovery.policy"),
+)
+@click.option("--archive-sha256", required=True, help=tr("backupRecovery.checksum"))
+def recover_image(archive: Path, output: Path, identity_policy: str, archive_sha256: str) -> None:
+    """Recover SQLite data into a new quarantined image, without activating it."""
+    from octop.infra.backup.recovery_image import create_recovery_image
+
+    try:
+        result = create_recovery_image(
+            archive, output, identity_policy=identity_policy, expected_sha256=archive_sha256
+        )
+    except OctopError as exc:
+        raise click.ClickException(exc.message) from exc
+    click.echo(json.dumps(result, sort_keys=True))

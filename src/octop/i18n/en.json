@@ -395,6 +395,9 @@
     "DATABASE_NOT_EMPTY": "The target database already has users. Use an empty database, or log in with the existing admin.",
     "BACKUP_DRIVER_MISMATCH": "This backup was made with a different database engine (SQLite vs PostgreSQL). Switch the runtime to match the backup, or create a new backup on the current engine. Cross-engine restore is not supported.",
     "BACKUP_SCHEMA_INCOMPATIBLE": "This backup uses database schema version {archive_schema_version}, which cannot be restored by this Octop version (maximum supported: {runtime_schema_version}).",
+    "BACKUP_RECOVERY_REJECTED": "Recovery image rejected. Use a supported SQLite archive, explicit quarantine policy, and a new file in a private local directory. No target was replaced.",
+    "BACKUP_RECOVERY_QUARANTINED": "This database is a quarantined recovery image. Application startup is blocked; review and activation are not implemented.",
+    "BACKUP_RECOVERY_COMMIT_UNCERTAIN": "Recovery publication may have completed but durability confirmation failed. Do not overwrite or automatically retry; inspect the quarantined target.",
     "BACKUP_RESTORE_UNAVAILABLE": "System restore is unavailable until coordinated maintenance, safe identity and permission recovery, and failure rollback are implemented. No restore was started. Backup creation and download remain available.",
     "BACKUP_ONLINE_RESTORE_UNAVAILABLE": "Online restore is unavailable because coordinated maintenance and identity/permission recovery are not yet supported. No restore was started. Backup creation, upload and download remain available.",
     "BACKUP_IN_PROGRESS": "A backup or restore is already in progress. Try again shortly.",
@@ -990,5 +993,11 @@
   },
   "auth": {
     "access_state_unavailable": "Current access could not be verified. Please retry."
+  },
+  "backupRecovery": {
+    "help": "Recover SQLite data into a new quarantined image, without activating it.",
+    "output": "New SQLite image in an existing private local directory; never overwrites.",
+    "policy": "Disable all archived accounts, rotate JWT, and block application startup.",
+    "checksum": "Expected SHA-256 of the completed source archive."
   }
 }
