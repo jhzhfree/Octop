@@ -54,3 +54,70 @@ This is UI confirmation, not automated verification of success criteria. It does
 not cancel in-flight tasks or write knowledge. Cross-client goal status races are
 not solved by this change; the existing backend has no goal-status CAS contract.
 No real database, browser E2E or external service integration is claimed.
+
+## Follow-up: same-run delivery entry from the queue
+
+The persisted detail dialog now offers three explicit actions for successful
+runs when the current manager has task access (or is a platform administrator):
+read the existing report/delivery evidence, open the existing independent
+acceptance flow, and read an existing Mattermost publication preview. All targets
+come from the selected organization and run; no pasted report/run identifier or
+new cross-run attachment is introduced. The initial detail read still fetches
+metadata only. Native inspection evidence is the same-run report; ordinary scene
+runs may expose their existing delivery summary instead.
+
+The existing evidence and acceptance endpoints remain authoritative. A queue
+manager is not automatically an eligible reviewer: the server still rejects the
+requester reviewing their own delivery and checks the current reviewer/agent
+permissions. Missing or forbidden evidence is shown as unavailable. Acceptance
+still requires the existing explicit decision confirmation. The queue's
+publication view is read-only: create/approve/revoke controls are disabled here;
+those existing workflows remain in the scene-run view. Reading never creates a
+preview or sends a message, and `blocked_not_connected` still means not sent.
+
+Organization, identity, role, permission, category and selected-run changes
+unmount the old detail session. Queue refresh/pagination also closes it. Closing
+an evidence view or beginning a reread clears its old text; failed rereads never
+retain old report content. Delayed reads cannot repopulate a destroyed session.
+Evidence requests now explicitly use `cache: no-store`. This does not add server
+push revocation: a remote permission change is enforced on the next request or
+when the application's current authorization context updates, not by continuous
+background polling.
+
+Validation for this increment is recorded below. It does not establish live
+Mattermost, model, AKB, PostgreSQL, production deployment or browser E2E readiness.
+
+### Validation record (2026-11-15)
+
+- Clean checkout from `5ad98a282e62c56031006106dda03f2f0e93d56c`; no local
+  changes or remote divergence were overwritten. Repository `AGENTS.md` read;
+  this checkout has no `.agents/skills` directory.
+- Frontend: `npm test --` with `RunQueue.delivery.test.tsx`, `RunQueue.test.tsx`,
+  `RunDetails.test.tsx`, `DeliveryAcceptance.test.tsx`, and
+  `MattermostPublication.test.tsx`: **54 passed**. Includes exact run targeting,
+  explicit reads, no publication mutation, wrong-run rejection, denied reread,
+  and organization/identity/permission/refresh cleanup with delayed responses.
+  jsdom pseudo-element warnings are not browser E2E evidence.
+- `UV_CACHE_DIR=/tmp/octop-uv-cache uv run pytest tests/unit/scenes
+  tests/unit/digital_workers tests/unit/i18n -q`: **460 passed**.
+- `uv run pytest tests/integration/test_mattermost_publication_api.py
+  tests/integration/test_ai_tagent_milestone_offline.py -q` (same cache override):
+  **13 passed**, two dependency deprecation warnings. These use local fixtures,
+  not a real Mattermost/model/AKB deployment.
+- `make all PYTEST_JOBS=2` (same cache override): Ruff check/format, full ESLint
+  and Prettier passed; mypy failed in the unchanged baseline
+  `src/octop/infra/db/repos/setup_lifecycle.py:25,41` (`no-any-return`). Its later
+  full-suite test target was **not run**. No claim of a green full ship gate.
+- Final changed frontend files passed targeted ESLint and `npx tsc -b`.
+  `npm ci --cache /tmp/octop-npm-cache` and `npm run build` succeeded; generated
+  dashboard assets remain ignored per repository policy. Vite emitted existing
+  chunk/import warnings. `git diff --check` passed.
+- Python 3.12.14, Node 24.22.1; Python dependencies installed with a writable
+  temporary uv cache and `CC=gcc` (default clang was unavailable). Docker
+  29.9.2 client and daemon responded to `docker version`; no application
+  container or production service was started. `/usr/bin/bwrap` exists, but
+  `bwrap --ro-bind / / --unshare-user --unshare-pid --proc /proc true` failed
+  with `setting up uid map: Read-only file system`; agent sandbox execution
+  is not established by these tests.
+- Not run: real browser E2E, real PostgreSQL, Mattermost sending, model/AKB
+  integration, production deployment. No real messages sent; no merges/deploys.

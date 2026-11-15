@@ -7378,6 +7378,8 @@
     "asOf": "Read at"
   },
   "runDetails": {
+    "deliveryNotice": "Read the report or delivery evidence, request independent acceptance, or read an existing publication preview for this run. Each action rechecks server permissions; unavailable content may be missing or unauthorized. Nothing is sent to Mattermost.",
+    "closeEvidence": "Close report / evidence",
     "title": "Run details",
     "notice": "Persisted metadata only; status may lag. Opening details does not synchronize, start, retry, approve or accept work. No prompts, evidence or error content are returned.",
     "error": "Unable to load this run. Close and reopen to retry.",

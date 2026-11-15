@@ -1,4 +1,5 @@
 import RunDetails from "./RunDetails";
+import { useCurrentUser } from "../../hooks/useCurrentUser";
 import { useEffect, useRef, useState } from "react";
 import { Alert, Button, Space, Typography } from "antd";
 import { useServerTimezone } from "../../hooks/useServerTimezone";
@@ -16,9 +17,23 @@ export default function RunQueue(props: {
   organizationId: string;
   canManage: boolean;
 }) {
+  const user = useCurrentUser();
+  const deliveryUserId =
+    user &&
+    Number.isSafeInteger(user.id) &&
+    (user.role === "admin" || user.permissions?.includes("tasks"))
+      ? user.id
+      : undefined;
   return (
     <QueueSession
-      key={`${props.organizationId}:${props.canManage}`}
+      key={JSON.stringify([
+        props.organizationId,
+        props.canManage,
+        user?.id,
+        user?.role,
+        user?.permissions,
+      ])}
+      deliveryUserId={deliveryUserId}
       {...props}
     />
   );
@@ -26,9 +41,11 @@ export default function RunQueue(props: {
 function QueueSession({
   organizationId,
   canManage,
+  deliveryUserId,
 }: {
   organizationId: string;
   canManage: boolean;
+  deliveryUserId?: number;
 }) {
   const { t } = useTranslation();
   const timeZone = useServerTimezone();
@@ -52,6 +69,7 @@ function QueueSession({
     setLoading(true);
     setError(false);
     setData(undefined);
+    setDetailRun(undefined);
     try {
       const result = await runQueueApi.read(organizationId, category, before);
       if (!validRunQueue(result, organizationId, category, before))
@@ -73,6 +91,7 @@ function QueueSession({
           key={`${organizationId}:${detailRun}`}
           organizationId={organizationId}
           runId={detailRun}
+          currentUserId={deliveryUserId}
           onClose={() => setDetailRun(undefined)}
         />
       )}

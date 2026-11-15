@@ -729,6 +729,7 @@ export const organizationsApi = {
         "/scene-runs/" +
         encodeURIComponent(runId) +
         "/evidence",
+      { cache: "no-store" },
     ),
   decideSceneRun: (
     id: string,
