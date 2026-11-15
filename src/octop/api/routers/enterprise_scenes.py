@@ -274,22 +274,24 @@ async def get_scene_run(
 @router.get(
     "/organizations/{organization_id}/scene-runs/{run_id}/evidence",
     summary="Read the visible result of an enterprise scene run",
+    description="Rechecks current identity, task access and run binding after asynchronous reads. Native inspection reports must match persisted content hashes. Does not accept or send delivery.",
     response_model=SceneRunEvidenceRecord,
 )
 async def get_scene_run_evidence(
     organization_id: str,
     run_id: str,
+    response: Response,
     user: Any = Depends(current_user),
     server: Any = Depends(get_server),
 ) -> dict[str, Any]:
-    service = _service(server, user)
-    run = _call(lambda: service.get_run_evidence_access(organization_id, run_id))
-    from octop.infra.scenes.evidence import scene_run_evidence  # noqa: PLC0415
+    from octop.infra.scenes.delivery_evidence import SceneDeliveryEvidenceService
+    from octop.infra.scenes.evidence import scene_run_evidence
 
-    answer = None
-    if run["status"] == "succeeded":
+    response.headers["Cache-Control"] = "no-store"
+
+    async def load(run: dict[str, Any]) -> str | None:
         runtime = server.app_runtime
-        answer = await scene_run_evidence(
+        return await scene_run_evidence(
             run=run,
             cron_manager=runtime.cron_manager,
             thread_registry=runtime.gateway.thread_registry,
@@ -297,7 +299,17 @@ async def get_scene_run_evidence(
             thread_message_repo=server.services.thread_message_repo,
             history_archive=getattr(runtime, "history_archive", None),
         )
-    return {"run_id": run_id, "available": answer is not None, "answer": answer}
+
+    try:
+        return await SceneDeliveryEvidenceService(_service(server, user), load).read(
+            organization_id, run_id
+        )
+    except SceneError as exc:
+        raise HTTPException(
+            status_code=exc.status,
+            detail={"code": exc.code, "message": exc.message},
+            headers={"Cache-Control": "no-store"},
+        ) from exc
 
 
 @router.post(

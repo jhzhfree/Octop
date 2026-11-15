@@ -121,3 +121,54 @@ Mattermost, model, AKB, PostgreSQL, production deployment or browser E2E readine
   is not established by these tests.
 - Not run: real browser E2E, real PostgreSQL, Mattermost sending, model/AKB
   integration, production deployment. No real messages sent; no merges/deploys.
+
+## Follow-up: revoke-safe report reads (2026-11-15)
+
+The shared report reader now serves both the organization queue and the original
+scene-run page. Reading is an explicit human click, not an automatic operation.
+Closing, context/role changes and observed permission revocation destroy content
+and pending responses. A reread clears the old report before requesting; denied
+or malformed results never leave it displayed. An unavailable report remains a
+separate state. No acceptance, retry of execution, publication or sending is
+triggered by viewing a report.
+
+The existing `/scene-runs/{run_id}/evidence` response shape is unchanged. Its
+service resolves current database identity, disabled state, task permission and
+organization/run participation before and after asynchronous transcript I/O;
+a cached administrator role is not retained after demotion. It rejects a changed
+run snapshot, and checks native inspection report text/hash against the persisted
+same-run batch, matching the existing independent acceptance integrity boundary.
+The route sets `Cache-Control: no-store` on success and handled domain errors.
+The original queued-run status reconciliation behavior remains; viewing is not
+a new execution authorization.
+
+This does not provide push revocation or transaction-wide atomic authorization.
+Concurrent changes after the last check are not eliminated; already delivered
+content cannot be retracted from clients. Frontend cleanup depends on its current
+identity/organization/permission context updating, or an explicit reread.
+
+Validation for this follow-up:
+
+- `UV_CACHE_DIR=/tmp/octop-uv-cache UV_OFFLINE=1 uv run --frozen pytest
+  tests/integration/test_scene_delivery_evidence.py
+  tests/integration/test_scene_inspection_execution.py
+  tests/unit/scenes/test_acceptance.py tests/unit/scenes/test_acceptance_api.py -q`:
+  **64 passed**. Uses existing network-denying fixtures, real local SQLite and
+  deterministic transcript/HTTP substitutes; no real model or inspection target.
+- Vitest: `RunEvidence.test.tsx`, `RunQueue.delivery.test.tsx`,
+  `Organizations.planning.test.tsx`: **36 passed**, including the original scene
+  page's denied reread and task-permission cleanup. jsdom emits known unsupported
+  pseudo-element warnings, not evidence of browser E2E verification.
+- `npm run build` passed with existing Vite chunk/import warnings. Local ASGI
+  checks verified the evidence response/no-store contract, generated OpenAPI
+  description and `/api/docs` HTML response; no visual browser check was performed.
+- Initial static gate stopped on a new test's Prettier formatting; formatting was
+  corrected and checked again. Final changed Python files passed Ruff.
+- Full pytest / `make all` / testmon were not run: prior restricted telemetry tests
+  were not retried or routed around. Real PostgreSQL, model, AKB, Mattermost,
+  production deployment, browser E2E and release artifacts remain unverified.
+  No new dependencies installed, no credentials read, no security/network settings
+  changed, and no real messages, merges or deployments performed.
+- Final `UV_CACHE_DIR=/tmp/octop-uv-cache UV_OFFLINE=1 make lint-all typecheck-all`
+  passed: full Ruff, ESLint, Prettier, mypy (657 source files) and TypeScript.
+  `git diff --check` passed.

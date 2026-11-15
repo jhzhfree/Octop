@@ -62,6 +62,7 @@ import ReportAttachment from "./ReportAttachment";
 import MattermostPublication from "./MattermostPublication";
 import OrganizationProgress from "./OrganizationProgress";
 import RunQueue from "./RunQueue";
+import RunEvidence from "./RunEvidence";
 import ScenePlanGuide from "./ScenePlanGuide";
 import InspectionRunOptions, {
   emptyInspectionRun,
@@ -112,10 +113,6 @@ export default function OrganizationsPage() {
   const [assignPositionId, setAssignPositionId] = useState<string>();
   const [scenes, setScenes] = useState<EnterpriseScene[]>([]);
   const [sceneRuns, setSceneRuns] = useState<EnterpriseSceneRun[]>([]);
-  const [sceneEvidence, setSceneEvidence] = useState<
-    Record<string, string | null>
-  >({});
-  const [loadingEvidence, setLoadingEvidence] = useState<string>();
   const [sceneModalOpen, setSceneModalOpen] = useState(false);
   const [editingScene, setEditingScene] = useState<EnterpriseScene>();
   const [sceneVersions, setSceneVersions] = useState<EnterpriseSceneVersion[]>(
@@ -858,25 +855,6 @@ export default function OrganizationsPage() {
       );
     } catch {
       message.error(t("organizations.operationFailed"));
-    }
-  }
-
-  async function loadSceneEvidence(run: EnterpriseSceneRun) {
-    if (!organizationId) return;
-    setLoadingEvidence(run.run_id);
-    try {
-      const result = await organizationsApi.sceneRunEvidence(
-        organizationId,
-        run.run_id,
-      );
-      setSceneEvidence((current) => ({
-        ...current,
-        [run.run_id]: result.available ? result.answer : null,
-      }));
-    } catch {
-      message.error(t("organizations.evidenceLoadFailed"));
-    } finally {
-      setLoadingEvidence(undefined);
     }
   }
 
@@ -2485,33 +2463,33 @@ export default function OrganizationsPage() {
                                     }
                                   />
                                 )}
-                              {run.status === "succeeded" &&
-                                (currentUser?.role === "admin" ||
-                                  currentUser?.id === run.requested_by ||
-                                  currentUser?.id === run.approved_by) && (
-                                  <>
-                                    <Button
-                                      size="small"
-                                      loading={loadingEvidence === run.run_id}
-                                      onClick={() =>
-                                        void loadSceneEvidence(run)
-                                      }
-                                    >
-                                      {t("organizations.viewEvidence")}
-                                    </Button>
-                                    {sceneEvidence[run.run_id] !==
-                                      undefined && (
-                                      <Typography.Paragraph
-                                        style={{ whiteSpace: "pre-wrap" }}
-                                      >
-                                        {sceneEvidence[run.run_id] ??
-                                          t(
-                                            "organizations.evidenceUnavailable",
-                                          )}
-                                      </Typography.Paragraph>
-                                    )}
-                                  </>
-                                )}
+                              {currentUser && (
+                                <RunEvidence
+                                  target={{
+                                    organizationId: run.organization_id,
+                                    runId: run.run_id,
+                                  }}
+                                  currentUserId={currentUser.id}
+                                  authorizationKey={JSON.stringify([
+                                    currentUser.role,
+                                    currentUser.permissions,
+                                    chart?.organization.member_role,
+                                  ])}
+                                  canRead={
+                                    run.status === "succeeded" &&
+                                    run.organization_id === organizationId &&
+                                    chart?.organization.organization_id ===
+                                      organizationId &&
+                                    (currentUser.role === "admin" ||
+                                      (!!chart.organization.member_role &&
+                                        currentUser.permissions?.includes(
+                                          "tasks",
+                                        ) === true &&
+                                        (currentUser.id === run.requested_by ||
+                                          currentUser.id === run.approved_by)))
+                                  }
+                                />
+                              )}
                             </div>
                           ),
                         }}

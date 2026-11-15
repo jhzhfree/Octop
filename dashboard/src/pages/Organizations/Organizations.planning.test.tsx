@@ -55,6 +55,7 @@ vi.mock("../../api/modules/organizations", () => ({
     chart: vi.fn(),
     scenes: vi.fn(),
     sceneRuns: vi.fn(),
+    sceneRunEvidence: vi.fn(),
     requestSceneRun: vi.fn(),
     digitalWorkers: vi.fn(),
     digitalWorkerMemoryCandidates: vi.fn(),
@@ -481,6 +482,45 @@ describe(
       );
       return { user, ...view };
     }
+    it("clears report content on denied reread and task permission revocation in the scene page", async () => {
+      vi.mocked(useCurrentUser).mockReturnValue(reviewer);
+      vi.mocked(organizationsApi.sceneRunEvidence).mockResolvedValue({
+        run_id: "run1",
+        available: true,
+        answer: "PRIVATE SCENE REPORT",
+      });
+      const { user, rerender } = await openRun();
+      expect(organizationsApi.sceneRunEvidence).not.toHaveBeenCalled();
+      await user.click(
+        screen.getByRole("button", { name: en.organizations.viewEvidence }),
+      );
+      await screen.findByText("PRIVATE SCENE REPORT");
+      expect(organizationsApi.sceneRunEvidence).toHaveBeenCalledWith(
+        "org1",
+        "run1",
+      );
+      vi.mocked(organizationsApi.sceneRunEvidence).mockRejectedValueOnce(
+        new Error("denied"),
+      );
+      await user.click(
+        screen.getByRole("button", { name: en.organizations.viewEvidence }),
+      );
+      await screen.findByText(en.organizations.evidenceLoadFailed);
+      expect(screen.queryByText("PRIVATE SCENE REPORT")).toBeNull();
+      await user.click(
+        screen.getByRole("button", { name: en.organizations.viewEvidence }),
+      );
+      await screen.findByText("PRIVATE SCENE REPORT");
+      vi.mocked(useCurrentUser).mockReturnValue({
+        ...reviewer,
+        permissions: [],
+      });
+      rerender(<OrganizationsPage />);
+      expect(screen.queryByText("PRIVATE SCENE REPORT")).toBeNull();
+      expect(
+        screen.queryByRole("button", { name: en.organizations.viewEvidence }),
+      ).toBeNull();
+    });
     it("exposes a separate publication review with server-authoritative destination and no automatic sending", async () => {
       vi.mocked(useCurrentUser).mockReturnValue(reviewer);
       const publication = {

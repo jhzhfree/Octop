@@ -16,6 +16,7 @@ from octop.infra.enterprise_assistant.models import (
     JobInput,
 )
 from octop.infra.enterprise_assistant.service import FLAGS_KEY, AssistantService
+from octop.infra.scenes.delivery_evidence import SceneDeliveryEvidenceService
 from octop.infra.scenes.inspection import candidates, execute_inspection
 from octop.infra.scenes.service import SceneError
 from tests.integration.test_scene_execution_offline import approve_and_wait
@@ -121,6 +122,10 @@ async def test_same_run_fresh_sources_report_and_acceptance(scene_runtime, monke
     assert not [r for r in svc.repo.runs(1) if r["snapshot"]["job"]["kind"] == "report"]
     review = await scene_runtime.acceptance.review("o", run["run_id"])
     assert review["answer"] == batch["content"]
+    visible = await SceneDeliveryEvidenceService(
+        scene_runtime.requester, scene_runtime.acceptance.evidence_loader
+    ).read("o", run["run_id"])
+    assert visible["answer"] == batch["content"]
     assert review["evidence_sources"] == [
         {
             "kind": "same_run_http_report",
@@ -312,6 +317,10 @@ async def test_transcript_or_report_tamper_prevents_acceptance(scene_runtime, mo
             "UPDATE scene_inspection_batches SET content='tampered' WHERE run_id=?",
             (run["run_id"],),
         )
+    with pytest.raises(SceneError, match="integrity"):
+        await SceneDeliveryEvidenceService(
+            scene_runtime.requester, scene_runtime.acceptance.evidence_loader
+        ).read("o", run["run_id"])
     with pytest.raises(SceneError, match="integrity"):
         await scene_runtime.acceptance.review("o", run["run_id"])
 
