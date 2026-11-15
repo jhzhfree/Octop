@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 修复初始化完成后可匿名重开向导的问题：持久化初始化状态、管理员认证恢复、并发防重、旧令牌撤销及升级关闭策略（schema 037）；完成中断保持关闭，由管理员设置恢复。
+
 - Separate connection identity management from resource mounts; version resource checks, preserve concurrent edits, and support resumable key rotation (schema 031).
 
 ### 新增

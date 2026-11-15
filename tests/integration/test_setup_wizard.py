@@ -16,6 +16,21 @@ from octop.infra.setup.password_file import WIZARD_FILE_NAME, read_password
 from tests.support.app import octop_client, write_octop_config
 
 
+@pytest.fixture(autouse=True)
+def no_network(monkeypatch):
+    import socket
+
+    def blocked(*args, **kwargs):
+        raise AssertionError("network forbidden in setup tests")
+
+    async def probe(*args, **kwargs):
+        return {"ok": False, "error": "offline test probe"}
+
+    monkeypatch.setattr(socket.socket, "connect", blocked)
+    monkeypatch.setattr(socket, "create_connection", blocked)
+    monkeypatch.setattr("octop.api.routers.setup.probe_provider_row", probe)
+
+
 @pytest.fixture
 async def env(patched_app_client):
     yield patched_app_client
@@ -169,13 +184,13 @@ async def test_validate_token_rejects_stale_token(env: Any) -> None:
 # ─── /setup/finish ─────────────────────────────────────────────────
 
 
-async def test_finish_requires_wizard_token(env: Any) -> None:
+async def test_finish_requires_created_admin(env: Any) -> None:
     c, _srv, _home = env
     r = await c.post("/api/setup/finish", json={"provider_draft": None})
-    assert r.status_code == 401
+    assert r.status_code == 410
 
 
-async def test_finish_returns_ok_with_valid_token(env: Any) -> None:
+async def test_finish_before_admin_is_rejected(env: Any) -> None:
     c, _srv, home = env
     pw = read_password(Path.home())
     tok = (await c.post("/api/setup/verify-password", json={"password": pw})).json()["wizard_token"]
@@ -184,8 +199,7 @@ async def test_finish_returns_ok_with_valid_token(env: Any) -> None:
         json={"provider_draft": None},
         headers={"Authorization": f"Bearer {tok}"},
     )
-    assert r.status_code == 200
-    assert r.json()["ok"] is True
+    assert r.status_code == 410
 
 
 async def test_finish_works_after_admin_created(env: Any) -> None:
@@ -264,7 +278,12 @@ async def test_resume_wizard_after_admin_created(env: Any) -> None:
         json={"username": "admin", "password": "TestPass12"},
         headers={"Authorization": f"Bearer {tok}"},
     )
-    r = await c.post("/api/setup/resume-wizard")
+    assert (await c.post("/api/setup/resume-wizard")).status_code == 401
+    login = await c.post("/api/auth/login", json={"username": "admin", "password": "TestPass12"})
+    r = await c.post(
+        "/api/setup/resume-wizard",
+        headers={"Authorization": f"Bearer {login.json()['access_token']}"},
+    )
     assert r.status_code == 200
     body = r.json()
     assert isinstance(body["wizard_token"], str)
@@ -428,3 +447,239 @@ async def test_finish_rejects_invalid_token_after_admin_exists(env: Any) -> None
         headers={"Authorization": "Bearer faketoken"},
     )
     assert r.status_code == 401
+
+
+async def _create_admin(c):
+    token = (
+        await c.post("/api/setup/verify-password", json={"password": read_password(Path.home())})
+    ).json()["wizard_token"]
+    created = await c.post(
+        "/api/setup/initial-admin",
+        json={"username": "admin", "password": "TestPass12"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert created.status_code == 201
+    return token, {"Authorization": f"Bearer {created.json()['access_token']}"}
+
+
+async def test_completed_setup_rejects_every_wizard_capability_after_restart(tmp_octop_home):
+    async with octop_client(tmp_octop_home) as (c, srv):
+        token, admin = await _create_admin(c)
+        resumed = await c.post("/api/setup/resume-wizard", headers=admin)
+        extra = resumed.json()["wizard_token"]
+        assert (await c.post("/api/setup/finish", json={}, headers=admin)).status_code == 200
+        assert not srv.wizard_tokens.validate(token)
+        assert not srv.wizard_tokens.validate(extra)
+    async with octop_client(tmp_octop_home) as (c, srv):
+        for headers in ({}, admin, {"Authorization": f"Bearer {extra}"}):
+            assert (await c.post("/api/setup/resume-wizard", headers=headers)).status_code == 410
+            assert (await c.post("/api/setup/finish", json={}, headers=headers)).status_code == 410
+            assert (
+                await c.post(
+                    "/api/setup/test-provider",
+                    json={
+                        "name": "offline",
+                        "type": "openai",
+                        "api_key": "test",
+                        "model_id": "test",
+                    },
+                    headers=headers,
+                )
+            ).status_code == 410
+            assert (await c.get("/api/setup/validate-token", headers=headers)).status_code == 410
+        assert srv.services.provider_repo.list_all() == []
+        # Even disabling every account must not reopen the initial database gate.
+        with srv.services.db.transaction() as conn:
+            conn.execute("UPDATE users SET disabled=1")
+        assert (await c.post("/api/setup/begin")).status_code == 410
+        assert (await c.post("/api/setup/database", json={"driver": "sqlite"})).status_code == 410
+
+
+async def test_unfinished_setup_restart_requires_initial_admin(tmp_octop_home):
+    async with octop_client(tmp_octop_home) as (c, srv):
+        _, admin = await _create_admin(c)
+    async with octop_client(tmp_octop_home) as (c, srv):
+        assert (await c.post("/api/setup/resume-wizard")).status_code == 401
+        resumed = await c.post("/api/setup/resume-wizard", headers=admin)
+        assert resumed.status_code == 200
+        assert (await c.post("/api/setup/finish", json={}, headers=admin)).status_code == 200
+
+
+async def test_other_pre_admin_tokens_revoked(env):
+    c, srv, _ = env
+    extra = (
+        await c.post("/api/setup/verify-password", json={"password": read_password(Path.home())})
+    ).json()["wizard_token"]
+    token, _ = await _create_admin(c)
+    assert srv.wizard_tokens.validate(token)
+    assert not srv.wizard_tokens.validate(extra)
+    assert (
+        await c.post("/api/setup/finish", json={}, headers={"Authorization": f"Bearer {extra}"})
+    ).status_code == 401
+
+
+async def test_concurrent_finish_only_applies_once(env, monkeypatch):
+    c, srv, _ = env
+    _, admin = await _create_admin(c)
+    started, release = asyncio.Event(), asyncio.Event()
+    calls = []
+
+    async def bootstrap(*args, **kwargs):
+        calls.append(1)
+        started.set()
+        await release.wait()
+
+    monkeypatch.setattr("octop.api.routers.setup._bootstrap_default_agent", bootstrap)
+    first = asyncio.create_task(c.post("/api/setup/finish", json={}, headers=admin))
+    await started.wait()
+    assert (await c.post("/api/setup/finish", json={}, headers=admin)).status_code == 410
+    assert (await c.post("/api/setup/resume-wizard", headers=admin)).status_code == 410
+    release.set()
+    assert (await first).status_code == 200
+    assert calls == [1]
+
+
+async def test_invalid_draft_retry_and_failed_side_effect_stays_closed(env, monkeypatch):
+    c, srv, _ = env
+    _, admin = await _create_admin(c)
+    invalid = {"provider_draft": {"name": "x", "type": "openai", "models": []}}
+    assert (await c.post("/api/setup/finish", json=invalid, headers=admin)).status_code == 400
+    assert (await c.post("/api/setup/resume-wizard", headers=admin)).status_code == 200
+
+    async def fail(*args, **kwargs):
+        raise RuntimeError("interrupted side effect")
+
+    monkeypatch.setattr("octop.api.routers.setup._apply_provider_draft", fail)
+    valid = {
+        "provider_draft": {
+            "name": "x",
+            "type": "openai",
+            "api_key": "fixture",
+            "base_url": "https://unused.invalid",
+            "models": [{"id": "x", "name": "x"}],
+        }
+    }
+    assert (await c.post("/api/setup/finish", json=valid, headers=admin)).status_code == 500
+    assert (await c.post("/api/setup/finish", json=valid, headers=admin)).status_code == 410
+    assert (await c.post("/api/setup/resume-wizard", headers=admin)).status_code == 410
+
+
+@pytest.mark.parametrize("existing_user", [False, True])
+def test_migration_37_closes_existing_installs(tmp_path, monkeypatch, existing_user):
+    from octop.infra.db import migrate
+    from octop.infra.db.pool import SqlitePool
+    from octop.infra.db.repos.setup_lifecycle import SetupLifecycleRepo
+
+    db = SqlitePool(tmp_path / "setup-upgrade.db")
+    discover = migrate._discover
+    monkeypatch.setattr(
+        migrate,
+        "_discover",
+        lambda dialect="sqlite": [(v, p) for v, p in discover(dialect) if v <= 36],
+    )
+    migrate.run_migrations(db)
+    if existing_user:
+        with db.transaction() as conn:
+            conn.execute(
+                "INSERT INTO users(username,password_hash,role,disabled,created_at) VALUES('old','unused','admin',1,1)"
+            )
+    monkeypatch.setattr(migrate, "_discover", discover)
+    migrate.run_migrations(db)
+    assert SetupLifecycleRepo(db).state() == (
+        ("completed", None) if existing_user else ("pending", None)
+    )
+    assert {p.read_text() for v, p in discover("sqlite") if v == 37} == {
+        p.read_text() for v, p in discover("postgresql") if v == 37
+    }
+    db.close()
+
+
+async def test_disabled_initial_admin_cannot_resume_even_with_live_token(env):
+    c, srv, _ = env
+    token, admin = await _create_admin(c)
+    with srv.services.db.transaction() as conn:
+        conn.execute("UPDATE users SET disabled=1")
+    for headers in (admin, {"Authorization": f"Bearer {token}"}):
+        assert (await c.post("/api/setup/finish", json={}, headers=headers)).status_code == 401
+        assert (await c.post("/api/setup/resume-wizard", headers=headers)).status_code == 401
+
+
+async def test_concurrent_initial_admin_claim_creates_only_one(env):
+    c, srv, _ = env
+    token = (
+        await c.post("/api/setup/verify-password", json={"password": read_password(Path.home())})
+    ).json()["wizard_token"]
+    responses = await asyncio.gather(
+        *(
+            c.post(
+                "/api/setup/initial-admin",
+                json={"username": name, "password": "TestPass12"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            for name in ("first", "second")
+        )
+    )
+    assert sorted(r.status_code for r in responses) == [201, 410]
+    assert srv.user_manager.count() == 1
+
+
+async def test_initial_admin_insert_failure_rolls_back_setup_claim(env, monkeypatch):
+    from octop.infra.db.repos import users
+    from octop.infra.setup.lifecycle import lifecycle
+
+    c, srv, _ = env
+    original = users.insert_returning_id
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("simulated insert failure")
+
+    monkeypatch.setattr(users, "insert_returning_id", fail)
+    with pytest.raises(RuntimeError):
+        srv.services.user_repo.create(
+            username="failed", password_hash="unused", role="admin", initial_setup=True
+        )
+    assert lifecycle(srv).state() == ("pending", None)
+    assert srv.user_manager.count() == 0
+    monkeypatch.setattr(users, "insert_returning_id", original)
+    await _create_admin(c)
+    assert lifecycle(srv).state()[0] == "active"
+
+
+async def test_bootstrap_failure_does_not_report_completed_and_restart_stays_closed(
+    tmp_octop_home, monkeypatch
+):
+    from octop.infra.setup.lifecycle import lifecycle
+
+    async def fail(*args, **kwargs):
+        raise RuntimeError("simulated bootstrap interruption")
+
+    monkeypatch.setattr("octop.api.routers.setup._bootstrap_default_agent", fail)
+    async with octop_client(tmp_octop_home) as (c, srv):
+        _, admin = await _create_admin(c)
+        assert (await c.post("/api/setup/finish", json={}, headers=admin)).status_code == 500
+        assert lifecycle(srv).state()[0] == "finishing"
+    async with octop_client(tmp_octop_home) as (c, srv):
+        assert lifecycle(srv).state()[0] == "finishing"
+        for headers in ({}, admin):
+            assert (await c.post("/api/setup/resume-wizard", headers=headers)).status_code == 410
+            assert (await c.post("/api/setup/finish", json={}, headers=headers)).status_code == 410
+
+
+async def test_other_worker_pending_token_cannot_control_active_setup(env):
+    from octop.infra.setup.wizard_tokens import WizardTokenStore
+
+    c, srv, _ = env
+    other_worker = WizardTokenStore(ttl_seconds=300)
+    old, _ = other_worker.issue()
+    _, admin = await _create_admin(c)
+    # A second worker retains its own in-memory token store across the DB transition.
+    srv.wizard_tokens = other_worker
+    stale_headers = {"Authorization": f"Bearer {old}"}
+    assert (await c.get("/api/setup/validate-token", headers=stale_headers)).json() == {
+        "valid": False
+    }
+    assert (await c.post("/api/setup/finish", json={}, headers=stale_headers)).status_code == 401
+    fresh = (await c.post("/api/setup/resume-wizard", headers=admin)).json()["wizard_token"]
+    headers = {"Authorization": f"Bearer {fresh}"}
+    assert (await c.get("/api/setup/validate-token", headers=headers)).json() == {"valid": True}
+    assert (await c.post("/api/setup/finish", json={}, headers=headers)).status_code == 200

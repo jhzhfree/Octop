@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from pathlib import Path
@@ -15,6 +16,7 @@ from octop.infra.agents.providers.presets import load_provider_presets
 from octop.infra.agents.providers.probe import make_probe_provider_row, probe_provider_row
 from octop.infra.errors import ErrorCode, OctopError
 from octop.infra.setup import password_file as _wizard
+from octop.infra.setup.lifecycle import lifecycle, require_owner, require_phase
 from octop.infra.setup.wizard_tokens import RateLimited
 from octop.infra.users.identity import Role
 from octop.infra.utils.locale import normalize_locale, resolve_request_locale
@@ -103,6 +105,7 @@ def _setup_password_required(server: Any) -> bool:
 
 
 def _enforce_wizard_open(server: Any) -> None:
+    require_phase(server, ("pending",))
     um = server.user_manager
     if um is not None and um.count() != 0:
         raise OctopError(ErrorCode.SETUP_REQUIRED, "setup already completed", status=410)
@@ -110,9 +113,7 @@ def _enforce_wizard_open(server: Any) -> None:
 
 def _enforce_wizard_token_phase(server: Any) -> None:
     """Allow wizard token operations while initial setup is still in progress."""
-    um = server.user_manager
-    if um is not None and um.count() > 1:
-        raise OctopError(ErrorCode.SETUP_REQUIRED, "setup already completed", status=410)
+    require_phase(server, ("pending", "active"))
 
 
 def _extract_bearer(authorization: str | None) -> str:
@@ -138,18 +139,20 @@ def _authorize_setup_provider_test(authorization: str | None, server: Any) -> No
 
 def _authorize_setup_mid_wizard(authorization: str | None, server: Any) -> str | None:
     """Return wizard token when present; None when admin JWT is valid mid-setup."""
+    require_phase(server, ("pending", "active"))
     token = _extract_bearer(authorization)
-    if server.wizard_tokens.validate(token):
-        return token
-    um = server.user_manager
-    if um is not None and um.count() == 1:
-        try:
-            user = resolve_user_from_token(server, token)
-            if user.is_admin:
-                return None
-        except OctopError:
-            pass
-    raise OctopError(ErrorCode.SETUP_TOKEN_INVALID, "invalid or expired wizard token")
+    if lifecycle(server).state()[0] == "pending":
+        return _require_wizard_token(authorization, server)
+    if server.wizard_tokens.validate(token) and lifecycle(server).token_matches(
+        hashlib.sha256(token.encode()).hexdigest()
+    ):
+        _, owner = lifecycle(server).state()
+        if owner is not None:
+            require_owner(server, owner)
+            return token
+    user = resolve_user_from_token(server, token)
+    require_owner(server, user.id)
+    return None
 
 
 async def _bootstrap_default_agent(server: Any, *, user_id: int, locale: str = "zh") -> None:
@@ -170,6 +173,13 @@ async def _bootstrap_default_agent(server: Any, *, user_id: int, locale: str = "
         agent_id=SETUP_DEFAULT_AGENT_ID,
         root_dir=user_policy_workspace_root(server, user_id),
     )
+
+
+def _validate_provider_draft(draft: ProviderDraftBody) -> None:
+    if not (draft.api_key or "").strip() or not (draft.base_url or "").strip():
+        raise OctopError(ErrorCode.SLASH_BAD_ARGS, "api_key and base_url are required", status=400)
+    if not draft.models:
+        raise OctopError(ErrorCode.SLASH_BAD_ARGS, "at least one model is required", status=400)
 
 
 async def _apply_provider_draft(server: Any, draft: ProviderDraftBody) -> None:
@@ -228,7 +238,12 @@ async def validate_wizard_token(
     if not authorization or not authorization.startswith("Bearer "):
         return {"valid": False}
     token = authorization.removeprefix("Bearer ").strip()
-    return {"valid": server.wizard_tokens.validate(token)}
+    valid = server.wizard_tokens.validate(token)
+    if server.services is not None and lifecycle(server).state()[0] == "active":
+        valid = valid and lifecycle(server).token_matches(
+            hashlib.sha256(token.encode()).hexdigest()
+        )
+    return {"valid": valid}
 
 
 @router.get("/setup/status", summary="Setup wizard status")
@@ -357,15 +372,25 @@ async def initial_admin(
     from octop.infra.db.repos.user_roles import ADMIN_USER_ROLE_ID, UserRoleRepo
 
     admin_role = UserRoleRepo(server.services.db).get(ADMIN_USER_ROLE_ID)
-    user = await server.user_manager.create(
-        username=body.username,
-        password=body.password,
-        role=Role.ADMIN,
-        display_name=body.display_name,
-        email=body.email,
-        locale=locale,
-        role_name=admin_role.user_role_name if admin_role is not None else "管理员",
-    )
+    try:
+        user = await server.user_manager.create(
+            username=body.username,
+            password=body.password,
+            role=Role.ADMIN,
+            display_name=body.display_name,
+            email=body.email,
+            locale=locale,
+            role_name=admin_role.user_role_name if admin_role is not None else "管理员",
+            initial_setup=True,
+            initial_setup_token_digest=hashlib.sha256(
+                _extract_bearer(authorization).encode()
+            ).hexdigest(),
+        )
+    except ValueError as exc:
+        raise OctopError(
+            ErrorCode.SETUP_REQUIRED, "setup operation in progress", status=410
+        ) from exc
+    server.wizard_tokens.retain_only(_extract_bearer(authorization))
     secret = server.services.secret_repo.get("jwt")
     ttl = server.services.config.access_token_ttl_seconds
     access_token = sign_token(
@@ -382,14 +407,22 @@ async def initial_admin(
 
 
 @router.post("/setup/resume-wizard", summary="Issue a fresh wizard token mid-setup")
-async def resume_wizard(server: Any = Depends(get_server)) -> dict[str, Any]:
+async def resume_wizard(
+    server: Any = Depends(get_server),
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
     """Issue a new wizard token after the admin exists but before finish."""
     _enforce_wizard_token_phase(server)
     require_database(server)
     assert server.user_manager is not None
     if server.user_manager.count() == 0:
         raise OctopError(ErrorCode.SETUP_TOKEN_INVALID, "admin not created yet", status=400)
+    # Recovery after process restart requires the administrator's ordinary JWT.
+    user = resolve_user_from_token(server, _extract_bearer(authorization))
+    require_owner(server, user.id)
     token, ttl = server.wizard_tokens.issue()
+    if not lifecycle(server).rotate_token(hashlib.sha256(token.encode()).hexdigest()):
+        raise OctopError(ErrorCode.SETUP_REQUIRED, "setup closed", status=410)
     return {"wizard_token": token, "expires_in": ttl}
 
 
@@ -425,7 +458,12 @@ async def finish(
     _enforce_wizard_token_phase(server)
     require_database(server)
     assert server.user_manager is not None
-    wizard_token = _authorize_setup_mid_wizard(authorization, server)
+    require_phase(server, ("active",))
+    _authorize_setup_mid_wizard(authorization, server)
+    if body.provider_draft is not None:
+        _validate_provider_draft(body.provider_draft)
+    if not lifecycle(server).transition("active", "finishing"):
+        raise OctopError(ErrorCode.SETUP_REQUIRED, "setup operation in progress", status=410)
     if body.provider_draft is not None:
         try:
             await _apply_provider_draft(server, body.provider_draft)
@@ -435,15 +473,19 @@ async def finish(
             logger.exception("setup provider bootstrap failed")
             raise OctopError(
                 ErrorCode.INTERNAL_ERROR,
-                f"failed to save provider: {exc}",
+                "failed to save provider; use administrator settings to recover",
             ) from exc
     users = server.user_manager.list()
     admin = next((u for u in users if u.is_admin), users[0] if users else None)
     if admin is not None:
         try:
             await _bootstrap_default_agent(server, user_id=admin.id, locale=admin.locale)
-        except Exception as exc:  # pragma: no cover
-            logger.warning("could not auto-create default agent: %s", exc)
-    if wizard_token is not None:
-        server.wizard_tokens.consume(wizard_token)
+        except Exception as exc:
+            logger.exception("could not auto-create default agent")
+            raise OctopError(
+                ErrorCode.INTERNAL_ERROR,
+                "failed to create default agent; use administrator settings to recover",
+            ) from exc
+    lifecycle(server).transition("finishing", "completed")
+    server.wizard_tokens.clear()
     return {"ok": True}

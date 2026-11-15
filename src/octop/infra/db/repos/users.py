@@ -110,10 +110,18 @@ class UserRepo:
         sso_subject: str | None = None,
         permissions: builtins.list[str] | None = None,
         role_name: str | None = None,
+        initial_setup: bool = False,
+        initial_setup_token_digest: str | None = None,
     ) -> int:
         perms_json = json.dumps(permissions or [], ensure_ascii=False)
         with self._db.transaction() as conn:
-            return insert_returning_id(
+            if initial_setup:
+                claimed = conn.execute(
+                    "UPDATE setup_lifecycle SET phase='creating' WHERE id=1 AND phase='pending'"
+                )
+                if claimed.rowcount != 1 or conn.execute("SELECT 1 FROM users LIMIT 1").fetchone():
+                    raise ValueError("initial setup is not available")
+            user_id = insert_returning_id(
                 conn,
                 "INSERT INTO users(username, password_hash, role, display_name, locale, "
                 "email, sso_provider_id, sso_subject, disabled, created_at, permissions, "
@@ -133,6 +141,12 @@ class UserRepo:
                     role_name,
                 ),
             )
+            if initial_setup:
+                conn.execute(
+                    "UPDATE setup_lifecycle SET phase='active', admin_id=?, token_digest=? WHERE id=1",
+                    (user_id, initial_setup_token_digest),
+                )
+            return user_id
 
     def get(self, user_id: int) -> UserRow | None:
         with self._db.connect() as conn:

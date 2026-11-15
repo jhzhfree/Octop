@@ -159,9 +159,10 @@ export const wizardApi = {
       headers: bearer(wizardToken),
     }),
 
-  resumeWizard: () =>
+  resumeWizard: (adminToken: string) =>
     request<VerifyResponse>("/setup/resume-wizard", {
       method: "POST",
+      headers: bearer(adminToken),
     }),
 
   finish: (
@@ -196,8 +197,8 @@ export const wizardApi = {
 
 /**
  * Resolve a Bearer token for setup provider probes.
- * Prefers a valid wizard token, then the admin JWT issued at initial-admin,
- * then a freshly resumed wizard token.
+ * Prefers a valid wizard token, then the admin JWT issued at initial-admin.
+ * A lost session never triggers anonymous recovery.
  */
 export async function resolveSetupProbeToken(): Promise<string | null> {
   const wizardToken = wizardSession.loadToken();
@@ -213,11 +214,7 @@ export async function resolveSetupProbeToken(): Promise<string | null> {
   const setupJwt = wizardSession.loadSetupJwt();
   if (setupJwt) return setupJwt;
 
-  try {
-    const resumed = await wizardApi.resumeWizard();
-    wizardSession.saveToken(resumed.wizard_token);
-    return resumed.wizard_token;
-  } catch {
-    return null;
-  }
+  // A lost setup session must sign in as the initial administrator.
+  // Never acquire a privileged wizard token anonymously.
+  return null;
 }

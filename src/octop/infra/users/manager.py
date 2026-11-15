@@ -131,6 +131,8 @@ class UserManager:
         permissions: builtins.list[str] | None = None,
         email: str | None = None,
         role_name: str | None = None,
+        initial_setup: bool = False,
+        initial_setup_token_digest: str | None = None,
     ) -> User:
         if not username:
             raise OctopError(ErrorCode.USERNAME_TAKEN, "username must not be empty")
@@ -166,6 +168,8 @@ class UserManager:
                     email=normalized_email,
                     permissions=keys,
                     role_name=role_name,
+                    initial_setup=initial_setup,
+                    initial_setup_token_digest=initial_setup_token_digest,
                 )
             except Exception as exc:
                 if _is_unique_violation(exc) and normalized_email is not None:

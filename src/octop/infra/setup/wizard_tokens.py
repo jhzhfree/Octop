@@ -52,6 +52,14 @@ class WizardTokenStore:
         with self._lock:
             self._tokens.pop(token, None)
 
+    def retain_only(self, token: str) -> None:
+        """Revoke other pre-admin sessions when the initial administrator is created."""
+        with self._lock:
+            entry = self._tokens.get(token)
+            self._tokens.clear()
+            if entry is not None:
+                self._tokens[token] = entry
+
     def clear(self) -> None:
         with self._lock:
             self._tokens.clear()
