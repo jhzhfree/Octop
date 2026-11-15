@@ -1,4 +1,7 @@
 {
+  "mattermost": {
+    "readiness_invalid": "Invalid Mattermost readiness request."
+  },
   "slash": {
     "error": {
       "unknown_command": "Unknown command: /{name}. Type /help for available commands."

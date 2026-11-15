@@ -1,4 +1,7 @@
 {
+  "mattermost": {
+    "readiness_invalid": "Mattermost 本地检查请求无效。"
+  },
   "slash": {
     "error": {
       "unknown_command": "未知指令：/{name}。输入 /help 查看可用指令。"

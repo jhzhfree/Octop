@@ -3,18 +3,26 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from datetime import date
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi.exceptions import RequestValidationError
+from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field
 
 from octop.api.deps import current_user, get_server
+from octop.i18n import tr
 from octop.infra.connectors.catalog import get_catalog_entry
 from octop.infra.connectors.probe import probe_connector
 from octop.infra.connectors.service import ConnectorService
 from octop.infra.digital_workers import DigitalWorkerError, DigitalWorkerService
+from octop.infra.digital_workers.mattermost import (
+    MattermostReadinessReport,
+    MattermostReadinessRequest,
+    MattermostReadinessService,
+)
 from octop.infra.digital_workers.memory import WorkerMemoryService
 from octop.infra.digital_workers.planning import (
     PlanningDialogueRequest,
@@ -763,3 +771,52 @@ async def planning_dialogue(
         raise HTTPException(
             status_code=exc.status, detail={"code": exc.code, "message": exc.message}
         ) from exc
+
+
+class _MattermostReadinessRoute(APIRoute):
+    """Do not echo accidentally supplied tokens, field names, or malformed JSON."""
+
+    def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
+        original = super().get_route_handler()
+
+        async def handler(request: Request) -> Response:
+            try:
+                return await original(request)
+            except RequestValidationError:
+                raise HTTPException(
+                    status_code=422,
+                    detail=tr("mattermost.readiness_invalid", resolve_request_locale(request)),
+                ) from None
+
+        return handler
+
+
+_mattermost_router = APIRouter(route_class=_MattermostReadinessRoute)
+
+
+@_mattermost_router.post(
+    "/organizations/{organization_id}/digital-workers/{worker_id}/mattermost-readiness",
+    summary="Inspect local Mattermost integration readiness",
+    description=(
+        "Organization managers with Agent access only. Audits the authenticated local check. "
+        "No network calls, credentials, bot binding, message sending or execution authorization. "
+        "Mattermost is not connected; manual and automatic delivery remain disabled."
+    ),
+    response_model=MattermostReadinessReport,
+)
+def mattermost_readiness(
+    organization_id: str,
+    worker_id: str,
+    body: MattermostReadinessRequest,
+    user: Any = Depends(current_user),
+    server: Any = Depends(get_server),
+) -> MattermostReadinessReport:
+    service = _service(server, user)
+    return _call(
+        lambda: MattermostReadinessService(service.repos, user).inspect(
+            organization_id, worker_id, expected_worker_version=body.expected_worker_version
+        )
+    )
+
+
+router.include_router(_mattermost_router)
