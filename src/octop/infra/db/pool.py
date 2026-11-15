@@ -11,6 +11,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
+RECOVERY_QUARANTINE_FILE = ".octop-recovery-quarantine"
+
 
 def qmark_to_pyformat(sql: str) -> str:
     """Rewrite ``?`` placeholders to psycopg ``%s`` (no string-literal awareness)."""
@@ -37,6 +39,16 @@ class SqlitePool:
 
     def __init__(self, path: Path):
         self.path = Path(path)
+        # A SQLite query can replay a hot journal before seeing the in-DB marker.
+        # Directory images also carry an external marker, checked before connect.
+        try:
+            (self.path.parent / RECOVERY_QUARANTINE_FILE).lstat()
+        except FileNotFoundError:
+            pass
+        else:
+            from octop.infra.errors import ErrorCode, OctopError
+
+            raise OctopError.localized(ErrorCode.BACKUP_RECOVERY_QUARANTINED)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         first_create = not self.path.exists()
         self._conn = sqlite3.connect(

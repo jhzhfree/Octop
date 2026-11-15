@@ -80,7 +80,8 @@ def source(tmp_path):
     pool.close()
 
 
-def assert_quarantined(path):
+def assert_quarantined(directory):
+    path = directory / "octop.db"
     with sqlite3.connect(path) as conn:
         assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
         assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
@@ -122,8 +123,9 @@ def test_success_preserves_original_and_recovers_data_under_new_key(source, tmp_
     with original.connect() as conn:
         assert hashlib.sha256(conn.serialize()).hexdigest() == before
     assert sha(archive) == original_hash == result["source_sha256"]
-    assert result["image_sha256"] == sha(output)
-    assert output.stat().st_mode & 0o777 == 0o600
+    assert result["image_sha256"] == sha(output / "octop.db")
+    assert output.stat().st_mode & 0o777 == 0o700
+    assert (output / "octop.db").stat().st_mode & 0o777 == 0o600
     assert not Path(str(output) + "-wal").exists()
     assert not list(tmp_path.glob(".octop-recovery-*"))
 
@@ -336,7 +338,7 @@ def test_old_schema_upgrades_only_private_image(source, tmp_path, monkeypatch):
         assert result["schema_version"] == 42
         with old.connect() as conn:
             assert conn.execute("SELECT version FROM _schema_version").fetchone()[0] == 37
-        with sqlite3.connect(output) as conn:
+        with sqlite3.connect(output / "octop.db") as conn:
             assert conn.execute("SELECT disabled,password_hash FROM users").fetchone() == (1, None)
     finally:
         old.close()
@@ -398,7 +400,7 @@ def test_network_filesystem_probe_refuses(source, tmp_path, monkeypatch):
     assert error.value.details["reason"] == "filesystem_not_supported"
 
 
-def test_error_after_hard_link_is_reported_as_uncertain(source, tmp_path, monkeypatch):
+def test_error_after_directory_rename_is_reported_as_uncertain(source, tmp_path, monkeypatch):
     archive, _, _ = source
     output = tmp_path / "linked.sqlite"
     publish = recovery._publish
@@ -418,13 +420,13 @@ def test_marker_boolean_cannot_activate_image(source, tmp_path):
     archive, _, _ = source
     output = tmp_path / "marker.sqlite"
     recover(archive, output)
-    with sqlite3.connect(output) as conn:
+    with sqlite3.connect(output / "octop.db") as conn:
         conn.execute(
             "UPDATE octop_recovery_quarantine SET metadata_json=?",
             ('{"application_start_allowed":true}',),
         )
     with pytest.raises(OctopError) as error:
-        SqlitePool(output)
+        SqlitePool(output / "octop.db")
     assert error.value.code == ErrorCode.BACKUP_RECOVERY_QUARANTINED
 
 
@@ -440,3 +442,351 @@ def test_duplicate_database_member_rejected(source, tmp_path):
     with pytest.raises(OctopError) as error:
         recover(duplicate, tmp_path / "duplicate.sqlite")
     assert error.value.details["reason"] == "duplicate_or_nonregular_member"
+
+
+def hot_journal(archive, target):
+    """Leave a real hot rollback journal using an abruptly terminated writer."""
+    with tarfile.open(archive) as source:
+        target.write_bytes(source.extractfile("db/octop.db").read())
+    script = """
+import os, sqlite3, sys
+conn = sqlite3.connect(sys.argv[1])
+conn.execute('PRAGMA journal_mode=DELETE')
+conn.execute('PRAGMA synchronous=FULL')
+conn.execute('PRAGMA cache_size=1')
+conn.execute('BEGIN IMMEDIATE')
+conn.execute('UPDATE users SET disabled=1')
+conn.execute('CREATE TABLE spill(data BLOB)')
+for _ in range(32):
+    conn.execute('INSERT INTO spill VALUES(zeroblob(4096))')
+os._exit(74)
+"""
+    result = subprocess.run([sys.executable, "-c", script, str(target)], timeout=20)
+    assert result.returncode == 74
+    journal = Path(str(target) + "-journal")
+    assert journal.read_bytes()[:8] == bytes.fromhex("d9d505f920a163d7")
+    target.unlink()
+    return journal
+
+
+def test_real_hot_journal_replays_on_bare_file_but_not_new_directory(source, tmp_path):
+    archive, _, _ = source
+    bare = tmp_path / "unsafe-control.sqlite"
+    journal = hot_journal(archive, bare)
+    # Establish that this journal actually reverses quarantine, not just an inert sentinel.
+    manifest = recovery._extract_database(archive, bare)
+    recovery._prepare_database(bare, manifest, sha(archive))
+    # Preparation already encountered the old journal. Recreate the unsafe arrangement:
+    replay = tmp_path / "replay-source.sqlite"
+    hot = hot_journal(archive, replay)
+    journal.write_bytes(hot.read_bytes())
+    with sqlite3.connect(bare) as conn:
+        assert conn.execute("SELECT disabled,role FROM users").fetchone() == (0, "admin")
+        assert (
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE name='octop_recovery_quarantine'"
+            ).fetchone()
+            is None
+        )
+        assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    # Exactly the old public basename/sidecar arrangement is harmless to a new namespace.
+    output = tmp_path / "safe.sqlite"
+    sibling = hot_journal(archive, output)
+    before = sibling.read_bytes()
+    result = recover(archive, output)
+    assert result["database"] == str(output / "octop.db")
+    assert_quarantined(output)
+    assert sibling.read_bytes() == before
+
+
+@pytest.mark.parametrize("suffix", ["-journal", "-wal", "-shm"])
+@pytest.mark.parametrize("link", [False, True])
+def test_legacy_sibling_sidecars_are_never_opened(source, tmp_path, suffix, link):
+    archive, original, _ = source
+    output = tmp_path / "image.sqlite"
+    sidecar = Path(str(output) + suffix)
+    if link:
+        sidecar.symlink_to(original.path)
+    else:
+        sidecar.write_bytes(b"old sidecar must not be interpreted")
+    before = sha(sidecar)
+    recover(archive, output)
+    assert_quarantined(output)
+    assert sha(sidecar) == before
+    assert sidecar.is_symlink() == link
+
+
+@pytest.mark.parametrize("kind", ["empty_directory", "hot_journal_directory", "symlink"])
+def test_concurrent_directory_namespace_claim_fails_closed(source, tmp_path, monkeypatch, kind):
+    archive, _, _ = source
+    output = tmp_path / "competing"
+    occupied = tmp_path / "other"
+    occupied.mkdir()
+    publish = recovery._publish
+
+    def competing(prepared, name, fd):
+        # Independent process does not participate in the builder flock.
+        script = """
+import os, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+if sys.argv[2] == 'symlink':
+    path.symlink_to(sys.argv[3], target_is_directory=True)
+else:
+    path.mkdir(mode=0o700)
+"""
+        subprocess.run(
+            [sys.executable, "-c", script, str(output), kind, str(occupied)],
+            check=True,
+            timeout=10,
+        )
+        if kind == "hot_journal_directory":
+            hot_journal(archive, output / "octop.db")
+        publish(prepared, name, fd)
+
+    monkeypatch.setattr(recovery, "_publish", competing)
+    with pytest.raises(OctopError) as error:
+        recover(archive, output)
+    assert error.value.code == ErrorCode.BACKUP_RECOVERY_REJECTED
+    assert not (output / "octop.db").exists()
+    if kind == "hot_journal_directory":
+        assert (output / "octop.db-journal").is_file()
+    if kind == "symlink":
+        assert output.is_symlink() and not list(occupied.iterdir())
+
+
+def test_second_publication_does_not_touch_first_namespace(source, tmp_path):
+    archive, _, _ = source
+    output = tmp_path / "once"
+    recover(archive, output)
+    before = sha(output / "octop.db")
+    with pytest.raises(OctopError) as error:
+        recover(archive, output)
+    assert error.value.details["reason"] == "output_exists"
+    assert sha(output / "octop.db") == before
+    assert_quarantined(output)
+
+
+def test_private_directory_fsync_failure_never_publishes(source, tmp_path, monkeypatch):
+    archive, _, _ = source
+    output = tmp_path / "disk-failure"
+    fsync = os.fsync
+    count = 0
+
+    def fail_directory(fd):
+        nonlocal count
+        count += 1
+        if count == 2:
+            raise OSError("synthetic directory persistence failure")
+        fsync(fd)
+
+    monkeypatch.setattr(recovery.os, "fsync", fail_directory)
+    with pytest.raises(OctopError):
+        recover(archive, output)
+    assert not output.exists()
+
+
+def test_fifo_source_rejected_without_waiting_for_writer(tmp_path):
+    fifo = tmp_path / "source.fifo"
+    os.mkfifo(fifo)
+    script = """
+import sys
+from pathlib import Path
+from octop.infra.backup.recovery_image import create_recovery_image
+from octop.infra.errors import OctopError
+try:
+    create_recovery_image(Path(sys.argv[1]), Path(sys.argv[2]), identity_policy='quarantine-all', expected_sha256='0'*64)
+except OctopError:
+    sys.exit(0)
+sys.exit(1)
+"""
+    subprocess.run(
+        [sys.executable, "-c", script, str(fifo), str(tmp_path / "output")],
+        check=True,
+        timeout=10,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("configured", [False, True])
+async def test_startup_rejects_before_plugins_probes_or_runtime(
+    source, tmp_path, monkeypatch, configured
+):
+    from octop.infra import server
+
+    archive, _, _ = source
+    output = tmp_path / "startup-image"
+    recover(archive, output)
+    home = tmp_path / "configured-home" if configured else output
+    home.mkdir(exist_ok=True)
+    config = (
+        {"database": {"driver": "sqlite", "sqlite_path": str(output / "octop.db")}}
+        if configured
+        else {}
+    )
+    (home / "config.json").write_text(json.dumps(config))
+    before = sha(output / "octop.db")
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("quarantined image reached startup side effects")
+
+    monkeypatch.setattr(server.OctopServer, "_setup_logging", forbidden)
+    monkeypatch.setattr(server, "ensure_mobile_capabilities_probed", forbidden)
+    monkeypatch.setattr(server.PluginManager, "load_installed", forbidden)
+    monkeypatch.setattr(server.OctopServer, "_boot_runtime", forbidden)
+    instance = server.OctopServer(home=home)
+    with pytest.raises(OctopError) as error:
+        await instance.start()
+    assert error.value.code == ErrorCode.BACKUP_RECOVERY_QUARANTINED
+    assert instance.services is None and not instance._started
+    assert sha(output / "octop.db") == before
+
+
+@pytest.mark.asyncio
+async def test_startup_preparation_failure_closes_early_database(tmp_path, monkeypatch):
+    from octop.infra import server
+
+    home = tmp_path / "normal-home"
+    home.mkdir()
+    SqlitePool(home / "octop.db").close()
+    opened = []
+    open_database = server.open_database
+
+    def capture(*args):
+        pool = open_database(*args)
+        opened.append(pool)
+        return pool
+
+    def fail(_self):
+        raise OSError("synthetic startup disk failure")
+
+    monkeypatch.setattr(server, "open_database", capture)
+    monkeypatch.setattr(server.OctopServer, "_setup_logging", fail)
+    instance = server.OctopServer(home=home)
+    with pytest.raises(OSError, match="synthetic startup"):
+        await instance.start()
+    assert len(opened) == 1
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"), opened[0].connect() as conn:
+        conn.execute("SELECT 1")
+    assert instance.services is None and not instance._started
+
+
+@pytest.mark.asyncio
+async def test_greenfield_still_defers_control_plane_without_opening_db(tmp_path, monkeypatch):
+    from unittest.mock import Mock
+
+    from octop.config import load_config
+    from octop.infra import server
+
+    home = tmp_path / "greenfield"
+    home.mkdir()
+    monkeypatch.setattr(server, "ensure_mobile_capabilities_probed", load_config)
+    monkeypatch.setattr(server.OctopServer, "_setup_logging", Mock())
+    monkeypatch.setattr(server.OctopServer, "_emit_wizard_password", Mock())
+    for name in ("ExpertCatalog", "SubagentCatalog", "PluginManager"):
+        monkeypatch.setattr(server, name, Mock())
+    opened = Mock(side_effect=AssertionError("greenfield must not open a pool"))
+    monkeypatch.setattr(server, "open_database", opened)
+    instance = server.OctopServer(home=home)
+    await instance.start()
+    assert instance._started and instance.services is None and instance.config is not None
+    opened.assert_not_called()
+    assert not (home / "octop.db").exists()
+
+
+def test_postpublication_hot_journal_cannot_run_before_pool_gate(source, tmp_path):
+    archive, _, _ = source
+    output = tmp_path / "after-publication"
+    recover(archive, output)
+    hot = hot_journal(archive, tmp_path / "old-writer.sqlite")
+    target = output / "octop.db"
+    # Simulate a local process introducing a sidecar after publication. The owner
+    # can still bypass this with raw sqlite3; the supported pool must not replay it.
+    sidecar = Path(str(target) + "-journal")
+    sidecar.write_bytes(hot.read_bytes())
+    before, before_journal = sha(target), sha(sidecar)
+    with pytest.raises(OctopError) as error:
+        SqlitePool(target)
+    assert error.value.code == ErrorCode.BACKUP_RECOVERY_QUARANTINED
+    assert sha(target) == before and sha(sidecar) == before_journal
+
+
+def test_external_marker_symlink_also_refuses_before_sqlite_connect(source, tmp_path, monkeypatch):
+    archive, _, _ = source
+    output = tmp_path / "marker-link"
+    recover(archive, output)
+    marker = output / recovery.RECOVERY_QUARANTINE_FILE
+    marker.unlink()
+    marker.symlink_to(tmp_path / "missing-marker-target")
+    monkeypatch.setattr(sqlite3, "connect", lambda *a, **kw: pytest.fail("SQLite must not open"))
+    with pytest.raises(OctopError) as error:
+        SqlitePool(output / "octop.db")
+    assert error.value.code == ErrorCode.BACKUP_RECOVERY_QUARANTINED
+
+
+def test_unsupported_atomic_rename_has_no_fallback(source, tmp_path, monkeypatch):
+    import ctypes
+    import errno
+    from types import SimpleNamespace
+
+    archive, _, _ = source
+    output = tmp_path / "unsupported-rename"
+    libc = ctypes.CDLL
+
+    def unavailable(*args):
+        ctypes.set_errno(errno.ENOSYS)
+        return -1
+
+    real = libc(None, use_errno=True)
+    monkeypatch.setattr(
+        recovery.ctypes,
+        "CDLL",
+        lambda *a, **kw: SimpleNamespace(fstatfs=real.fstatfs, renameat2=unavailable),
+    )
+    with pytest.raises(OctopError):
+        recover(archive, output)
+    assert not output.exists()
+
+
+@pytest.mark.asyncio
+async def test_normal_startup_reuses_checked_pool_with_runtime_mocked(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from octop.config import load_config
+    from octop.infra import server
+    from octop.infra.auth import captcha
+
+    home = tmp_path / "normal-startup"
+    home.mkdir()
+    SqlitePool(home / "octop.db").close()
+    monkeypatch.setattr(server, "ensure_mobile_capabilities_probed", load_config)
+    monkeypatch.setattr(server.OctopServer, "_setup_logging", Mock())
+    monkeypatch.setattr(server.OctopServer, "_emit_wizard_password", Mock())
+    monkeypatch.setattr(server.OctopServer, "_ensure_jwt_secret", Mock())
+    monkeypatch.setattr(captcha, "boot_from_services", Mock())
+    for name in ("ExpertCatalog", "SubagentCatalog", "PluginManager"):
+        monkeypatch.setattr(server, name, Mock())
+    opened = []
+    open_database = server.open_database
+
+    def capture(*args):
+        pool = open_database(*args)
+        opened.append(pool)
+        return pool
+
+    async def boot(instance, config):
+        assert instance.services.db is opened[0]
+        instance.app_runtime = SimpleNamespace(user_manager=SimpleNamespace(count=lambda: 0))
+
+    monkeypatch.setattr(server, "open_database", capture)
+    monkeypatch.setattr(server.OctopServer, "_boot_runtime", boot)
+    instance = server.OctopServer(home=home)
+    try:
+        await instance.start()
+        assert instance._started and len(opened) == 1
+        with instance.services.db.connect() as conn:
+            assert conn.execute("SELECT version FROM _schema_version").fetchone()[0] == 42
+    finally:
+        for pool in opened:
+            pool.close()

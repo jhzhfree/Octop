@@ -17,7 +17,7 @@ from typing import IO, Any
 
 from octop.infra.backup.manifest import MANIFEST_VERSION, BackupManifest
 from octop.infra.db.migrate import _max_discovered_version, run_migrations
-from octop.infra.db.pool import SqlitePool
+from octop.infra.db.pool import RECOVERY_QUARANTINE_FILE, SqlitePool
 from octop.infra.errors import ErrorCode, OctopError
 
 _MAX_ARCHIVE = 512 * 1024 * 1024
@@ -44,7 +44,7 @@ def _copy_bounded(source: IO[bytes], dest: IO[bytes], limit: int) -> str:
 
 
 def _snapshot_archive(source: Path, dest: Path) -> str:
-    fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
+    fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(fd, "rb") as stream:
         before = os.fstat(stream.fileno())
         if not stat.S_ISREG(before.st_mode) or before.st_size > _MAX_ARCHIVE:
@@ -142,7 +142,7 @@ def _prepare_database(path: Path, manifest: BackupManifest, source_hash: str) ->
                 (os.urandom(32),),
             )
             metadata = {
-                "format": 1,
+                "format": 2,
                 "identity_policy": "quarantine-all",
                 "source_sha256": source_hash,
                 "schema_version": int(
@@ -190,8 +190,16 @@ def _sync_directory(fd: int) -> None:
 
 
 def _publish(prepared: Path, name: str, directory_fd: int) -> None:
-    # link(2) is the enforced no-overwrite boundary, even for non-cooperating creators.
-    os.link(prepared, name, dst_dir_fd=directory_fd, follow_symlinks=False)
+    # Publish the entire private SQLite namespace, never a main file into a
+    # directory where an old hot journal/WAL could rewrite it on first open.
+    # No check-then-rename fallback: even an empty competing directory must win.
+    libc = ctypes.CDLL(None, use_errno=True)
+    rename = libc.renameat2
+    rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+    rename.restype = ctypes.c_int
+    if rename(-100, os.fsencode(prepared), directory_fd, os.fsencode(name), 1) != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error))
 
 
 def create_recovery_image(
@@ -201,7 +209,8 @@ def create_recovery_image(
 
     The directory lock coordinates builders only. No lock claims to stop an
     existing deployment: existing targets are never opened/replaced. Publication
-    is one create-only hard link of a closed, fsynced standalone database.
+    is one RENAME_NOREPLACE of a private directory containing a closed, fsynced
+    standalone database. Output is a directory, not a SQLite filename.
     """
     if sys.platform != "linux" or not hasattr(os, "O_NOFOLLOW"):
         raise _reject("platform_not_supported")
@@ -262,7 +271,9 @@ def create_recovery_image(
             source_hash = _snapshot_archive(source, archive)
             if source_hash != expected_sha256:
                 raise _reject("archive_checksum_mismatch")
-            prepared = staging / "prepared.sqlite"
+            bundle = staging / "image"
+            bundle.mkdir(mode=0o700)
+            prepared = bundle / "octop.db"
             manifest = _extract_database(archive, prepared)
             result = _prepare_database(prepared, manifest, source_hash)
             if any(
@@ -272,18 +283,38 @@ def create_recovery_image(
             with prepared.open("rb") as stream:
                 image_hash = hashlib.file_digest(stream, "sha256").hexdigest()
                 os.fsync(stream.fileno())
+            marker_fd = os.open(
+                bundle / RECOVERY_QUARANTINE_FILE, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
+            )
+            try:
+                os.write(
+                    marker_fd,
+                    b"Quarantined recovery image. Application activation is unavailable.\n",
+                )
+                os.fsync(marker_fd)
+            finally:
+                os.close(marker_fd)
+            bundle_fd = os.open(bundle, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                os.fsync(bundle_fd)
+            finally:
+                os.close(bundle_fd)
             # Confirm directory support for durability before making a target visible.
             _sync_directory(directory_fd)
             current = parent.stat()
             if (current.st_dev, current.st_ino) != (directory.st_dev, directory.st_ino):
                 raise _reject("output_directory_changed")
-            prepared_stat = prepared.stat()
+            prepared_stat = bundle.stat()
             prepared_identity = (prepared_stat.st_dev, prepared_stat.st_ino)
             publication_attempted = True
-            _publish(prepared, name, directory_fd)
+            _publish(bundle, name, directory_fd)
             published = True
             _sync_directory(directory_fd)
-            return result | {"output": str(parent / name), "image_sha256": image_hash}
+            return result | {
+                "output": str(parent / name),
+                "database": str(parent / name / "octop.db"),
+                "image_sha256": image_hash,
+            }
     except Exception as exc:
         if publication_attempted and not published:
             try:

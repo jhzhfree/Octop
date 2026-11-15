@@ -328,46 +328,59 @@ class OctopServer:
         if self._started:
             return
         self.paths.ensure_root()
-        # fnOS/容器内非 root 用户场景：把用户级 npm 全局 bin 目录（~/.npm-global）
-        # 纳入进程 PATH，保证连接器 CLI（wecom-cli / lark-cli）可被检测与调用。
-        from octop.infra.connectors.gateway.cli_install import ensure_cli_path  # noqa: PLC0415
-
-        ensure_cli_path()
         from octop.infra.utils.env_file import apply_env_file, env_file_path  # noqa: PLC0415
 
         apply_env_file(env_file_path(self.paths.root))
-        self._setup_logging()
-        config = ensure_mobile_capabilities_probed(self.paths.config)
-        self.config = config
-
-        self.expert_catalog = ExpertCatalog(
-            default_library_root(),
-            extra_roots=[self.paths.expert_market_dir],
+        config = load_config(self.paths.config)
+        # Validate the actual control-plane connection before plugin dependency
+        # installation, capability probes, or catalog loading. Reuse this pool;
+        # a separate preflight check followed by a reopen would leave a race.
+        db = (
+            None
+            if should_defer_control_plane_db(config, self.paths)
+            else open_database(config, self.paths)
         )
-        self.expert_catalog.refresh()
-        self.subagent_catalog = SubagentCatalog(default_package_root())
-        self.subagent_catalog.refresh()
+        try:
+            # fnOS/容器内非 root 用户场景：把用户级 npm 全局 bin 目录（~/.npm-global）
+            # 纳入进程 PATH，保证连接器 CLI（wecom-cli / lark-cli）可被检测与调用。
+            from octop.infra.connectors.gateway.cli_install import ensure_cli_path  # noqa: PLC0415
 
-        self.plugin_manager = PluginManager(
-            plugins_dir=self.paths.plugins_dir,
-            config_path=self.paths.config,
-        )
-        self.plugin_manager.seed_bundled()
-        self.plugin_manager.load_installed(install_deps=True)
+            ensure_cli_path()
+            self._setup_logging()
+            config = ensure_mobile_capabilities_probed(self.paths.config)
+            self.config = config
 
-        import time  # noqa: PLC0415
+            self.expert_catalog = ExpertCatalog(
+                default_library_root(),
+                extra_roots=[self.paths.expert_market_dir],
+            )
+            self.expert_catalog.refresh()
+            self.subagent_catalog = SubagentCatalog(default_package_root())
+            self.subagent_catalog.refresh()
 
-        self._started_at = int(time.time())
+            self.plugin_manager = PluginManager(
+                plugins_dir=self.paths.plugins_dir,
+                config_path=self.paths.config,
+            )
+            self.plugin_manager.seed_bundled()
+            self.plugin_manager.load_installed(install_deps=True)
 
-        if should_defer_control_plane_db(config, self.paths):
-            self._started = True
-            self._emit_wizard_password(user_count=0)
-            logger.info("control-plane database deferred until setup wizard chooses a backend")
-            return
+            import time  # noqa: PLC0415
 
-        db = open_database(config, self.paths)
-        run_migrations(db)
-        self.services = build_shared_services(db=db, paths=self.paths, config=config)
+            self._started_at = int(time.time())
+
+            if db is None:
+                self._started = True
+                self._emit_wizard_password(user_count=0)
+                logger.info("control-plane database deferred until setup wizard chooses a backend")
+                return
+
+            run_migrations(db)
+            self.services = build_shared_services(db=db, paths=self.paths, config=config)
+        except Exception:
+            if db is not None:
+                db.close()
+            raise
         from octop.infra.auth.captcha import boot_from_services  # noqa: PLC0415
 
         boot_from_services(self.services.settings_repo, self.services.secret_repo)
