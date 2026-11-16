@@ -151,3 +151,47 @@ uv run pytest tests/integration/test_setup_database.py \
 
 本轮 `make lint-all typecheck-all` 通过（mypy 675 个源文件）；变更文件 Ruff 和
 `git diff --check` 通过。没有前端源码变更，未重复构建。
+
+## 并发向导提交与过期工作进程（基线 c0db77d5）
+
+本轮复现一个实际竞争：第一个 `/setup/database` 已持久化 first.db、等待运行时启动时，
+第二个请求可以改为 second.db 并返回 200；第一个请求恢复后也返回成功，但其选择已
+被覆盖。不是通过线程调度猜测：测试暂停首次 bind 后提交第二次请求，修复前断言失败。
+
+现在 `/setup/database`、`/setup/initial-admin`、`/setup/finish` 共用安装目录中稳定的
+`.setup-mutation-lock` SQLite 伴随文件，持有非阻塞排他事务跨越 handler 的 await。
+竞争请求立即返回既有 SETUP_REQUIRED/410（操作进行中），不排队堵塞事件循环。
+进入后比较工作进程加载的数据库配置与当前配置；不同则返回 409 并要求重启该工作
+进程，避免仅有锁却向过期仓储创建管理员或覆盖新配置。原用户创建事务/CAS 和向导
+生命周期检查仍保留，锁不替代认证与授权。新进程重载正确配置后可继续安装。
+
+验证范围：
+
+- 真实回环 HTTP 暂停第一次 bind、并发提交第二个数据库选择：竞争者被拒绝，未创建
+  第二库；随后创建管理员，正常停止/启动后仍读取 first.db 和唯一管理员。
+- 两个运行时加载同一初始配置，只有先选择数据库者可继续；另一个的数据库、管理员、
+  finish 请求均拒绝，配置不被覆盖，重启后可读取已创建管理员。
+- 独立 spawn 进程验证排他、正常退出释放、terminate 后释放、过期配置拒绝。这里是
+  真实进程/文件锁测试，不是完整双 HTTP 服务部署。
+- 配置写入故障注入验证原配置不变、guard 释放、重试成功和重启可读；现有用户插入
+  失败事务回滚及 finish 副作用故障保持关闭的回归继续执行。
+
+部署与兼容边界：仅适用于采用本协议、共享稳定本地安装目录的进程。不要删除/替换
+伴随文件，不与旧二进制混跑；不覆盖同 UID 文件替换、直接编辑配置、其他管理 API/CLI
+写配置、普通业务写入或网络文件系统。单机 SQLite 已测试，PG 与多主机未验。
+这不是整个配置文件和数据库/运行时启动的原子事务；配置提交后的引导故障、系统断电
+及历史遗留错配不自动回滚，不应把本修复用于在线恢复或证明全局停写。
+
+本轮最终验证（关闭遥测，uv 离线缓存）：
+
+```sh
+uv run pytest tests/unit/infra/setup/test_mutation_guard.py \
+  tests/integration/test_setup_database.py tests/integration/test_setup_wizard.py \
+  tests/integration/test_setup_bootstrap.py -q
+```
+
+**61 passed**，包含最终真实 HTTP 并发测试，既有依赖弃用警告保留。新增测试初次运行
+发现测试快照在默认配置首次落盘前捕获、ASGI 直接传播注入异常两项夹具问题，已按真实
+启动后快照及异常传播语义修正；最终无失败。`make lint-all typecheck-all` 通过
+（mypy 676 个源文件），Ruff 和 diff 检查通过。没有前端源码变更，未重复构建；未跑
+全量 make all、受限遥测、PG、真实模型/AKB/堡垒机/Mattermost 或生产部署。

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,7 @@ from octop.infra.agents.providers.probe import make_probe_provider_row, probe_pr
 from octop.infra.errors import ErrorCode, OctopError
 from octop.infra.setup import password_file as _wizard
 from octop.infra.setup.lifecycle import lifecycle, require_owner, require_phase
+from octop.infra.setup.mutation_guard import setup_mutation_guard
 from octop.infra.setup.wizard_tokens import RateLimited
 from octop.infra.users.identity import Role
 from octop.infra.utils.locale import normalize_locale, resolve_request_locale
@@ -24,6 +26,12 @@ from octop.infra.utils.locale import normalize_locale, resolve_request_locale
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+async def _setup_mutation(server: Any = Depends(get_server)) -> AsyncIterator[None]:
+    # Async dependency stays on the event-loop thread across handler awaits.
+    with setup_mutation_guard(server):
+        yield
 
 
 class VerifyBody(BaseModel):
@@ -286,7 +294,11 @@ async def test_database(
     return {"ok": True, "driver": db_cfg.driver}
 
 
-@router.post("/setup/database", summary="Persist control-plane database and bind")
+@router.post(
+    "/setup/database",
+    summary="Persist control-plane database and bind",
+    dependencies=[Depends(_setup_mutation)],
+)
 async def apply_database(
     body: DatabaseSetupBody,
     server: Any = Depends(get_server),
@@ -358,7 +370,12 @@ async def verify_password(
     return {"wizard_token": token, "expires_in": ttl}
 
 
-@router.post("/setup/initial-admin", status_code=201, summary="Create initial admin")
+@router.post(
+    "/setup/initial-admin",
+    status_code=201,
+    summary="Create initial admin",
+    dependencies=[Depends(_setup_mutation)],
+)
 async def initial_admin(
     body: SetupBody,
     request: Request,
@@ -451,7 +468,9 @@ async def test_provider_draft(
     return await probe_provider_row(row, locale=resolve_request_locale(request))
 
 
-@router.post("/setup/finish", summary="Finish setup wizard")
+@router.post(
+    "/setup/finish", summary="Finish setup wizard", dependencies=[Depends(_setup_mutation)]
+)
 async def finish(
     body: FinishBody,
     server: Any = Depends(get_server),

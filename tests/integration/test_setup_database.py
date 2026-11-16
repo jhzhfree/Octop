@@ -207,3 +207,113 @@ async def test_history_rebind_rejection_preserves_restart_database(
     async with octop_client(tmp_octop_home) as (_, restarted):
         assert restarted.user_manager.count() == 1
         assert restarted.database_bound
+
+
+async def test_concurrent_database_submit_is_rejected_before_config_write(
+    tmp_octop_home, monkeypatch
+):
+    import asyncio
+    import socket
+
+    from tests.support.loopback_http import loopback_http_client
+
+    original_connect, original_dns = socket.socket.connect, socket.getaddrinfo
+
+    def denied(*args, **kwargs):
+        raise AssertionError("NON-TEST NETWORK FORBIDDEN")
+
+    for method in ("connect", "connect_ex", "sendto"):
+        monkeypatch.setattr(socket.socket, method, denied)
+    monkeypatch.setattr(socket, "getaddrinfo", denied)
+    async with (
+        octop_client(tmp_octop_home, bind_database=False) as (asgi, srv),
+        loopback_http_client(
+            asgi._octop_app, monkeypatch, original_connect, original_dns
+        ) as client,
+    ):
+        entered, release = asyncio.Event(), asyncio.Event()
+        original = srv.bind_control_plane
+        calls = 0
+
+        async def paused_bind():
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                entered.set()
+                await release.wait()
+            await original()
+
+        monkeypatch.setattr(srv, "bind_control_plane", paused_bind)
+        first = asyncio.create_task(
+            client.post("/api/setup/database", json={"driver": "sqlite", "sqlite_path": "first.db"})
+        )
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            second = await client.post(
+                "/api/setup/database", json={"driver": "sqlite", "sqlite_path": "second.db"}
+            )
+            assert second.status_code == 410, second.text
+            assert load_config(srv.paths.config).database.sqlite_path == "first.db"
+            assert not (tmp_octop_home / "second.db").exists()
+        finally:
+            release.set()
+            result = await asyncio.wait_for(first, 10)
+        assert result.status_code == 200, result.text
+        assert srv.services.config.database.sqlite_path == "first.db"
+        await bootstrap_admin(client, tmp_octop_home)
+    async with octop_client(tmp_octop_home) as (_, restarted):
+        assert restarted.services.config.database.sqlite_path == "first.db"
+        assert restarted.user_manager.count() == 1
+
+
+async def test_stale_setup_worker_rejects_database_and_admin_mutations(tmp_octop_home):
+    async with (
+        octop_client(tmp_octop_home, bind_database=False) as (first, active),
+        octop_client(tmp_octop_home, bind_database=False) as (second, stale),
+    ):
+        selected = await first.post(
+            "/api/setup/database", json={"driver": "sqlite", "sqlite_path": "chosen.db"}
+        )
+        assert selected.status_code == 200, selected.text
+        before = active.paths.config.read_bytes()
+        for endpoint, payload in (
+            ("database", {"driver": "sqlite", "sqlite_path": "stale.db"}),
+            ("initial-admin", {"username": "stale", "password": "TestPass12"}),
+            ("finish", {}),
+        ):
+            rejected = await second.post("/api/setup/" + endpoint, json=payload)
+            assert rejected.status_code == 409, rejected.text
+        assert active.paths.config.read_bytes() == before
+        assert not (tmp_octop_home / "stale.db").exists()
+        assert stale.database_bound is False
+        await bootstrap_admin(first, tmp_octop_home)
+        assert active.user_manager.count() == 1
+    async with octop_client(tmp_octop_home) as (_, restarted):
+        assert restarted.user_manager.count() == 1
+        assert restarted.services.config.database.sqlite_path == "chosen.db"
+
+
+async def test_database_config_write_failure_releases_claim_for_retry(tmp_octop_home, monkeypatch):
+    from octop.infra.db import rebind
+
+    async with octop_client(tmp_octop_home, bind_database=False) as (client, srv):
+        before = srv.paths.config.read_bytes()
+        with monkeypatch.context() as patch:
+
+            def fail(*args):
+                raise OSError("injected config write failure")
+
+            patch.setattr(rebind, "_atomic_write_json", fail)
+            with pytest.raises(OSError, match="injected config write failure"):
+                await client.post(
+                    "/api/setup/database", json={"driver": "sqlite", "sqlite_path": "chosen.db"}
+                )
+        assert srv.paths.config.read_bytes() == before
+        assert not srv.database_bound
+        retried = await client.post(
+            "/api/setup/database", json={"driver": "sqlite", "sqlite_path": "chosen.db"}
+        )
+        assert retried.status_code == 200, retried.text
+        await bootstrap_admin(client, tmp_octop_home)
+    async with octop_client(tmp_octop_home) as (_, restarted):
+        assert restarted.user_manager.count() == 1
