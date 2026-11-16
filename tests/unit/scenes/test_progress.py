@@ -17,6 +17,12 @@ def setup(tmp_path):
         CREATE TABLE enterprise_scene_runs(id INTEGER PRIMARY KEY,run_id TEXT UNIQUE,
           organization_id TEXT,status TEXT,plan_id TEXT,created_at INTEGER);
         CREATE INDEX idx_progress_org ON enterprise_scene_runs(organization_id,created_at);
+        CREATE TABLE digital_workers(worker_id TEXT PRIMARY KEY,organization_id TEXT);
+        CREATE TABLE digital_worker_goals(goal_id TEXT PRIMARY KEY,worker_id TEXT);
+        CREATE TABLE digital_worker_plans(plan_id TEXT PRIMARY KEY,goal_id TEXT);
+        INSERT INTO digital_workers VALUES('w','o'),('w2','o'),('outside','other');
+        INSERT INTO digital_worker_goals VALUES('g','w'),('g2','w2');
+        INSERT INTO digital_worker_plans VALUES('p','g'),('p2','g2');
         CREATE TABLE scene_run_acceptances(run_id TEXT PRIMARY KEY,organization_id TEXT,decision TEXT);
         INSERT INTO users VALUES(1,'user',0),(2,'user',0),(3,'admin',0);
         INSERT INTO organization_members VALUES('o',1,'manager'),('o',2,'member');
@@ -518,3 +524,44 @@ def test_queue_new_categories_discard_invalid_acceptance_and_refresh_changes(
         conn.execute("UPDATE enterprise_scene_runs SET status='failed' WHERE run_id=?", (run_id,))
     assert service.queue("o", category=category)["items"] == []
     assert run_id in [r["run_id"] for r in service.queue("o", category="failed")["items"]]
+
+
+@pytest.mark.parametrize("worker,expected", [("w", ["r3"]), ("w2", [])])
+def test_worker_queue_filter_uses_persisted_plan_ownership(setup, worker, expected):
+    _, _, service = setup
+    result = service.queue("o", category="unreviewed_success", worker_id=worker)
+    assert result["worker_id"] == worker
+    assert [row["run_id"] for row in result["items"]] == expected
+
+
+@pytest.mark.parametrize("worker", ["outside", "missing"])
+def test_worker_queue_filter_rejects_foreign_or_missing_worker(setup, worker):
+    with pytest.raises(ProgressAccessError):
+        setup[2].queue("o", category="accepted", worker_id=worker)
+
+
+def test_worker_queue_filter_pagination_and_membership_revocation(setup, monkeypatch):
+    db, repo, service = setup
+    with db.connect() as conn:
+        conn.execute("UPDATE enterprise_scene_runs SET plan_id='p2' WHERE run_id='r3'")
+        conn.execute("INSERT INTO enterprise_scene_runs VALUES(11,'new','o','succeeded','p2',108)")
+    page = service.queue("o", category="unreviewed_success", worker_id="w2", limit=1)
+    assert [r["run_id"] for r in page["items"]] == ["new"]
+    next_page = service.queue(
+        "o", category="unreviewed_success", worker_id="w2", limit=1, before=page["next_before"]
+    )
+    assert [r["run_id"] for r in next_page["items"]] == ["r3"]
+    assert next_page["next_before"] is None
+    original = repo._authorize
+    calls = 0
+
+    def revoke(conn, org, user):
+        nonlocal calls
+        original(conn, org, user)
+        calls += 1
+        if calls == 1:
+            conn.execute("DELETE FROM organization_members WHERE user_id=1")
+
+    monkeypatch.setattr(repo, "_authorize", revoke)
+    with pytest.raises(ProgressAccessError):
+        service.queue("o", category="unreviewed_success", worker_id="w2")

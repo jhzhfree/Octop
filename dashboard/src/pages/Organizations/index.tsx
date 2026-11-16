@@ -1755,7 +1755,13 @@ export default function OrganizationsPage() {
         {organizationId &&
           chart?.organization.organization_id === organizationId && (
             <Card>
-              <RunQueue organizationId={organizationId} canManage={canManage} />
+              <RunQueue
+                organizationId={organizationId}
+                canManage={canManage}
+                workers={digitalWorkers.filter(
+                  (worker) => worker.organization_id === organizationId,
+                )}
+              />
               <OrganizationProgress
                 key={organizationId}
                 organizationId={organizationId}

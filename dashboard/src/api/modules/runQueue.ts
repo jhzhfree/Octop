@@ -11,6 +11,7 @@ export const queueCategories = [
 ] as const;
 export type QueueCategory = (typeof queueCategories)[number];
 export interface RunQueue {
+  worker_id?: string | null;
   organization_id: string;
   category: QueueCategory;
   as_of: number;
@@ -34,12 +35,14 @@ export function validRunQueue(
   org: string,
   category: QueueCategory,
   before?: number,
+  workerId?: string,
 ) {
   const integer = (n: unknown) =>
     typeof n === "number" && Number.isSafeInteger(n) && n >= 0;
   return (
     !!data &&
     data.organization_id === org &&
+    (data.worker_id ?? undefined) === workerId &&
     data.category === category &&
     integer(data.as_of) &&
     data.execution_authorized === false &&
@@ -92,12 +95,21 @@ export const runQueueApi = {
       )}`,
       { cache: "no-store" },
     ),
-  read: (org: string, category: QueueCategory, before?: number) =>
+  read: (
+    org: string,
+    category: QueueCategory,
+    before?: number,
+    workerId?: string,
+  ) =>
     request<RunQueue>(
       `/organizations/${encodeURIComponent(
         org,
       )}/run-queue?category=${category}&limit=20${
         before === undefined ? "" : `&before=${before}`
+      }${
+        workerId === undefined
+          ? ""
+          : `&worker_id=${encodeURIComponent(workerId)}`
       }`,
       { cache: "no-store" },
     ),

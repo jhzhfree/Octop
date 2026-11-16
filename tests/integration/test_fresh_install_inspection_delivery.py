@@ -149,6 +149,26 @@ async def test_fresh_sqlite_inspection_delivery_via_http(
         pos = await req("POST", op + "/positions", {"title": "运维数字员工"}, code=201)
         await seed_openai_provider(c, auth)
         aid = await create_agent(c, auth, name="Fresh inspection agent")
+        # A separate position/worker makes attribution observable without an
+        # autonomous delegation mechanism or another model call.
+        lead_position = await req("POST", op + "/positions", {"title": "Coordination"}, code=201)
+        lead_agent = await create_agent(c, auth, name="Coordination worker")
+        await req(
+            "POST",
+            op + "/positions/" + lead_position["position_id"] + "/appointments",
+            {"subject_type": "agent", "subject_id": lead_agent},
+            code=201,
+        )
+        lead_worker = await req(
+            "POST",
+            op + "/digital-workers",
+            {
+                "position_id": lead_position["position_id"],
+                "agent_id": lead_agent,
+                "name": "Coordination",
+            },
+            code=201,
+        )
         await req(
             "POST",
             op + "/positions/" + pos["position_id"] + "/appointments",
@@ -326,6 +346,12 @@ async def test_fresh_sqlite_inspection_delivery_via_http(
         # A stale open reviewer page must not retain approval authority.
         member_path = "/api" + op + "/members/" + str(reviewer["id"])
         assert (await c.delete(member_path, headers=auth)).status_code == 204
+        await req(
+            "GET",
+            op + "/run-queue?category=awaiting_approval&worker_id=" + worker["worker_id"],
+            headers=reviewauth,
+            code=403,
+        )
         await req("GET", op + "/run-queue/" + run["run_id"], headers=reviewauth, code=403)
         for action in ("approve", "reject"):
             await req(
@@ -444,6 +470,25 @@ async def test_fresh_sqlite_inspection_delivery_via_http(
 
         detail = await req("GET", op + "/run-queue/" + run["run_id"], headers=reviewauth)
         assert detail["decision"] == decision
+        assigned = await req(
+            "GET",
+            op + "/run-queue?category=" + decision + "&worker_id=" + worker["worker_id"],
+            headers=reviewauth,
+        )
+        assert assigned["worker_id"] == worker["worker_id"]
+        assert [item["run_id"] for item in assigned["items"]] == [run["run_id"]]
+        other_worker_queue = await req(
+            "GET",
+            op + "/run-queue?category=" + decision + "&worker_id=" + lead_worker["worker_id"],
+            headers=reviewauth,
+        )
+        assert other_worker_queue["items"] == []
+        await req(
+            "GET",
+            op + "/run-queue?category=" + decision + "&worker_id=missing",
+            headers=reviewauth,
+            code=403,
+        )
         old_queue = await req(
             "GET", op + "/run-queue?category=unreviewed_success", headers=reviewauth
         )
@@ -465,6 +510,14 @@ async def test_fresh_sqlite_inspection_delivery_via_http(
         )
         if failed_path:
             assert (await req("GET", failed_path))["status"] == "failed"
+            failed_queue = await req(
+                "GET",
+                op + "/run-queue?category=failed&worker_id=" + worker["worker_id"],
+                headers=reviewauth,
+            )
+            assert [item["run_id"] for item in failed_queue["items"]] == [
+                failed_path.rsplit("/", 1)[1]
+            ]
         if decision == "changes_requested":
             # A separate plan and run, using the same public calls as the revision UI.
             original_feedback = feedback.copy()

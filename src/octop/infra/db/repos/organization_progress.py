@@ -80,7 +80,14 @@ class OrganizationProgressRepo:
         }
 
     def queue(
-        self, organization_id: str, user_id: int, *, category: str, limit: int, before: int | None
+        self,
+        organization_id: str,
+        user_id: int,
+        *,
+        category: str,
+        limit: int,
+        before: int | None,
+        worker_id: str | None = None,
     ) -> dict[str, Any]:
         # Predicates are selected by the service, never interpolated from a request.
         predicates = {
@@ -93,19 +100,47 @@ class OrganizationProgressRepo:
             "accepted": "r.status='succeeded' AND a.decision='accepted'",
         }
         predicate = predicates[category]
+        worker_predicate = (
+            " AND EXISTS (SELECT 1 FROM digital_worker_plans p "
+            "JOIN digital_worker_goals g ON g.goal_id=p.goal_id "
+            "JOIN digital_workers w ON w.worker_id=g.worker_id "
+            "WHERE p.plan_id=r.plan_id AND w.worker_id=? AND w.organization_id=r.organization_id)"
+            if worker_id is not None
+            else ""
+        )
+
+        def authorize_worker(conn: Any) -> None:
+            if (
+                worker_id is not None
+                and conn.execute(
+                    "SELECT 1 FROM digital_workers WHERE worker_id=? AND organization_id=?",
+                    (worker_id, organization_id),
+                ).fetchone()
+                is None
+            ):
+                raise ProgressAccessError("organization worker access required")
+
         with self.db.connect() as conn:
             self._authorize(conn, organization_id, user_id)
+            authorize_worker(conn)
             rows = conn.execute(
                 "SELECT r.id,r.run_id,r.status,r.created_at,a.decision "
                 "FROM enterprise_scene_runs r LEFT JOIN scene_run_acceptances a "
                 "ON a.run_id=r.run_id AND a.organization_id=r.organization_id "
                 "WHERE r.organization_id=? AND "
                 + predicate
+                + worker_predicate
                 + (" AND r.id<?" if before is not None else "")
                 + " ORDER BY r.id DESC LIMIT ?",
-                (organization_id, *((before,) if before is not None else ()), limit + 1),
+                (
+                    organization_id,
+                    *((worker_id,) if worker_id is not None else ()),
+                    *((before,) if before is not None else ()),
+                    limit + 1,
+                ),
             ).fetchall()
             self._authorize(conn, organization_id, user_id)
+            authorize_worker(conn)
         page = rows[:limit]
         return {
             "items": [

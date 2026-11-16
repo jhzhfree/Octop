@@ -73,3 +73,19 @@ it.each(["queued", "rejected"] as const)(
     );
   },
 );
+
+it("binds filtered responses and requests to the selected worker", async () => {
+  const filtered = { ...accepted, worker_id: "worker / one" };
+  expect(
+    validRunQueue(filtered, "o", "accepted", undefined, "worker / one"),
+  ).toBe(true);
+  expect(validRunQueue(filtered, "o", "accepted")).toBe(false);
+  expect(
+    validRunQueue(accepted, "o", "accepted", undefined, "worker / one"),
+  ).toBe(false);
+  await runQueueApi.read("o", "accepted", 5, "worker / one");
+  expect(request).toHaveBeenCalledWith(
+    "/organizations/o/run-queue?category=accepted&limit=20&before=5&worker_id=worker%20%2F%20one",
+    { cache: "no-store" },
+  );
+});

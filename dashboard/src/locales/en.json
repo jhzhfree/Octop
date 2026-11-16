@@ -7361,6 +7361,9 @@
     "search": "Filter sources by name or ID"
   },
   "runQueue": {
+    "worker": "Assigned digital worker",
+    "allWorkers": "All workers and unlinked runs",
+    "workerScope": "Filters this queue by current plan and goal ownership; progress totals remain organization-wide. Use All for unlinked or deleted plans; selecting a worker does not dispatch new work.",
     "title": "Organization runs and deliveries",
     "notice": "Read-only queue, newest inserted runs first. State may lag. No automatic retry, approval, acceptance, or goal completion.",
     "forbidden": "Manager permission is required to read the follow-up queue.",

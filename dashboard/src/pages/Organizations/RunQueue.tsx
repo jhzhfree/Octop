@@ -13,9 +13,16 @@ import {
   type RunQueue as Queue,
 } from "../../api/modules/runQueue";
 
+type WorkerOption = {
+  worker_id: string;
+  organization_id: string;
+  name: string;
+};
+
 export default function RunQueue(props: {
   organizationId: string;
   canManage: boolean;
+  workers?: WorkerOption[];
 }) {
   const user = useCurrentUser();
   const deliveryUserId =
@@ -32,6 +39,10 @@ export default function RunQueue(props: {
         user?.id,
         user?.role,
         user?.permissions,
+        props.workers?.map((worker) => [
+          worker.worker_id,
+          worker.organization_id,
+        ]),
       ])}
       deliveryUserId={deliveryUserId}
       {...props}
@@ -42,13 +53,16 @@ function QueueSession({
   organizationId,
   canManage,
   deliveryUserId,
+  workers = [],
 }: {
   organizationId: string;
   canManage: boolean;
   deliveryUserId?: number;
+  workers?: WorkerOption[];
 }) {
   const { t } = useTranslation();
   const timeZone = useServerTimezone();
+  const [workerId, setWorkerId] = useState<string>();
   const [detailRun, setDetailRun] = useState<string>();
   const [category, setCategory] = useState<QueueCategory>("unreviewed_success");
   const [data, setData] = useState<Queue>();
@@ -71,8 +85,10 @@ function QueueSession({
     setData(undefined);
     setDetailRun(undefined);
     try {
-      const result = await runQueueApi.read(organizationId, category, before);
-      if (!validRunQueue(result, organizationId, category, before))
+      const result = workerId
+        ? await runQueueApi.read(organizationId, category, before, workerId)
+        : await runQueueApi.read(organizationId, category, before);
+      if (!validRunQueue(result, organizationId, category, before, workerId))
         throw new Error("Invalid queue");
       if (seq === sequence.current) setData(result);
     } catch {
@@ -106,6 +122,33 @@ function QueueSession({
         <Alert type="warning" message={t("runQueue.forbidden")} />
       ) : (
         <>
+          {workers.length > 0 && (
+            <>
+              <select
+                aria-label={t("runQueue.worker")}
+                value={workerId ?? ""}
+                onChange={(event) => {
+                  sequence.current++;
+                  busy.current = false;
+                  setLoading(false);
+                  setData(undefined);
+                  setDetailRun(undefined);
+                  setError(false);
+                  setWorkerId(event.target.value || undefined);
+                }}
+              >
+                <option value="">{t("runQueue.allWorkers")}</option>
+                {workers
+                  .filter((worker) => worker.organization_id === organizationId)
+                  .map((worker) => (
+                    <option key={worker.worker_id} value={worker.worker_id}>
+                      {worker.name} ({worker.worker_id})
+                    </option>
+                  ))}
+              </select>
+              <Typography.Text>{t("runQueue.workerScope")}</Typography.Text>
+            </>
+          )}
           <select
             aria-label={t("runQueue.category")}
             value={category}

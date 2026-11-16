@@ -99,3 +99,71 @@ it("ignores in-flight results after organization changes", async () => {
   await act(async () => resolve(result()));
   expect(screen.queryByText("r1")).toBeNull();
 });
+
+it("filters by the selected worker and discards previous in-flight results", async () => {
+  let resolve!: (value: Queue) => void;
+  vi.mocked(runQueueApi.read).mockImplementationOnce(
+    () =>
+      new Promise((r) => {
+        resolve = r;
+      }),
+  );
+  render(
+    <RunQueue
+      organizationId="o"
+      canManage
+      workers={[
+        { worker_id: "w", organization_id: "o", name: "Operations" },
+        {
+          worker_id: "foreign",
+          organization_id: "other",
+          name: "Other organization",
+        },
+      ]}
+    />,
+  );
+  expect(screen.queryByText(/Other organization/)).toBeNull();
+  load();
+  fireEvent.change(screen.getByRole("combobox", { name: "runQueue.worker" }), {
+    target: { value: "w" },
+  });
+  vi.mocked(runQueueApi.read).mockResolvedValueOnce({
+    ...result(),
+    worker_id: "w",
+    items: [{ ...result().items[0], run_id: "assigned-run" }],
+  });
+  load();
+  await screen.findByText("assigned-run");
+  expect(runQueueApi.read).toHaveBeenLastCalledWith(
+    "o",
+    "unreviewed_success",
+    undefined,
+    "w",
+  );
+  await act(async () => resolve(result()));
+  expect(screen.queryByText("r1")).toBeNull();
+  expect(screen.getByText("assigned-run")).toBeTruthy();
+});
+
+it("rejects a server response that ignores the worker filter", async () => {
+  render(
+    <RunQueue
+      organizationId="o"
+      canManage
+      workers={[{ worker_id: "w", organization_id: "o", name: "Operations" }]}
+    />,
+  );
+  fireEvent.change(screen.getByRole("combobox", { name: "runQueue.worker" }), {
+    target: { value: "w" },
+  });
+  load();
+  await screen.findByText("runQueue.error");
+  expect(screen.queryByText("r1")).toBeNull();
+  vi.mocked(runQueueApi.read).mockResolvedValueOnce({
+    ...result(),
+    worker_id: "w",
+  });
+  load();
+  await screen.findByText("r1");
+  expect(screen.queryByText("runQueue.error")).toBeNull();
+});

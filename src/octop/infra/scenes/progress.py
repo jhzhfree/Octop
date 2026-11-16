@@ -39,8 +39,18 @@ class OrganizationProgressService:
         }
 
     def queue(
-        self, organization_id: str, *, category: str, limit: int = 20, before: int | None = None
+        self,
+        organization_id: str,
+        *,
+        category: str,
+        limit: int = 20,
+        before: int | None = None,
+        worker_id: str | None = None,
     ) -> dict[str, Any]:
+        if worker_id is not None and (
+            not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 128
+        ):
+            raise ValueError("invalid worker filter")
         if category not in {
             "awaiting_approval",
             "queued",
@@ -58,11 +68,17 @@ class OrganizationProgressService:
         return {
             "organization_id": organization_id,
             "category": category,
+            "worker_id": worker_id,
             "as_of": int(time.time()),
             "execution_authorized": False,
             "persisted_state_may_lag": True,
             **self.repo.queue(
-                organization_id, self.user_id, category=category, limit=limit, before=before
+                organization_id,
+                self.user_id,
+                category=category,
+                limit=limit,
+                before=before,
+                worker_id=worker_id,
             ),
         }
 
