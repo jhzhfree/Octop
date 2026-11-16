@@ -660,7 +660,7 @@ async def test_schema_46_failure_rolls_back_column_fence_and_version(ingress):
         conn.execute("DROP TRIGGER fail_watermark_migration")
     run_migrations(e.db)
     with e.db.connect() as conn:
-        assert conn.execute("SELECT version FROM _schema_version").fetchone()[0] == 47
+        assert conn.execute("SELECT version FROM _schema_version").fetchone()[0] == 48
         assert conn.execute("SELECT enabled FROM mattermost_brokers").fetchone()[0] == 0
 
 

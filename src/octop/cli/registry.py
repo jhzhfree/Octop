@@ -7,7 +7,7 @@ COMMANDS: dict[str, tuple[str, str, str]] = {
     "mattermost-ingress": (
         ".commands.mattermost_ingress",
         "mattermost_ingress",
-        "Retire legacy SQLite intake identities before new-only admission.",
+        "Inspect or suspend legacy SQLite intake admission; resume is blocked.",
     ),
     "mattermost-instance": (
         ".commands.mattermost_instance",

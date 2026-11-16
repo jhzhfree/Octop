@@ -1,11 +1,16 @@
-"""Synthetic SQLite operator migration and actual isolated ASGI admission."""
+"""Regression of implicit retirement and unsafe mixed-version resumption.
+
+Archived repository modules are exact public development-branch source, loaded
+against synthetic databases; no old server or external service is launched.
+"""
 
 from __future__ import annotations
 
+import hashlib
 import json
+import runpy
 import sqlite3
-from concurrent.futures import ThreadPoolExecutor
-from threading import Barrier
+from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
@@ -15,21 +20,9 @@ from octop.infra.db.migrate import run_migrations
 from octop.infra.db.pool import SqlitePool
 from octop.infra.db.repos.mattermost_ingress import IntakeError
 from octop.infra.db.repos.mattermost_maintenance import MattermostMaintenanceRepo
-from tests.integration.test_mattermost_ingress import (
-    PATH,
-    cancellation,
-    send,
-)
-from tests.integration.test_mattermost_ingress import (
-    ingress as ingress,
-)
+from tests.integration.test_mattermost_ingress import PATH, send
+from tests.integration.test_mattermost_ingress import ingress as ingress
 from tests.integration.test_scene_execution_offline import scene_runtime as scene_runtime
-
-
-def disable(e):
-    with e.db.transaction() as conn:
-        conn.execute("UPDATE mattermost_brokers SET enabled=0")
-    return MattermostMaintenanceRepo(e.db)
 
 
 def rows(e, table):
@@ -37,138 +30,47 @@ def rows(e, table):
         return [dict(r) for r in conn.execute("SELECT * FROM " + table)]
 
 
+def archive(name):
+    path = Path(__file__).parents[1] / "fixtures" / name
+    if name == "mattermost_ingress_0e950452.py.txt":
+        assert (
+            hashlib.sha256(path.read_bytes()).hexdigest()
+            == "f17aaa5077ff45d0c9851f9a120bf574ee3cec0d55693c8ca1df118323be162b"
+        )
+    return runpy.run_path(str(path))
+
+
+def simulate_unsafe_47(e):
+    with e.db.transaction() as conn:
+        conn.execute("UPDATE _schema_version SET version=47")
+        conn.execute(
+            "INSERT INTO mattermost_retired_intakes VALUES(?, 'schema047_unknown_legacy_history', 0)",
+            (e.key,),
+        )
+        conn.execute("UPDATE mattermost_brokers SET enabled=1,revision=2")
+
+
 @pytest.mark.asyncio
-async def test_operator_cli_new_only_admission_and_compensating_suspend(ingress):
+@pytest.mark.parametrize("enabled", [0, 1])
+async def test_upgrade_never_permanently_retires_without_operator_consent(ingress, enabled):
     e = ingress
     assert (await send(e)).status_code == 201
     original = rows(e, "mattermost_intakes")
-    disable(e)
-    runner = CliRunner()
-    base = ["--database", str(e.db.path), "--broker", "fixture-broker"]
-    preview = runner.invoke(mattermost_ingress, [*base, "plan"])
-    assert preview.exit_code == 0, preview.output
-    plan = json.loads(preview.output)
-    assert plan["delivery_keys_to_retire"] == [e.key]
-    result = runner.invoke(
-        mattermost_ingress,
-        [
-            *base,
-            "retire-and-resume",
-            "--plan-digest",
-            plan["plan_digest"],
-            "--reason",
-            "Synthetic operator abandons old deliveries",
-        ],
-    )
-    assert result.exit_code == 0, result.output
-    resumed = json.loads(result.output)
-    assert resumed["revision"] == 2
-    assert rows(e, "mattermost_intakes") == original
-    assert len(rows(e, "mattermost_broker_nonces")) == 1
-    assert (await send(e)).status_code == 410
-    assert (await send(e, "GET", PATH + "/" + e.key)).status_code == 410
-    path, body, headers = cancellation(e)
-    assert (await send(e, "POST", path, body, headers)).status_code == 410
-    # New source identity, newly signed proof; old identity is never resurrected.
-    e.claims["intent"]["receipt"] = "f" * 64
-    new_proof = e.proof()
-    new_response = await send(e, body=new_proof)
-    assert new_response.status_code == 201, new_response.text
-    assert new_response.json()["execution_authorized"] is False
-    assert new_response.json()["delivery_key"] != e.key
-    rollback = runner.invoke(
-        mattermost_ingress,
-        [
-            *base,
-            "suspend",
-            "--revision",
-            "2",
-            "--reason",
-            "Synthetic operator compensates activation",
-        ],
-    )
-    assert rollback.exit_code == 0, rollback.output
-    assert (await send(e)).status_code == 401
-    assert len(rows(e, "mattermost_retired_intakes")) == 1
-    audit = [r for r in rows(e, "audit_log") if r["action"].startswith("mattermost.maintenance.")]
-    assert [r["actor"] for r in audit] == ["local-maintenance", "local-maintenance"]
-    assert json.loads(audit[0]["payload"])["plan_digest"] == plan["plan_digest"]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("mutation", ["mapping", "intake", "nonce", "permission"])
-async def test_stale_plan_or_revoked_acl_never_enables_broker(ingress, mutation):
-    e = ingress
-    assert (await send(e)).status_code == 201
-    repo = disable(e)
-    plan = repo.plan("fixture-broker")
     with e.db.transaction() as conn:
-        sql = {
-            "mapping": "UPDATE mattermost_brokers SET revision=2",
-            "intake": "UPDATE mattermost_intakes SET observed_source_version=10",
-            "nonce": "INSERT INTO mattermost_broker_nonces VALUES('fixture-broker','new-nonce',101)",
-            "permission": "UPDATE users SET disabled=1 WHERE id=1",
-        }[mutation]
-        conn.execute(sql)
-    with pytest.raises(IntakeError):
-        repo.retire_and_resume("fixture-broker", plan["plan_digest"], "Operator review reason", 102)
-    assert rows(e, "mattermost_brokers")[0]["enabled"] == 0
+        conn.execute("DROP TABLE mattermost_retired_intakes")
+        conn.execute("UPDATE _schema_version SET version=46")
+        conn.execute("UPDATE mattermost_brokers SET enabled=?", (enabled,))
+    run_migrations(e.db)
     assert rows(e, "mattermost_retired_intakes") == []
+    assert rows(e, "mattermost_intakes") == original
+    assert rows(e, "mattermost_brokers")[0]["enabled"] == enabled
+    assert rows(e, "_schema_version")[0]["version"] == 48
 
 
 @pytest.mark.asyncio
-async def test_resume_audit_failure_rolls_back_fences_and_enable(ingress):
+async def test_47_failure_rolls_back_empty_table_and_version(ingress):
     e = ingress
     assert (await send(e)).status_code == 201
-    repo = disable(e)
-    plan = repo.plan("fixture-broker")
-    with e.db.connect() as conn:
-        conn.execute(
-            "CREATE TRIGGER fail_maintenance BEFORE INSERT ON audit_log "
-            "WHEN NEW.action='mattermost.maintenance.retire_and_resume' "
-            "BEGIN SELECT RAISE(ABORT, 'injected'); END"
-        )
-    with pytest.raises(sqlite3.IntegrityError, match="injected"):
-        repo.retire_and_resume("fixture-broker", plan["plan_digest"], "Operator review reason", 102)
-    assert rows(e, "mattermost_brokers")[0]["enabled"] == 0
-    assert rows(e, "mattermost_retired_intakes") == []
-    assert repo.plan("fixture-broker")["plan_digest"] == plan["plan_digest"]
-
-
-@pytest.mark.asyncio
-async def test_cross_connection_same_plan_only_commits_once(ingress):
-    e = ingress
-    assert (await send(e)).status_code == 201
-    repo = disable(e)
-    plan = repo.plan("fixture-broker")
-    barrier = Barrier(2)
-
-    def resume(_):
-        db = SqlitePool(e.db.path)
-        try:
-            barrier.wait(timeout=10)
-            try:
-                MattermostMaintenanceRepo(db).retire_and_resume(
-                    "fixture-broker", plan["plan_digest"], "Operator review reason", 102
-                )
-                return "resumed"
-            except IntakeError as exc:
-                return exc.code
-        finally:
-            db.close()
-
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        outcomes = list(pool.map(resume, (1, 2)))
-    assert outcomes.count("resumed") == 1
-    assert len(rows(e, "mattermost_retired_intakes")) == 1
-    assert rows(e, "mattermost_brokers")[0]["revision"] == 2
-
-
-@pytest.mark.asyncio
-async def test_schema_47_fences_disabled_history_atomically(ingress):
-    e = ingress
-    assert (await send(e)).status_code == 201
-    disable(e)
     with e.db.transaction() as conn:
         conn.execute("DROP TABLE mattermost_retired_intakes")
         conn.execute("UPDATE _schema_version SET version=46")
@@ -186,44 +88,152 @@ async def test_schema_47_fences_disabled_history_atomically(ingress):
         assert conn.execute("SELECT version FROM _schema_version").fetchone()[0] == 46
         conn.execute("DROP TRIGGER fail47")
     run_migrations(e.db)
-    assert rows(e, "mattermost_retired_intakes")[0]["delivery_key"] == e.key
-    # Even a manual enabled toggle cannot reopen the quarantined identity.
-    with e.db.transaction() as conn:
-        conn.execute("UPDATE mattermost_brokers SET enabled=1")
-    assert (await send(e)).status_code == 410
+    assert rows(e, "mattermost_retired_intakes") == []
 
 
 @pytest.mark.asyncio
-async def test_resume_invalidates_inflight_mapping_and_retains_nonce_replay_guard(ingress):
-    e = ingress
-    headers = e.headers()
-    assert (await send(e, headers=headers)).status_code == 201
-    cached = e.repo.mapping("fixture-broker")
-    repo = disable(e)
-    repo.retire_and_resume(
-        "fixture-broker",
-        repo.plan("fixture-broker")["plan_digest"],
-        "Operator migration reason",
-        102,
-    )
-    with pytest.raises(IntakeError, match="BROKER_AUTHORITY_CHANGED"):
-        e.repo.inspect(cached, e.key)
-    assert (await send(e, headers=headers)).status_code == 409
-
-
-@pytest.mark.asyncio
-async def test_suspend_failure_keeps_previous_commit_and_permanent_fence(ingress):
+async def test_archived_receiver_bypasses_fence_but_48_disabled_guard_blocks_it(ingress):
     e = ingress
     assert (await send(e)).status_code == 201
-    repo = disable(e)
-    repo.retire_and_resume(
-        "fixture-broker",
-        repo.plan("fixture-broker")["plan_digest"],
-        "Operator migration reason",
-        102,
+    legacy = archive("mattermost_ingress_0e950452.py.txt")
+    old_db = SqlitePool(e.db.path)
+    old = legacy["MattermostIngressRepo"](old_db)
+    try:
+        simulate_unsafe_47(e)
+        cached = old.mapping("fixture-broker")
+        old_row = old.inspect(cached, e.key)
+        assert old_row["delivery_key"] == e.key
+        assert (await send(e, "GET", PATH + "/" + e.key)).status_code == 410
+        # Keep the old connection and cached mapping alive across the repair.
+        run_migrations(e.db)
+        assert rows(e, "mattermost_brokers")[0]["enabled"] == 0
+        assert rows(e, "mattermost_brokers")[0]["revision"] == 3
+        with pytest.raises(legacy["IntakeError"], match="BROKER_UNAUTHENTICATED"):
+            old.mapping("fixture-broker")
+        with pytest.raises(legacy["IntakeError"], match="BROKER_AUTHORITY_CHANGED"):
+            old.inspect(cached, e.key)
+        with pytest.raises(legacy["IntakeError"], match="BROKER_AUTHORITY_CHANGED"):
+            old.accept(cached, old_row, issued=100, expires=200, clock=lambda: 101)
+        with pytest.raises(legacy["IntakeError"], match="BROKER_AUTHORITY_CHANGED"):
+            old.cancel(cached, old_row, 1, "op", 10, lambda: 101)
+        with pytest.raises(legacy["IntakeError"], match="BROKER_AUTHORITY_CHANGED"):
+            old.consume_nonce(cached, "unconsumed", 100, lambda: 101)
+        assert (await send(e, "GET", PATH + "/" + e.key)).status_code == 401
+        assert len(rows(e, "mattermost_retired_intakes")) == 1
+    finally:
+        old_db.close()
+
+
+@pytest.mark.asyncio
+async def test_current_and_archived_maintenance_cannot_resume_after_repair(ingress):
+    e = ingress
+    assert (await send(e)).status_code == 201
+    simulate_unsafe_47(e)
+    run_migrations(e.db)
+    before = {
+        name: rows(e, name)
+        for name in (
+            "mattermost_brokers",
+            "mattermost_intakes",
+            "mattermost_retired_intakes",
+            "audit_log",
+        )
+    }
+    repo = MattermostMaintenanceRepo(e.db)
+    plan = repo.plan("fixture-broker")
+    with pytest.raises(IntakeError, match="MAINTENANCE_PROCESS_ISOLATION_UNPROVEN"):
+        repo.retire_and_resume(
+            "fixture-broker", plan["plan_digest"], "Operator says old processes stopped", 102
+        )
+    old_db = SqlitePool(e.db.path)
+    try:
+        old = archive("mattermost_maintenance_c590d088.py.txt")["MattermostMaintenanceRepo"](old_db)
+        with pytest.raises(IntakeError, match="MAINTENANCE_SCHEMA_REQUIRED"):
+            old.retire_and_resume(
+                "fixture-broker", plan["plan_digest"], "Operator review reason", 102
+            )
+    finally:
+        old_db.close()
+    assert before == {name: rows(e, name) for name in before}
+
+
+@pytest.mark.asyncio
+async def test_cli_plan_is_diagnostic_and_resume_refuses_without_side_effects(ingress):
+    e = ingress
+    assert (await send(e)).status_code == 201
+    with e.db.transaction() as conn:
+        conn.execute("UPDATE mattermost_brokers SET enabled=0")
+    runner = CliRunner()
+    base = ["--database", str(e.db.path), "--broker", "fixture-broker"]
+    plan_result = runner.invoke(mattermost_ingress, [*base, "plan"])
+    assert plan_result.exit_code == 0, plan_result.output
+    plan = json.loads(plan_result.output)
+    assert plan["policy"] == "resume_blocked_process_isolation_unproven"
+    assert plan["delivery_keys"] == [e.key]
+    before = rows(e, "audit_log")
+    result = runner.invoke(
+        mattermost_ingress,
+        [
+            *base,
+            "retire-and-resume",
+            "--plan-digest",
+            plan["plan_digest"],
+            "--reason",
+            "Operator explicitly confirms retirement",
+        ],
     )
-    with pytest.raises(IntakeError, match="MAINTENANCE_REVISION_CHANGED"):
-        repo.suspend("fixture-broker", 1, "Operator rollback reason", 103)
+    assert result.exit_code != 0
+    assert "MAINTENANCE_PROCESS_ISOLATION_UNPROVEN" in result.output
+    assert rows(e, "mattermost_retired_intakes") == []
+    assert rows(e, "mattermost_brokers")[0]["enabled"] == 0
+    assert rows(e, "audit_log") == before
+    status = runner.invoke(mattermost_ingress, [*base, "status"])
+    assert status.exit_code == 0
+    assert json.loads(status.output)["enabled"] == 0
+
+
+@pytest.mark.asyncio
+async def test_48_repair_failure_rolls_back_and_retry_disables(ingress):
+    e = ingress
+    assert (await send(e)).status_code == 201
+    simulate_unsafe_47(e)
+    with e.db.connect() as conn:
+        conn.execute(
+            "CREATE TRIGGER fail48 BEFORE UPDATE ON _schema_version "
+            "WHEN NEW.version=48 BEGIN SELECT RAISE(ABORT, 'injected'); END"
+        )
+    before = rows(e, "audit_log")
+    with pytest.raises(sqlite3.IntegrityError, match="injected"):
+        run_migrations(e.db)
+    assert rows(e, "_schema_version")[0]["version"] == 47
+    assert rows(e, "mattermost_brokers")[0]["enabled"] == 1
+    assert rows(e, "audit_log") == before
+    with e.db.connect() as conn:
+        conn.execute("DROP TRIGGER fail48")
+    run_migrations(e.db)
+    assert rows(e, "mattermost_brokers")[0]["enabled"] == 0
+    repair = [
+        r for r in rows(e, "audit_log") if r["action"] == "mattermost.maintenance.resume_blocked"
+    ]
+    assert len(repair) == 1 and repair[0]["actor"] == "schema-migration"
+    run_migrations(e.db)
+    assert (
+        len(
+            [
+                r
+                for r in rows(e, "audit_log")
+                if r["action"] == "mattermost.maintenance.resume_blocked"
+            ]
+        )
+        == 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_suspend_remains_audited_and_transactional(ingress):
+    e = ingress
+    assert (await send(e)).status_code == 201
+    repo = MattermostMaintenanceRepo(e.db)
     with e.db.connect() as conn:
         conn.execute(
             "CREATE TRIGGER fail_suspend BEFORE INSERT ON audit_log "
@@ -231,120 +241,96 @@ async def test_suspend_failure_keeps_previous_commit_and_permanent_fence(ingress
             "BEGIN SELECT RAISE(ABORT, 'injected'); END"
         )
     with pytest.raises(sqlite3.IntegrityError, match="injected"):
-        repo.suspend("fixture-broker", 2, "Operator rollback reason", 103)
+        repo.suspend("fixture-broker", 1, "Operator stops unsafe admission", 102)
     assert rows(e, "mattermost_brokers")[0]["enabled"] == 1
-    assert len(rows(e, "mattermost_retired_intakes")) == 1
-    assert (await send(e)).status_code == 410
+    with e.db.connect() as conn:
+        conn.execute("DROP TRIGGER fail_suspend")
+    result = repo.suspend("fixture-broker", 1, "Operator stops unsafe admission", 102)
+    assert result["enabled"] is False
+    assert rows(e, "mattermost_retired_intakes") == []
+    assert (
+        repo.status("fixture-broker")["maintenance_events"][0]["action"]
+        == "mattermost.maintenance.suspended"
+    )
+
+
+def _legacy_reader_process(database, key, reports, commands):
+    import socket
+
+    def deny_network(*args, **kwargs):
+        raise AssertionError("synthetic legacy reader must stay offline")
+
+    for name in ("connect", "connect_ex", "sendto"):
+        setattr(socket.socket, name, deny_network)
+    socket.getaddrinfo = deny_network
+    legacy = archive("mattermost_ingress_0e950452.py.txt")
+    db = SqlitePool(Path(database))
+    try:
+        repo = legacy["MattermostIngressRepo"](db)
+        cached = repo.mapping("fixture-broker")
+        reports.send(repo.inspect(cached, key)["delivery_key"])
+        assert commands.poll(15)
+        assert commands.recv() == "migrated"
+        errors = []
+        for read in (lambda: repo.inspect(cached, key), lambda: repo.mapping("fixture-broker")):
+            try:
+                read()
+                errors.append("UNEXPECTED_ACCESS")
+            except legacy["IntakeError"] as exc:
+                errors.append(exc.code)
+        reports.send(errors)
+    finally:
+        db.close()
+        reports.close()
+        commands.close()
 
 
 @pytest.mark.asyncio
-async def test_exhausted_nonce_capacity_is_not_reset_by_migration(ingress):
+async def test_live_separate_old_process_loses_cached_and_fresh_access_after_48(ingress):
+    import multiprocessing
+
     e = ingress
     assert (await send(e)).status_code == 201
-    repo = disable(e)
+    simulate_unsafe_47(e)
+    context = multiprocessing.get_context("spawn")
+    receive, child_send = context.Pipe(duplex=False)
+    child_receive, send_command = context.Pipe(duplex=False)
+    process = context.Process(
+        target=_legacy_reader_process,
+        args=(str(e.db.path), e.key, child_send, child_receive),
+    )
+    process.start()
+    child_send.close()
+    child_receive.close()
+    try:
+        assert receive.poll(15), "legacy reader did not start"
+        assert receive.recv() == e.key
+        run_migrations(e.db)
+        send_command.send("migrated")
+        assert receive.poll(15), "legacy reader did not finish"
+        assert receive.recv() == ["BROKER_AUTHORITY_CHANGED", "BROKER_UNAUTHENTICATED"]
+        process.join(timeout=5)
+        assert process.exitcode == 0
+    finally:
+        if process.is_alive():
+            process.terminate()
+            process.join(timeout=5)
+        receive.close()
+        send_command.close()
+
+
+@pytest.mark.asyncio
+async def test_48_fences_historical_resume_without_creating_retirement(ingress):
+    e = ingress
+    assert (await send(e)).status_code == 201
     with e.db.transaction() as conn:
-        conn.executemany(
-            "INSERT INTO mattermost_broker_nonces VALUES('fixture-broker',?,101)",
-            [(str(n),) for n in range(4095)],
+        conn.execute("UPDATE _schema_version SET version=47")
+        conn.execute(
+            "INSERT INTO audit_log(ts,actor,action,target,payload) VALUES(101, 'local-maintenance', 'mattermost.maintenance.retire_and_resume','fixture-broker','{}')"
         )
-    with pytest.raises(IntakeError, match="MAINTENANCE_CAPACITY_EXHAUSTED"):
-        repo.retire_and_resume(
-            "fixture-broker",
-            repo.plan("fixture-broker")["plan_digest"],
-            "Operator migration reason",
-            102,
-        )
-    assert rows(e, "mattermost_brokers")[0]["enabled"] == 0
-    assert len(rows(e, "mattermost_broker_nonces")) == 4096
-
-
-@pytest.mark.asyncio
-async def test_lost_cli_acknowledgement_keeps_auditable_committed_fence(ingress, monkeypatch):
-    from octop.cli.commands import mattermost_ingress as command
-
-    e = ingress
-    assert (await send(e)).status_code == 201
-    repo = disable(e)
-    plan = repo.plan("fixture-broker")
-    original = command.maintain_broker
-
-    def lost_ack(**kwargs):
-        original(**kwargs)
-        raise OSError("simulated lost acknowledgement")
-
-    monkeypatch.setattr(command, "maintain_broker", lost_ack)
-    result = CliRunner().invoke(
-        mattermost_ingress,
-        [
-            "--database",
-            str(e.db.path),
-            "--broker",
-            "fixture-broker",
-            "retire-and-resume",
-            "--plan-digest",
-            plan["plan_digest"],
-            "--reason",
-            "Operator migration reason",
-        ],
-    )
-    assert result.exit_code != 0
-    assert "CHECK_LOCAL_AUDIT" in result.output
-    assert rows(e, "mattermost_brokers")[0]["enabled"] == 1
-    assert len(rows(e, "mattermost_retired_intakes")) == 1
-    assert any(
-        r["action"] == "mattermost.maintenance.retire_and_resume" for r in rows(e, "audit_log")
-    )
-    assert (await send(e)).status_code == 410
-
-
-@pytest.mark.asyncio
-async def test_status_reconciles_resume_without_exposing_keys(ingress):
-    e = ingress
-    assert (await send(e)).status_code == 201
-    repo = disable(e)
-    plan = repo.plan("fixture-broker")
-    repo.retire_and_resume("fixture-broker", plan["plan_digest"], "Operator migration reason", 102)
-    result = CliRunner().invoke(
-        mattermost_ingress, ["--database", str(e.db.path), "--broker", "fixture-broker", "status"]
-    )
-    assert result.exit_code == 0, result.output
-    status = json.loads(result.output)
-    assert status["enabled"] == 1 and status["revision"] == 2
-    assert status["maintenance_events"][0]["payload"]["plan_digest"] == plan["plan_digest"]
-    assert "public_key" not in result.output and "receipt" not in result.output
-
-
-@pytest.mark.asyncio
-async def test_schema_47_preserves_enabled_broker_known_history(ingress):
-    e = ingress
-    assert (await send(e)).status_code == 201
-    e.state["version"] = 10
-    assert (await send(e)).status_code == 200
-    with e.db.transaction() as conn:
-        conn.execute("DROP TABLE mattermost_retired_intakes")
-        conn.execute("UPDATE _schema_version SET version=46")
     run_migrations(e.db)
     assert rows(e, "mattermost_retired_intakes") == []
-    response = await send(e, "GET", PATH + "/" + e.key)
-    assert response.status_code == 200
-    assert response.json()["source_version"] == "10"
-
-
-@pytest.mark.asyncio
-async def test_missing_or_incorrect_review_and_schema_cannot_enable(ingress):
-    e = ingress
-    assert (await send(e)).status_code == 201
-    repo = disable(e)
-    plan = repo.plan("fixture-broker")
-    with pytest.raises(IntakeError, match="MAINTENANCE_PLAN_CHANGED"):
-        repo.retire_and_resume("fixture-broker", "bad-digest", "Operator migration reason", 102)
-    with pytest.raises(IntakeError, match="MAINTENANCE_REASON_REQUIRED"):
-        repo.retire_and_resume("fixture-broker", plan["plan_digest"], "", 102)
-    with e.db.transaction() as conn:
-        conn.execute("UPDATE _schema_version SET version=46")
-    with pytest.raises(IntakeError, match="MAINTENANCE_SCHEMA_REQUIRED"):
-        repo.retire_and_resume(
-            "fixture-broker", plan["plan_digest"], "Operator migration reason", 102
-        )
     assert rows(e, "mattermost_brokers")[0]["enabled"] == 0
-    assert rows(e, "mattermost_retired_intakes") == []
+    assert (await send(e)).status_code == 401
+    status = MattermostMaintenanceRepo(e.db).status("fixture-broker")
+    assert status["maintenance_events"][0]["action"] == "mattermost.maintenance.resume_blocked"

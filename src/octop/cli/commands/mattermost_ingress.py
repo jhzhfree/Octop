@@ -18,7 +18,7 @@ from octop.infra.digital_workers.mattermost_maintenance import IntakeError, main
 @click.option("--broker", required=True)
 @click.pass_context
 def mattermost_ingress(ctx: click.Context, database: Path, broker: str) -> None:
-    """Retire unknown old intake histories before resuming new-only admission.
+    """Inspect legacy intake histories or suspend admission. Resume is blocked.
 
     Requires local database write authority. Does not mount a production receiver.
     """
@@ -39,7 +39,7 @@ def _run(ctx: click.Context, **kwargs: Any) -> None:
 @mattermost_ingress.command("plan")
 @click.pass_context
 def plan(ctx: click.Context) -> None:
-    """Show exact deliveries to permanently retire and a compare-and-swap digest."""
+    """Inspect retained histories; the digest does not authorize retirement or resume."""
     _run(ctx, action="plan")
 
 
@@ -48,7 +48,7 @@ def plan(ctx: click.Context) -> None:
 @click.option("--reason", required=True)
 @click.pass_context
 def resume(ctx: click.Context, plan_digest: str, reason: str) -> None:
-    """Permanently fence the reviewed deliveries; enable only new identities."""
+    """Unavailable: old-process isolation cannot be established. Always refuses."""
     _run(ctx, action="retire-and-resume", digest=plan_digest, reason=reason)
 
 

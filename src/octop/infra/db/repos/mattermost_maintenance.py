@@ -1,4 +1,4 @@
-"""Local SQLite operator migration: retire old identities, admit only new deliveries."""
+"""Local SQLite maintenance diagnostics and suspension; resumption is blocked."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import json
 from typing import Any
 
 from octop.infra.db.pool import DatabasePool
-from octop.infra.db.repos.mattermost_ingress import IntakeError, MattermostIngressRepo
+from octop.infra.db.repos.mattermost_ingress import IntakeError
 
 
 class MattermostMaintenanceRepo:
@@ -18,7 +18,7 @@ class MattermostMaintenanceRepo:
 
     @staticmethod
     def _snapshot(conn: Any, broker: str) -> tuple[dict[str, Any], dict[str, Any]]:
-        if conn.execute("SELECT version FROM _schema_version").fetchone()[0] != 47:
+        if conn.execute("SELECT version FROM _schema_version").fetchone()[0] != 48:
             raise IntakeError(409, "MAINTENANCE_SCHEMA_REQUIRED")
         row = conn.execute(
             "SELECT * FROM mattermost_brokers WHERE broker_id=?", (broker,)
@@ -55,11 +55,11 @@ class MattermostMaintenanceRepo:
             "revision": mapping["revision"],
             "organization_id": mapping["organization_id"],
             "worker_id": mapping["worker_id"],
-            "delivery_keys_to_retire": [r["delivery_key"] for r in rows],
+            "delivery_keys": [r["delivery_key"] for r in rows],
             "already_retired": retired,
             "retained_nonces": nonce_count,
             "plan_digest": hashlib.sha256(material.encode()).hexdigest(),
-            "policy": "permanently_retire_all_existing_deliveries_then_enable_new_only",
+            "policy": "resume_blocked_process_isolation_unproven",
             "execution_authorized": False,
         }
         return mapping, plan
@@ -80,7 +80,8 @@ class MattermostMaintenanceRepo:
                 {"ts": r[0], "action": r[1], "payload": json.loads(r[2])}
                 for r in conn.execute(
                     "SELECT ts,action,payload FROM audit_log WHERE target=? "
-                    "AND actor='local-maintenance' AND action LIKE 'mattermost.maintenance.%' "
+                    "AND actor IN ('local-maintenance','schema-migration') "
+                    "AND action LIKE 'mattermost.maintenance.%' "
                     "ORDER BY id DESC LIMIT 20",
                     (broker,),
                 )
@@ -101,33 +102,12 @@ class MattermostMaintenanceRepo:
         )
 
     def retire_and_resume(self, broker: str, digest: str, reason: str, now: int) -> dict[str, Any]:
-        """OS database access is authority, not an asserted web user or broker identity."""
-        if not 8 <= len(reason.strip()) <= 512:
-            raise IntakeError(422, "MAINTENANCE_REASON_REQUIRED")
-        with self.db.transaction() as conn:
-            mapping, plan = self._snapshot(conn, broker)
-            if digest != plan["plan_digest"]:
-                raise IntakeError(409, "MAINTENANCE_PLAN_CHANGED")
-            if len(plan["delivery_keys_to_retire"]) >= 128 or plan["retained_nonces"] >= 4096:
-                raise IntakeError(409, "MAINTENANCE_CAPACITY_EXHAUSTED")
-            for key in plan["delivery_keys_to_retire"]:
-                conn.execute(
-                    "INSERT INTO mattermost_retired_intakes VALUES(?,?,?) ON CONFLICT(delivery_key) DO NOTHING",
-                    (key, reason.strip(), now),
-                )
-            conn.execute(
-                "UPDATE mattermost_brokers SET enabled=1,revision=revision+1 WHERE broker_id=?",
-                (broker,),
-            )
-            current = mapping | {"enabled": 1, "revision": mapping["revision"] + 1}
-            MattermostIngressRepo(self.db)._authorize(conn, current)
-            result = plan | {
-                "revision": current["revision"],
-                "enabled": True,
-                "reason": reason.strip(),
-            }
-            self._audit(conn, broker, "retire_and_resume", result, now)
-            return result
+        """No cooperative revision or local flag proves old readers are isolated.
+
+        Keep this legacy entry point fail-closed, including direct callers. Do
+        not retire records, enable the broker, or claim any plan was applied.
+        """
+        raise IntakeError(409, "MAINTENANCE_PROCESS_ISOLATION_UNPROVEN")
 
     def suspend(self, broker: str, revision: int, reason: str, now: int) -> dict[str, Any]:
         """Compensate by disabling admission; never erase permanent identity fences."""

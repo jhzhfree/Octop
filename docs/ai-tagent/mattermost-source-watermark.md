@@ -45,4 +45,4 @@ PostgreSQL 有配对 SQL 并使用已有迁移事务，但本轮未运行真实 
 现有 nonce/intake 容量仍有硬上限且无安全回收流程，本轮未新增管理诊断界面。
 这项修复不构成 1.0 发布批准。
 
-后续提供可选的[人工放弃旧投递迁移路径](mattermost-legacy-migration.md)，不重建未知高水位。
+后续[旧 broker 迁移安全修正](mattermost-legacy-migration.md)：原启用方案已撤回；不能证明旧进程隔离时禁止 resume，不重建未知高水位。
