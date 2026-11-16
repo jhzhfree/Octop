@@ -2027,6 +2027,10 @@ def _apply_sqlite_migration(db: DatabasePool, version: int, path: Path) -> None:
         # TABLE steps that cannot be safely repeated after partial commits. SQLite
         # executescript otherwise autocommits each statement in this pool.
         with db.connect() as conn:
+            # executescript commits an existing transaction before running SQL.
+            # Reject outside the rollback handler: the transaction is caller-owned.
+            if conn.in_transaction:
+                raise RuntimeError("DATABASE_MIGRATION_TRANSACTION_ACTIVE")
             try:
                 conn.executescript(
                     "BEGIN IMMEDIATE;\n" + path.read_text(encoding="utf-8") + "\nCOMMIT;"
@@ -2281,6 +2285,10 @@ def _grant_default_nav_permissions(db: DatabasePool) -> None:
 
 
 def run_migrations(db: DatabasePool) -> None:
+    if db.dialect == "sqlite":
+        with db.connect() as conn:
+            if conn.in_transaction:
+                raise RuntimeError("DATABASE_MIGRATION_TRANSACTION_ACTIVE")
     # Unknown newer schemas must not be repaired or clamped by this binary.
     current = _current_version(db)
     if current > schema_baseline_version(db.dialect):

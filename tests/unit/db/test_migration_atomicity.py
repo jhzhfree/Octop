@@ -97,3 +97,37 @@ def test_reader_never_sees_new_ddl_with_old_watermark(before_script, version):
             conn.create_function("observe_upgrade", 0, None)
     finally:
         reader.close()
+
+
+@pytest.mark.parametrize("version", [35, 49])
+@pytest.mark.parametrize("entry", ["script", "runner"])
+@pytest.mark.parametrize("begin", ["BEGIN IMMEDIATE", "SAVEPOINT caller_owned"])
+def test_outer_transaction_is_neither_committed_nor_rolled_back(
+    before_script, version, entry, begin, monkeypatch
+):
+    db = before_script
+    path = next(path for number, path in migrate._discover("sqlite") if number == version)
+    reader = SqlitePool(db.path)
+    try:
+        with db.connect() as conn:
+            conn.execute("CREATE TABLE caller_probe(value TEXT)")
+            conn.execute(begin)
+            conn.execute("INSERT INTO caller_probe VALUES('uncommitted synthetic write')")
+            if entry == "runner":
+                monkeypatch.setattr(
+                    migrate, "_repair_legacy_schema", lambda *_: pytest.fail("repair must not run")
+                )
+            with pytest.raises(RuntimeError, match="DATABASE_MIGRATION_TRANSACTION_ACTIVE"):
+                if entry == "runner":
+                    migrate.run_migrations(db)
+                else:
+                    migrate._apply_sqlite_migration(db, version, path)
+            assert conn.in_transaction
+            assert conn.execute("SELECT COUNT(*) FROM caller_probe").fetchone()[0] == 1
+            assert conn.execute("SELECT version FROM _schema_version").fetchone()[0] == version - 1
+            with reader.connect() as other:
+                assert other.execute("SELECT COUNT(*) FROM caller_probe").fetchone()[0] == 0
+            conn.rollback()
+            assert conn.execute("SELECT COUNT(*) FROM caller_probe").fetchone()[0] == 0
+    finally:
+        reader.close()

@@ -10,10 +10,13 @@
 
 **AI-TAgent 企业场景仍处于开发阶段，尚不满足 1.0 发布条件。**
 当前开发分支为 `feature/akb-octop-litellm-dev`；本轮开始核对的远端提交为
-`b37981a0f598382e757292bc2ec24fab77463e01`。后续提交以 Git 实际记录为准，
+`b5421e3f791b20b3f7c74fdf7c2f3a8e27be7429`。后续提交以 Git 实际记录为准，
 本文件不是发布批准，也不授权生产操作、合并、部署或外部消息发送。
 
-本轮修复[SQLite 升级部分提交](ai-tagent/sqlite-upgrade-atomicity.md)：032–049 纯 SQL 脚本
+本轮补齐 SQLite 迁移外层事务拒绝：在修复及 executescript 前检查已有事务，
+拒绝执行且不提交/回滚调用方写入；不支持嵌套或整个升级单一事务。
+
+前一阶段修复[SQLite 升级部分提交](ai-tagent/sqlite-upgrade-atomicity.md)：032–049 纯 SQL 脚本
 按单脚本事务提交，失败回滚结构及版本，避免重启后重复列阻断。既存半升级库不自动修复。
 
 前一阶段完成[整体交付核验](ai-tagent/delivery-verification-2026-11-16.md)：独立非 editable 安装、

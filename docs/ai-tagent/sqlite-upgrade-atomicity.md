@@ -34,3 +34,17 @@ schema 编号、用户数据口径或 PostgreSQL 路径。早期兼容迁移助�
 - fresh-install 包含明确启用 OCTOP_TEST_DELIVERY_HTTP=1 的真实回环 HTTP 主路径和同进程服务 stop/start；Agent/模型和巡检上游仍是替身，没有真实外部调用。
 - 未测试断电/磁盘硬件故障、PostgreSQL、Windows、生产部署或既存半升级业务库。未运行受限遥测或完整 make all。没有前端修改，不重复前端构建。
 - make lint-all typecheck-all 通过，mypy 检查 674 源文件；最终修改文件 Ruff 检查及格式检查通过。已有 lint 警告保留，无新增依赖。
+
+## 外层事务入口保护
+
+后续审查确认：sqlite3.executescript 在执行脚本前会提交已有事务，即使脚本后来失败，
+调用方先前的写入也已落盘。正常启动目前没有外层事务，但不能让复用入口依赖这个假设。
+run_migrations 的 SQLite 入口现在在任何兼容修复前检查 in_transaction；032–049
+脚本执行点在持有连接锁、进入自身异常回滚处理前再次检查。有外层事务或 SAVEPOINT 时
+抛出 DATABASE_MIGRATION_TRANSACTION_ACTIVE，不提交、不回滚调用方数据。
+
+新增 035/049、公开 runner/脚本入口、BEGIN IMMEDIATE/SAVEPOINT 组合回归：调用被拒，
+外层事务仍有效，独立连接看不到未提交写入，调用方可正常回滚。此策略明确拒绝嵌套，
+不把整个升级序列包装为一个事务，也不承诺同连接被其他线程任意并发操作时的安全性。
+本轮迁移原子性、schema guard 和 setup database 共 43 项通过；make lint-all
+ typecheck-all 通过（mypy 674 文件）。未运行完整受限门禁或 PG；无前端变更，未重复构建。
