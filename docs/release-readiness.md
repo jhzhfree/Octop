@@ -10,10 +10,14 @@
 
 **AI-TAgent 企业场景仍处于开发阶段，尚不满足 1.0 发布条件。**
 当前开发分支为 `feature/akb-octop-litellm-dev`；本轮开始核对的远端提交为
-`adb042c41bcd08c23604b75a22549f2835096752`。后续提交以 Git 实际记录为准，
+`c9fd4021c47a8a06733a6787434fc7c60cbce91e`。后续提交以 Git 实际记录为准，
 本文件不是发布批准，也不授权生产操作、合并、部署或外部消息发送。
 
-本轮交付[要求修改后的巡检修订向导](ai-tagent/inspection-revision.md)：从原运行快照创建
+本轮交付[堡垒机适配离线回执契约](ai-tagent/bastion-adapter-contract.md)：审查现有
+身份/MCP/巡检连接点，校验作用域与回执并生成明确未验证的预览；不新增联网执行器，
+没有可信员工外部身份映射或真实堡垒机接线。
+
+前一阶段交付[要求修改后的巡检修订向导](ai-tagent/inspection-revision.md)：从原运行快照创建
 独立草稿，重新选择来源并申请独立审批；隔离验证第二次验收与原决定并存。
 
 前一阶段交付[人工验收反馈闭环](ai-tagent/acceptance-feedback.md)：验收人填写不可覆盖
