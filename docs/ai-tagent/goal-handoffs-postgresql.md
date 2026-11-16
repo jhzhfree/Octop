@@ -26,6 +26,7 @@ SQLite 路径继续使用 BEGIN IMMEDIATE；PG 不假设它具有同样的全库
 3. 同一组织、认证账号与请求键映射到事务级 advisory lock。它只串行同键交接，
    哈希碰撞仅带来额外等待；唯一约束与请求内容指纹仍是最终数据约束。
 4. 对认证用户及需要的组织成员行加 SHARE 锁；按员工 ID 顺序锁住两端员工行。
+   后续修复要求预锁实际返回两端 ID，否则拒绝，避免 READ COMMITTED 下使用晚插入的未锁员工。
    源目标 UPDATE 行锁保护版本比较，接收岗位/Agent 与任命行 SHARE 锁保护授权和状态读取。
    普通 SQL 撤权/暂停写入也受这些行锁约束，不依赖其他代码遵守 advisory 协议。
 5. 同事务写入源版本、接收草稿、来源记录和审计。相同键/内容重试返回既有记录并查询当前接收状态；
@@ -84,3 +85,7 @@ OCTOP_TEST_DATABASE_DISPOSABLE=1 UV_OFFLINE=1 uv run pytest \
 `octop_test_handoffs` 合成库，再运行上述测试命令。禁止把测试 URL 换成已有业务库。
 
 本轮未修改 bubblewrap 或浏览器沙箱；原有沙箱限制仍不属于本次解除范围。
+
+后续完整 HTTP 路径及晚插入员工锁窗口的实际复现、修复和验证，见
+[PostgreSQL 回环 HTTP 企业巡检验收](postgresql-http-delivery.md)。本文件上面的 22 项是前一阶段结果，
+不能将其当作已覆盖后来发现的插入窗口；后续阶段补充了对应回归。

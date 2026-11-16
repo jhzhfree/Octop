@@ -10,10 +10,13 @@
 
 **AI-TAgent 企业场景仍处于开发阶段，尚不满足 1.0 发布条件。**
 当前开发分支为 `feature/akb-octop-litellm-dev`；本轮开始核对的远端提交为
-`3ee4cf15849a070bf3868295348df74c09585fa2`。后续提交以 Git 实际记录为准，
+`da97359c7bcd62301ab14e7e95f77818bd7752f0`。后续提交以 Git 实际记录为准，
 本文件不是发布批准，也不授权生产操作、合并、部署或外部消息发送。
 
-本轮完成[PostgreSQL 岗位交接隔离验证](ai-tagent/goal-handoffs-postgresql.md)，
+本轮推进[PostgreSQL 回环 HTTP 企业巡检验收](ai-tagent/postgresql-http-delivery.md)，
+并修复真实 PG 复现的晚创建员工逃过预锁窗口。仍不等于生产或真实外部系统验收。
+
+前一阶段完成[PostgreSQL 岗位交接隔离验证](ai-tagent/goal-handoffs-postgresql.md)，
 开放 READ COMMITTED 下的交接创建，复用现有 schema 050 与事务池。
 这不是全产品 PostgreSQL、生产部署或外部系统联调验收。
 

@@ -368,3 +368,163 @@ def test_pg_shorter_operator_timeouts_are_preserved_and_local_settings_reset(pg,
             assert c.execute("SHOW statement_timeout").fetchone()[0] == "1s"
     finally:
         other.close()
+
+
+def test_pg_worker_created_after_prelock_cannot_escape_worker_guard(pg, monkeypatch):
+    """Controlled READ COMMITTED phantom: missing worker appears between two SELECTs."""
+    from octop.infra.db.pool import _PgConnectionProxy
+
+    pool, service, goal, body, scoped = pg
+    with pool.transaction() as c:
+        c.execute("DELETE FROM digital_workers WHERE worker_id='w2'")
+    prelocked, resume, target_read, target_or_done, finish = (Event() for _ in range(5))
+    original = _PgConnectionProxy.execute
+
+    def execute(self, sql, params=None):
+        cursor = original(self, sql, params)
+        if sql.startswith("SELECT worker_id FROM digital_workers"):
+            prelocked.set()
+            assert resume.wait(5)
+        elif sql.startswith("SELECT w.*,p.title"):
+            target_read.set()
+            target_or_done.set()
+            assert finish.wait(5)
+        return cursor
+
+    monkeypatch.setattr(_PgConnectionProxy, "execute", execute)
+    other = PostgresPool(scoped)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(service.create_handoff, "o", "w1", goal, body)
+            future.add_done_callback(lambda _: target_or_done.set())
+            try:
+                assert prelocked.wait(5)
+                with other.transaction() as c:
+                    c.execute(
+                        "INSERT INTO digital_workers(worker_id,organization_id,position_id,agent_id,owner_user_id,name,status,created_at,updated_at) VALUES('w2','o','p2','a2',1,'Late worker','active',1,1)"
+                    )
+                resume.set()
+                assert target_or_done.wait(5)
+                if target_read.is_set():
+                    with other.transaction() as c:
+                        c.execute("SET LOCAL lock_timeout = '200ms'")
+                        c.execute(
+                            "UPDATE digital_workers SET status='paused',version=version+1 WHERE worker_id='w2'"
+                        )
+            finally:
+                resume.set()
+                finish.set()
+            try:
+                outcome = future.result(timeout=5)
+            except DigitalWorkerError as exc:
+                outcome = exc.status
+            with pool.connect() as c:
+                current = c.execute(
+                    "SELECT status,version FROM digital_workers WHERE worker_id='w2'"
+                ).fetchone()
+                state = (current["status"], current["version"])
+                count = c.execute("SELECT count(*) FROM goal_handoffs").fetchone()[0]
+            assert outcome == 404, (
+                f"late worker handoff escaped lock: state={state}, records={count}, result={outcome}"
+            )
+            assert count == 0
+    finally:
+        resume.set()
+        finish.set()
+        other.close()
+
+
+def test_pg_opposite_direction_handoffs_use_compatible_worker_lock_order(pg):
+    pool, service, goal, body, scoped = pg
+    second = service.repos.digital_worker_repo.create_goal(
+        worker_id="w2",
+        title="Return review",
+        description="",
+        success_criteria="Evidence",
+        period_start=None,
+        period_end=None,
+        created_by=1,
+    )
+    service.repos.digital_worker_repo.update_goal(second["goal_id"], {"status": "active"})
+    barrier = Barrier(2)
+
+    def create(index):
+        other = PostgresPool(scoped)
+        try:
+            current = GoalHandoffService(RepoBundle.from_pool(other), User(1, "u1", "user", None))
+            barrier.wait(5)
+            return current.create_handoff(
+                "o",
+                "w1" if index == 0 else "w2",
+                goal if index == 0 else second["goal_id"],
+                {
+                    **body,
+                    "request_id": f"direction-{index}",
+                    "target_worker_id": "w2" if index == 0 else "w1",
+                },
+            )
+        finally:
+            other.close()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(create, range(2)))
+    assert len({r["handoff_id"] for r in results}) == 2
+    with pool.connect() as c:
+        assert c.execute("SELECT count(*) FROM goal_handoffs").fetchone()[0] == 2
+
+
+def test_pg_inverse_ordinary_writer_lock_order_cannot_leave_partial_handoff(pg, monkeypatch):
+    import psycopg
+
+    from octop.infra.db.pool import _PgConnectionProxy
+
+    pool, service, goal, body, scoped = pg
+    waiting_on_goal = Event()
+    original = _PgConnectionProxy.execute
+
+    def execute(self, sql, params=None):
+        if sql.startswith("SELECT g.*,w.name"):
+            waiting_on_goal.set()  # both worker SHARE locks have been acquired
+        return original(self, sql, params)
+
+    monkeypatch.setattr(_PgConnectionProxy, "execute", execute)
+    other = PostgresPool(scoped)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            try:
+                with other.transaction() as c:
+                    c.execute(
+                        "SELECT goal_id FROM digital_worker_goals WHERE goal_id=? FOR UPDATE",
+                        (goal,),
+                    ).fetchone()
+                    future = executor.submit(service.create_handoff, "o", "w1", goal, body)
+                    assert waiting_on_goal.wait(5)
+                    # Ordinary writer holds goal, then wants worker: inverse order.
+                    c.execute(
+                        "UPDATE digital_workers SET status='paused',version=version+1 WHERE worker_id='w2'"
+                    )
+            except (psycopg.errors.DeadlockDetected, psycopg.errors.LockNotAvailable):
+                pass  # PostgreSQL may choose either participant as the victim.
+            try:
+                result = future.result(timeout=6)
+            except DigitalWorkerError as exc:
+                assert exc.code == "GOAL_HANDOFF_BUSY"
+                result = None
+        with pool.connect() as c:
+            count = c.execute("SELECT count(*) FROM goal_handoffs").fetchone()[0]
+            goals = c.execute("SELECT count(*) FROM digital_worker_goals").fetchone()[0]
+            audits = c.execute(
+                "SELECT count(*) FROM audit_log WHERE action='digital_worker.goal_handoff'"
+            ).fetchone()[0]
+            source_version = c.execute(
+                "SELECT version FROM digital_worker_goals WHERE goal_id=?", (goal,)
+            ).fetchone()[0]
+            target_status = c.execute(
+                "SELECT status FROM digital_workers WHERE worker_id='w2'"
+            ).fetchone()[0]
+        if result is None:
+            assert (count, goals, audits, source_version, target_status) == (0, 1, 0, 2, "paused")
+        else:
+            assert (count, goals, audits, source_version, target_status) == (1, 2, 1, 3, "active")
+    finally:
+        other.close()

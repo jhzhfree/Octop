@@ -113,11 +113,18 @@ class GoalHandoffRepo:
                     raise HandoffError("conflict")
                 return self.decode(old)
             if pg:
-                conn.execute(
+                locked_workers = conn.execute(
                     "SELECT worker_id FROM digital_workers WHERE organization_id=? "
                     "AND worker_id IN (?,?) ORDER BY worker_id FOR SHARE",
                     (org, source_worker, request["target_worker_id"]),
                 ).fetchall()
+                # READ COMMITTED can see a later insert in the following query.
+                # Never use a worker that this statement did not actually lock.
+                if {row["worker_id"] for row in locked_workers} != {
+                    source_worker,
+                    request["target_worker_id"],
+                }:
+                    raise HandoffError("not_found")
             source = conn.execute(
                 "SELECT g.*,w.name AS worker_name,w.position_id,w.agent_id,w.status AS worker_status "
                 "FROM digital_worker_goals g JOIN digital_workers w ON w.worker_id=g.worker_id "

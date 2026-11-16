@@ -1,4 +1,4 @@
-"""Fresh SQLite through public ASGI APIs, deterministic read-only inspection.
+"""Fresh SQLite/PostgreSQL through public APIs, deterministic read-only inspection.
 
 No seeded users, organizations, plans, runs, evidence or acceptance states.
 Non-test network and telemetry are disabled; one case uses a real loopback
@@ -11,7 +11,9 @@ import os
 import re
 import socket
 import time
+import uuid
 from contextlib import asynccontextmanager
+from urllib.parse import quote
 
 import httpx
 import pytest
@@ -20,6 +22,72 @@ from octop.infra.setup.password_file import read_password
 from tests.support.app import octop_client
 from tests.support.auth import create_agent, seed_openai_provider
 from tests.support.loopback_http import loopback_http_client
+
+
+@pytest.fixture
+def pg_delivery_database(request):
+    """Only an explicitly opted-in, local disposable cluster; app is not superuser."""
+    if request.node.get_closest_marker("postgresql") is None:
+        yield None
+        return
+    url = os.environ.get("OCTOP_TEST_PG_DELIVERY_ADMIN")
+    if not url or os.environ.get("OCTOP_TEST_DATABASE_DISPOSABLE") != "1":
+        pytest.skip("requires local disposable PG delivery cluster opt-in")
+    import psycopg
+    from psycopg import sql
+    from psycopg.conninfo import conninfo_to_dict, make_conninfo
+
+    info = conninfo_to_dict(url)
+    host = info.get("host", "")
+    if not host.startswith("/") or "," in host or info.get("hostaddr"):
+        pytest.skip("PG delivery test only supports a local Unix socket, not remote databases")
+    database = "octop_test_delivery_" + uuid.uuid4().hex
+    role = "octop_delivery_" + uuid.uuid4().hex
+    # Dedicated cluster administrator creates empty test DB, never application rows.
+    with psycopg.connect(url, autocommit=True) as admin:
+        admin.execute(
+            sql.SQL("CREATE ROLE {} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE").format(
+                sql.Identifier(role)
+            )
+        )
+        try:
+            admin.execute(
+                sql.SQL("CREATE DATABASE {} OWNER {}").format(
+                    sql.Identifier(database), sql.Identifier(role)
+                )
+            )
+            try:
+                scoped = make_conninfo(
+                    host=host,
+                    port=info.get("port", "5432"),
+                    dbname=database,
+                    user=role,
+                    connect_timeout=3,
+                )
+                with psycopg.connect(scoped) as check:
+                    assert check.execute(
+                        "SELECT rolsuper,rolcreatedb,rolcreaterole FROM pg_roles WHERE rolname=current_user"
+                    ).fetchone() == (False, False, False)
+                    assert (
+                        check.execute(
+                            "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'"
+                        ).fetchone()[0]
+                        == 0
+                    )
+                yield {
+                    "driver": "postgresql",
+                    "host": host,
+                    "port": int(info.get("port", 5432)),
+                    "database": database,
+                    "user": role,
+                    "url": f"postgresql://{role}@{quote(host, safe='')}/{database}?connect_timeout=3",
+                }
+            finally:
+                admin.execute(
+                    sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(database))
+                )
+        finally:
+            admin.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(role)))
 
 
 @pytest.mark.asyncio
@@ -38,10 +106,23 @@ from tests.support.loopback_http import loopback_http_client
                 reason="delivery HTTP check requires built dashboard; set OCTOP_TEST_DELIVERY_HTTP=1",
             ),
         ),
+        pytest.param(
+            "accepted", False, True, marks=pytest.mark.postgresql, id="postgresql-loopback"
+        ),
+        pytest.param(
+            "changes_requested",
+            False,
+            True,
+            marks=pytest.mark.postgresql,
+            id="postgresql-revision-loopback",
+        ),
+        pytest.param(
+            "accepted", True, True, marks=pytest.mark.postgresql, id="postgresql-failure-loopback"
+        ),
     ],
 )
-async def test_fresh_sqlite_inspection_delivery_via_http(
-    tmp_path, monkeypatch, decision, after_failure, wire_http
+async def test_fresh_inspection_delivery_via_http(
+    tmp_path, monkeypatch, decision, after_failure, wire_http, pg_delivery_database
 ):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
@@ -93,7 +174,7 @@ async def test_fresh_sqlite_inspection_delivery_via_http(
             r = await c.request(
                 method, "/api" + path, json=body, headers=auth if headers is None else headers
             )
-            assert r.status_code == code, r.text
+            assert r.status_code == code, f"{method} {path}: {r.text}"
             return r.json()
 
         if wire_http:
@@ -113,7 +194,12 @@ async def test_fresh_sqlite_inspection_delivery_via_http(
         tok = (await req("POST", "/setup/verify-password", {"password": read_password(tmp_path)}))[
             "wizard_token"
         ]
-        await req("POST", "/setup/database", {"driver": "sqlite", "sqlite_path": "fresh.db"})
+        await req(
+            "POST",
+            "/setup/database",
+            pg_delivery_database or {"driver": "sqlite", "sqlite_path": "fresh.db"},
+        )
+        assert s.services.db.dialect == ("postgresql" if pg_delivery_database else "sqlite")
         wh = {"Authorization": "Bearer " + tok}
         await req(
             "POST",
@@ -644,7 +730,7 @@ async def test_fresh_sqlite_inspection_delivery_via_http(
             headers = {"Authorization": "Bearer " + login.json()["access_token"]}
             saved = await reopened.get("/api" + rp + "/acceptance/review", headers=headers)
             assert saved.status_code == 200, saved.text
-            assert saved.json()["acceptance"]["decision"] == "accepted"
+            assert saved.json()["acceptance"]["decision"] == decision
             assert saved.json()["evidence_sha256"] == review["evidence_sha256"]
             progress = await reopened.get(
                 "/api"
@@ -654,5 +740,5 @@ async def test_fresh_sqlite_inspection_delivery_via_http(
             )
             assert progress.status_code == 200
             assert progress.json()["counts"]["delivery"]["accepted"] == 1
-            assert len(calls) == 1
+            assert len(calls) == (2 if decision == "changes_requested" else 1)
             assert restarted.database_bound
