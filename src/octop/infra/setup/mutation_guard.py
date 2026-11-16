@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import stat
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
@@ -19,7 +20,18 @@ from octop.infra.errors import ErrorCode, OctopError
 
 @contextmanager
 def setup_mutation_guard(server: Any) -> Iterator[None]:
-    path = server.paths.root.resolve() / ".setup-mutation-lock"
+    root = server.paths.root.resolve()
+    config_path = root / "config.json"
+    config_stat = config_path.lstat()
+    if (
+        not stat.S_ISREG(config_stat.st_mode)
+        or config_stat.st_nlink != 1
+        or config_path.resolve() != config_path
+    ):
+        raise OctopError(
+            ErrorCode.SETUP_REQUIRED, "setup requires a private, unaliased config file", status=409
+        )
+    path = root / ".setup-mutation-lock"
     if path.resolve() != path:
         raise OctopError(ErrorCode.SETUP_REQUIRED, "unsafe setup lock path", status=409)
     path, expected = prepare_sqlite_path(path)

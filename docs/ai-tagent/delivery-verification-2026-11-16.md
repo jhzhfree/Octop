@@ -195,3 +195,42 @@ uv run pytest tests/unit/infra/setup/test_mutation_guard.py \
 启动后快照及异常传播语义修正；最终无失败。`make lint-all typecheck-all` 通过
 （mypy 676 个源文件），Ruff 和 diff 检查通过。没有前端源码变更，未重复构建；未跑
 全量 make all、受限遥测、PG、真实模型/AKB/堡垒机/Mattermost 或生产部署。
+
+## 首次配置发布竞争与配置别名（基线 8452272b）
+
+独立审查发现启动本身也会写配置：进程 B 在“配置不存在”后暂停，A 完成默认配置
+加载并持有 setup guard 写 chosen.db，B 恢复 `write_text` 会覆盖为默认 octop.db。
+本轮用真实 spawn 子进程执行 load_config、在默认发布前暂停复现，修复前测试失败。
+这是同版本正常启动路径缺口，不能归因于手工写文件或旧版本。
+
+load_config 现在通过同目录独占临时文件写入完整 JSON，flush/fsync 后使用不覆盖
+目标的硬链接原子发布；若 EEXIST 则重读竞争赢家。不会使用陈旧 exists 结果覆盖文件。
+仅自己的未被修改默认值保留首次延迟绑定语义；竞争者写入的数据库配置原样解析。
+普通异常清理临时文件；发布前进程终止可能留下未引用的临时文件，但不暴露半截
+config.json，后续启动仍能创建配置。不提供断电持久性或目录 fsync 的验证承诺。
+文件系统必须支持同目录硬链接；不支持时失败关闭，不回退覆盖写入。新默认配置
+沿用临时文件的私有权限（POSIX 0600），既有配置权限不重写。
+
+配置别名策略：config.json 文件符号链接不再支持，load_config 拒绝并且不改目标；
+向导 guard 也拒绝非普通文件、符号链接和多硬链接配置，防止不同 home 的两把锁
+被误当作对共享配置互斥。整个 home 的目录符号链接仍归一到同一锁。已有文件别名
+部署必须由管理员在停服下准备各自私有配置，不能把普通复制当作数据库迁移或安全
+恢复方案；本轮不自动转换、不改用户数据。不能抵御同 UID 主动路径替换。
+
+测试覆盖：持 setup guard 的 A 与延迟首次创建 B、两个同时首次创建者、发布前
+terminate、fsync/link 故障清理与重试、配置文件符号链接拒绝、跨 home 共享文件
+别名拒绝及 home 目录别名互斥。仅合成临时文件，没有读取真实配置凭据。
+
+本轮关闭遥测、使用 uv 离线缓存执行：
+
+```sh
+uv run pytest tests/unit/test_config_creation.py tests/unit/test_config.py \
+  tests/unit/infra/setup/test_mutation_guard.py tests/integration/test_setup_database.py \
+  tests/integration/test_setup_wizard.py tests/integration/test_setup_bootstrap.py -q
+```
+
+**147 passed**，最终无失败，既有依赖弃用警告保留。未运行完整 make all、受限遥测、
+真实 PostgreSQL、Windows、网络文件系统、断电或生产部署。
+
+本轮 `make lint-all typecheck-all` 通过（mypy 676 个源文件），Ruff 和 diff 检查通过。
+无前端变更，未重复构建。

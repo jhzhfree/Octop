@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import tempfile
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -428,35 +429,70 @@ def env_bind_overrides() -> tuple[str | None, int | None]:
     return host, port
 
 
-def load_config(path: Path) -> OctopConfig:
-    """Load ``config.json``; write defaults if absent. Apply env overrides.
+def _publish_default_config(path: Path, defaults: dict[str, Any]) -> bool:
+    """Publish a complete sibling file without ever replacing a competing writer."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Exclusive staging creation plus same-filesystem hard-link publication:
+    # readers never see partially written JSON, and EEXIST means reread winner.
+    # Unsupported filesystems fail closed rather than falling back to overwrite.
+    staging: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            dir=path.parent,
+            delete=False,
+        ) as output:
+            staging = output.name
+            json.dump(defaults, output, indent=2)
+            output.flush()
+            os.fsync(output.fileno())
+        try:
+            os.link(staging, path)
+        except FileExistsError:
+            return False
+        return True
+    finally:
+        if staging is not None:
+            Path(staging).unlink(missing_ok=True)
 
-    A corrupt file raises with the path and parser position named, and is never
-    treated as empty: this is the same policy as ``infra/utils/json_file.py``,
-    duplicated here because ``octop.config`` must stay free of ``infra`` imports
-    (AGENTS.md §5). The message never echoes file contents — they hold database
-    credentials.
+
+def load_config(path: Path) -> OctopConfig:
+    """Load config, publishing defaults atomically only if still absent.
+
+    A competing creator wins without being overwritten. Corrupt files fail
+    closed and errors never echo contents (which can contain credentials).
+    File symlinks are unsupported; directory aliases remain supported.
     """
     file_defaults = _defaults_for_file()
-    if path.exists():
-        try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
+    created = False
+    if path.is_symlink():
+        raise ValueError("config.json file symlinks are unsupported; use a private config file")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        created = _publish_default_config(path, file_defaults)
+        if path.is_symlink():
             raise ValueError(
-                f"{path} is not valid JSON (line {exc.lineno}, column {exc.colno});"
-                " fix it and retry — no settings were changed"
-            ) from exc
-        if not isinstance(raw, dict):
-            raise ValueError(
-                f"{path} must contain a JSON object, got {type(raw).__name__};"
-                " fix it and retry — no settings were changed"
-            )
-        database_in_file = "database" in raw
-    else:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(file_defaults, indent=2), encoding="utf-8")
-        raw = {}
-        database_in_file = False
+                "config.json file symlinks are unsupported; use a private config file"
+            ) from None
+        text = path.read_text(encoding="utf-8")
+    try:
+        raw = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"{path} is not valid JSON (line {exc.lineno}, column {exc.colno});"
+            " fix it and retry — no settings were changed"
+        ) from exc
+    if not isinstance(raw, dict):
+        raise ValueError(
+            f"{path} must contain a JSON object, got {type(raw).__name__};"
+            " fix it and retry — no settings were changed"
+        )
+    # Preserve first-install deferred binding only for our own unchanged defaults.
+    database_in_file = "database" in raw and not (created and raw == file_defaults)
 
     merged = {**file_defaults, **raw}
     # Legacy key: prefer default_timezone when both are present in the file.

@@ -94,3 +94,41 @@ def test_failed_mutation_releases_lock_without_changing_config(tmp_path):
         raise OSError("injected")
     with setup_mutation_guard(loaded):
         assert loaded.paths.config.read_bytes() == before
+
+
+@pytest.mark.parametrize("kind", ["symlink", "hardlink"])
+def test_cross_home_shared_config_is_rejected(tmp_path, kind):
+    import os
+
+    first_home, second_home = tmp_path / "first", tmp_path / "second"
+    first = server(first_home)
+    second_home.mkdir()
+    shared = second_home / "config.json"
+    try:
+        if kind == "symlink":
+            shared.symlink_to(first.paths.config)
+        else:
+            os.link(first.paths.config, shared)
+    except OSError:
+        pytest.skip("filesystem link unavailable")
+    second = SimpleNamespace(paths=PathLayout(second_home), config=first.config, services=None)
+    before = first.paths.config.read_bytes()
+    with pytest.raises(OctopError, match="private, unaliased"), setup_mutation_guard(second):
+        pytest.fail("shared configuration accepted")
+    assert first.paths.config.read_bytes() == before
+
+
+def test_home_directory_alias_uses_same_lock(tmp_path):
+    loaded = server(tmp_path / "real")
+    alias = tmp_path / "alias"
+    try:
+        alias.symlink_to(loaded.paths.root, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks unavailable")
+    other = SimpleNamespace(paths=PathLayout(alias), config=loaded.config, services=None)
+    with (
+        setup_mutation_guard(loaded),
+        pytest.raises(OctopError, match="operation in progress"),
+        setup_mutation_guard(other),
+    ):
+        pytest.fail("directory alias bypassed lock")
