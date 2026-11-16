@@ -1,13 +1,17 @@
 """Fresh SQLite through public ASGI APIs, deterministic read-only inspection.
 
 No seeded users, organizations, plans, runs, evidence or acceptance states.
-Network and telemetry are disabled. Only the inspection HTTP response and LLM
+Non-test network and telemetry are disabled; one case uses a real loopback
+Uvicorn listener and serves the built dashboard. Only the inspection HTTP response and LLM
 harness are substitutes; model invocation itself is prohibited for this mode.
 """
 
 import asyncio
+import os
+import re
 import socket
 import time
+from contextlib import asynccontextmanager
 
 import httpx
 import pytest
@@ -15,20 +19,37 @@ import pytest
 from octop.infra.setup.password_file import read_password
 from tests.support.app import octop_client
 from tests.support.auth import create_agent, seed_openai_provider
+from tests.support.loopback_http import loopback_http_client
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("decision", "after_failure"),
-    [("accepted", False), ("changes_requested", False), ("accepted", True)],
+    ("decision", "after_failure", "wire_http"),
+    [
+        ("accepted", False, False),
+        ("changes_requested", False, False),
+        ("accepted", True, False),
+        pytest.param(
+            "accepted",
+            False,
+            True,
+            marks=pytest.mark.skipif(
+                os.environ.get("OCTOP_TEST_DELIVERY_HTTP") != "1",
+                reason="delivery HTTP check requires built dashboard; set OCTOP_TEST_DELIVERY_HTTP=1",
+            ),
+        ),
+    ],
 )
 async def test_fresh_sqlite_inspection_delivery_via_http(
-    tmp_path, monkeypatch, decision, after_failure
+    tmp_path, monkeypatch, decision, after_failure, wire_http
 ):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setenv("LANGFUSE_TRACING_ENABLED", "false")
     monkeypatch.setenv("OTEL_SDK_DISABLED", "true")
+
+    original_connect = socket.socket.connect
+    original_getaddrinfo = socket.getaddrinfo
 
     def denied(*a, **k):
         raise AssertionError("OUTBOUND SOCKET FORBIDDEN")
@@ -53,7 +74,19 @@ async def test_fresh_sqlite_inspection_delivery_via_http(
     monkeypatch.setattr(FakeHarnessAgent, "stream", forbidden_model)
     home = tmp_path / ".octop"
     home.mkdir()
-    async with octop_client(home, bind_database=False) as (c, s):
+
+    @asynccontextmanager
+    async def delivery_client():
+        async with octop_client(home, bind_database=False) as (asgi, server):
+            if not wire_http:
+                yield asgi, server
+            else:
+                async with loopback_http_client(
+                    asgi._octop_app, monkeypatch, original_connect, original_getaddrinfo
+                ) as client:
+                    yield client, server
+
+    async with delivery_client() as (c, s):
         auth = {}
 
         async def req(method, path, body=None, headers=None, code=200):
@@ -63,6 +96,15 @@ async def test_fresh_sqlite_inspection_delivery_via_http(
             assert r.status_code == code, r.text
             return r.json()
 
+        if wire_http:
+            page = await c.get("/")
+            assert page.status_code == 200 and '<div id="root">' in page.text
+            assets = re.findall(r'(?:src|href)="(/assets/[^"]+)"', page.text)
+            assert assets, "build the dashboard before the HTTP delivery test"
+            for asset in assets:
+                response = await c.get(asset)
+                assert response.status_code == 200 and len(response.content) > 0
+                assert "text/html" not in response.headers.get("content-type", "")
         assert not s.database_bound
         await req("GET", "/setup/status")
         tok = (await req("POST", "/setup/verify-password", {"password": read_password(tmp_path)}))[
@@ -471,3 +513,33 @@ async def test_fresh_sqlite_inspection_delivery_via_http(
             )
             assert (await req("GET", next_path + "/acceptance"))["decision"] == "accepted"
             assert await req("GET", rp + "/acceptance") == original_feedback
+
+    if wire_http:
+        # Reopen the same temporary installation after full server shutdown.
+        # Undo only the synthetic inspection transport, keeping outbound guards.
+        monkeypatch.setattr(httpx, "AsyncClient", original)
+        async with (
+            octop_client(home) as (asgi, restarted),
+            loopback_http_client(
+                asgi._octop_app, monkeypatch, original_connect, original_getaddrinfo
+            ) as reopened,
+        ):
+            login = await reopened.post(
+                "/api/auth/login", json={"username": "reviewer", "password": "TestPass12"}
+            )
+            assert login.status_code == 200
+            headers = {"Authorization": "Bearer " + login.json()["access_token"]}
+            saved = await reopened.get("/api" + rp + "/acceptance/review", headers=headers)
+            assert saved.status_code == 200, saved.text
+            assert saved.json()["acceptance"]["decision"] == "accepted"
+            assert saved.json()["evidence_sha256"] == review["evidence_sha256"]
+            progress = await reopened.get(
+                "/api"
+                + op
+                + f"/progress?start={int(time.time()) - 60}&end={int(time.time()) + 60}",
+                headers=headers,
+            )
+            assert progress.status_code == 200
+            assert progress.json()["counts"]["delivery"]["accepted"] == 1
+            assert len(calls) == 1
+            assert restarted.database_bound

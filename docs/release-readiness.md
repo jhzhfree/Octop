@@ -10,10 +10,14 @@
 
 **AI-TAgent 企业场景仍处于开发阶段，尚不满足 1.0 发布条件。**
 当前开发分支为 `feature/akb-octop-litellm-dev`；本轮开始核对的远端提交为
-`6270de216c3b742d717443893aa496af38d175f9`。后续提交以 Git 实际记录为准，
+`521dd2bf7690a9851df5b3f7640f4e6c00a327f1`。后续提交以 Git 实际记录为准，
 本文件不是发布批准，也不授权生产操作、合并、部署或外部消息发送。
 
-本轮修复[进展统计旧状态恢复](ai-tagent/organization-progress.md)：访问检测失效或身份/权限变化后
+本轮完成[整体交付核验](ai-tagent/delivery-verification-2026-11-16.md)：独立非 editable 安装、
+实际回环 HTTP 主路径、前端构建资源交付与正常服务重启读取已验证。
+Agent/模型与巡检上游仍是替身，未完成浏览器点击、真实外部服务或生产部署验收。
+
+前一阶段修复[进展统计旧状态恢复](ai-tagent/organization-progress.md)：访问检测失效或身份/权限变化后
 销毁统计会话，恢复权限时必须重新读取，迟到响应不恢复旧数据。统计仍可能滞后，不代表目标完成。
 
 前一阶段修复[AKB 检索结果交付边界](ai-tagent/akb-retrieval-delivery-boundary.md)：
