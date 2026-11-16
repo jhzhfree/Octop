@@ -106,6 +106,9 @@ async def test_fresh_sqlite_inspection_delivery_via_http(
                 assert response.status_code == 200 and len(response.content) > 0
                 assert "text/html" not in response.headers.get("content-type", "")
         assert not s.database_bound
+        # Liveness is available even before setup; it is not model readiness.
+        health = await req("GET", "/health")
+        assert health["ok"] is True and health["db"] is False
         await req("GET", "/setup/status")
         tok = (await req("POST", "/setup/verify-password", {"password": read_password(tmp_path)}))[
             "wizard_token"
@@ -120,6 +123,8 @@ async def test_fresh_sqlite_inspection_delivery_via_http(
             code=201,
         )
         await req("POST", "/setup/finish", {"provider_draft": None}, headers=wh)
+        health = await req("GET", "/health")
+        assert health["ok"] is True and health["db"] is True
         auth = {
             "Authorization": "Bearer "
             + (await req("POST", "/auth/login", {"username": "admin", "password": "TestPass12"}))[

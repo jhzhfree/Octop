@@ -77,3 +77,37 @@ TCP 参数；交付核验必须显式设置 OCTOP_TEST_DELIVERY_HTTP=1，缺少�
 - make lint-all typecheck-all 通过（mypy 674 源文件），最终修改测试文件 Ruff 检查/格式检查通过。中途一处嵌套 async-with 风格检查已修正。
 - NODE_ENV=production NODE_OPTIONS=--max-old-space-size=2048 npm run build 通过；保留既有 ESLint、构建体积、Browserslist 和库弃用提示。
 - 本轮测试没有未修复失败。未运行项不能计为通过，详见上表和阻断条件；没有真实模型、AKB、堡垒机、Mattermost 联调结果。
+
+## 安装与健康检查复核（基线 99ca4679，2026-11-16）
+
+本轮确认并修复服务管理探针的误报：此前任何 HTTP 200 且可解析 JSON 的响应
+（包括 `{"ok": false}`、空对象、数组）都返回健康。现在要求对象中的 `ok` 严格为
+布尔 `true`；错误状态码、非 JSON、连接失败和否定响应返回失败，保留现有有界重试。
+成功详情明确仅是 liveness，未检查模型和对接 readiness。`/api/health` 的响应结构不变，
+OpenAPI 描述明确不测试依赖；无数据库的安装向导仍可存活，不用模型缺失阻断配置入口。
+
+配置提示审查：
+
+- ModelStep 与 `wizard.model.intro` 已提示模型用于助手回复，可跳过并稍后配置。
+  本轮实际 HTTP/ASGI 用 `provider_draft: null` 完成安装；健康成功并不证明模型可调用。
+- KnowledgeMappings 的 `knowledgeMappings.boundary` 已明确检索未启用、映射/快照不等于
+  AKB 授权、逐用户 ACL 未验证。知识库不是基础安装必须项，知识辅助场景仍需单独验收。
+- 企业方案 readiness 仅是本地只读观察，`execution_authorized=false`；Mattermost 本地
+  预览与未挂载的入站接收不等于真实对接。这些边界没有因健康探针成功而开放。
+- 未新增一个声称统一证明外部依赖可用的仪表板，未尝试远端连通性或读取真实凭据。
+
+验证：新增探针测试在修复前 6 failed / 4 passed，复现误报及缺少范围提示；修复后
+`uv run pytest tests/unit/infra/setup/test_health_probe.py tests/unit/infra/setup/test_service.py
+tests/unit/cli/test_service_cmd.py -q` 为 66 passed。带 `OCTOP_TEST_DELIVERY_HTTP=1` 的
+既有 fresh-install 测试为 4 passed，新增断言确认安装前 db=false、无模型完成安装后
+db=true 均仅表示 liveness；包含真实回环 HTTP，harness 与采集仍为替身。
+
+安装失败定向回归覆盖 provider 保存故障、初始管理员插入回滚及默认 Agent 引导失败后
+重启保持关闭；失败后的管理员恢复操作仍需要现有管理路径，不宣称自动完成安装。
+本轮没有重新构建安装包、浏览器点击或更改服务管理器；未验证真实模型/AKB/堡垒机/
+Mattermost、PG、生产部署及受限遥测。
+
+上述三个安装失败定向测试均通过（3 passed）；本轮总计 73 passed。
+`UV_CACHE_DIR=/tmp/octop-uv-cache UV_OFFLINE=1 make lint-all typecheck-all` 通过
+（mypy 675 个源文件，既有 ESLint 警告保留）。无前端源码变动，未重复生产构建；
+未运行全量 make all 或受限遥测测试。

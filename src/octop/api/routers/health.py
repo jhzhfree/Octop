@@ -11,9 +11,13 @@ from octop.api.deps import get_server
 router = APIRouter()
 
 
-@router.get("", summary="Health check")
+@router.get("", summary="Liveness check (not model or integration readiness)")
 async def health(server: Any = Depends(get_server)) -> dict[str, Any]:
-    """Liveness probe: database reachability, user count, and loaded agents. No auth required."""
+    """Liveness with database binding and loaded counts, not dependency probes.
+
+    No auth required. An ok response also permits an unfinished setup with no
+    model. It does not verify model inference, knowledge access or integrations.
+    """
     bound = server.database_bound
     users = server.user_manager.count() if server.user_manager is not None else 0
     agents = (

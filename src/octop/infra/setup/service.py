@@ -846,7 +846,10 @@ def probe_health(host: str, port: int) -> tuple[bool, str]:
     try:
         response = httpx.get(url, timeout=3)
         response.raise_for_status()
-        return True, str(response.json())
+        payload = response.json()
+        if not isinstance(payload, dict) or payload.get("ok") is not True:
+            return False, "health response did not acknowledge liveness (ok=true)"
+        return True, f"Liveness only; model and integration readiness not checked: {payload}"
     except Exception as exc:  # noqa: BLE001 - health probe should swallow any failure
         return False, str(exc)
 
