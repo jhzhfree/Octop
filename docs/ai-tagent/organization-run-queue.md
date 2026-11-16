@@ -227,3 +227,27 @@ Validation:
 运行详情新增按需读取的[操作来源记录](operation-trace.md)，显示服务端记录的申请/审批/
 验收账号和绑定执行事件。账号身份不等于本人点击；旧记录没有 UI/API 交互来源，因此明确
 标为未记录。单次 Cron 不宣称周期自动化；本地发布批准也不宣称真实发送。
+
+## 2026-11-16：找回排队与被拒绝的申请
+
+基线 9420b510c327980c6acf24b77a2737a8e61cca05。原待办只列待审批、失败和交付验收
+分类，管理进度已有 queued/rejected 计数，但关闭审批详情后不能从该入口找回对应运行。
+现在增加 queued（已排队，状态可能滞后）和 rejected（申请已拒绝）两个显式分类，
+复用当前组织授权、倒序游标分页和同 run 详情。既有分类和默认选择不变，无数据库迁移。
+
+在组织页面选择对应分类并刷新，点击 run ID 打开原详情；已排队运行可以显式刷新当前
+状态。只读队列本身不触发状态同步、派发、重试或审批。queued 不证明当前正在执行；
+rejected 不代表任务执行失败，也不会通过查看而重新打开申请。需要新申请仍返回目标方案。
+异常地带有验收记录的排队/拒绝运行不进入该正常分类，进展汇总的不一致记录口径保持不变。
+
+前端验证分类与返回状态/decision 一致，切换分类清除详情；新分类打开不会读报告或调用
+审批。服务端验证跨组织隔离、普通成员拒绝、禁用用户/撤权、状态变化和不一致验收排除。
+ASGI 使用合成 SQLite，前端使用 jsdom/API 替身；不是实际机器或浏览器点击验收。
+
+本轮验证（2026-11-16）：
+
+- `uv run pytest tests/unit/scenes/test_progress.py tests/unit/i18n -q`：124 passed。
+- `OCTOP_TEST_DELIVERY_HTTP=1 LANGFUSE_TRACING_ENABLED=false OTEL_SDK_DISABLED=true uv run pytest tests/integration/test_fresh_install_inspection_delivery.py -q`：4 passed；包含真实回环 HTTP、合成巡检、人工验收与正常停止/重启持久化回归。采集和 harness 为替身，不证明模型或堡垒机可用。
+- Vitest 的 runQueue API、RunQueue、RunQueue.delivery、RunDetails、RunDetails.approval、OrganizationProgress 六个文件：43 passed。
+- `UV_CACHE_DIR=/tmp/octop-uv-cache UV_OFFLINE=1 make lint-all typecheck-all` 和 `NODE_ENV=production NODE_OPTIONS=--max-old-space-size=2048 npm run build` 均通过；mypy 675 个源文件。既有 ESLint/jsdom/构建体积警告仍在，无本轮失败。
+- 未运行全量 `make all` 或受限遥测测试；真实浏览器、PostgreSQL、模型、AKB、堡垒机、Mattermost 双服务及部署未验证。没有新增依赖、真实发送或恢复激活。

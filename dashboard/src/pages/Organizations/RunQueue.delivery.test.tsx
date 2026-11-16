@@ -366,3 +366,46 @@ it("approves from the awaiting queue and invalidates the old pending list", asyn
     "",
   );
 });
+
+it.each(["queued", "rejected"] as const)(
+  "opens %s from the queue without approval or report reads",
+  async (category) => {
+    vi.mocked(runQueueApi.read).mockResolvedValue({
+      organization_id: "o",
+      category,
+      as_of: 1,
+      items: [{ run_id: "r", status: category, created_at: 1, decision: null }],
+      next_before: null,
+      execution_authorized: false,
+      persisted_state_may_lag: true,
+    });
+    vi.mocked(runQueueApi.detail).mockResolvedValue({
+      organization_id: "o",
+      run_id: "r",
+      scene_id: "s",
+      scene_name: "Inspection",
+      scene_version: 1,
+      plan_id: "p",
+      status: category,
+      created_at: 1,
+      updated_at: 1,
+      decision: null,
+      as_of: 1,
+      persisted_state_may_lag: true,
+    });
+    render(<RunQueue organizationId="o" canManage />);
+    fireEvent.change(screen.getByRole("combobox"), {
+      target: { value: category },
+    });
+    await open();
+    expect(runQueueApi.read).toHaveBeenCalledWith("o", category, undefined);
+    expect(runQueueApi.detail).toHaveBeenCalledWith("o", "r");
+    expect(organizationsApi.decideSceneRun).not.toHaveBeenCalled();
+    expect(organizationsApi.sceneRunEvidence).not.toHaveBeenCalled();
+    expect(screen.queryByText(approvalMessages.en.open)).toBeNull();
+    fireEvent.change(screen.getByRole("combobox"), {
+      target: { value: "failed" },
+    });
+    expect(screen.queryByText("Inspection (v1)")).toBeNull();
+  },
+);

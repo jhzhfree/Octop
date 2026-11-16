@@ -42,3 +42,34 @@ it("requires a persisted human acceptance and successful execution", () => {
   expect(validRunQueue(accepted, "other", "accepted")).toBe(false);
   expect(validRunQueue(accepted, "o", "unreviewed_success")).toBe(false);
 });
+
+it.each(["queued", "rejected"] as const)(
+  "validates %s without inventing acceptance",
+  async (category) => {
+    const data: RunQueue = {
+      ...accepted,
+      category,
+      items: [{ ...accepted.items[0], status: category, decision: null }],
+    };
+    expect(validRunQueue(data, "o", category)).toBe(true);
+    expect(
+      validRunQueue(
+        { ...data, items: [{ ...data.items[0], decision: "accepted" }] },
+        "o",
+        category,
+      ),
+    ).toBe(false);
+    expect(
+      validRunQueue(
+        { ...data, items: [{ ...data.items[0], status: "succeeded" }] },
+        "o",
+        category,
+      ),
+    ).toBe(false);
+    await runQueueApi.read("o", category);
+    expect(request).toHaveBeenCalledWith(
+      `/organizations/o/run-queue?category=${category}&limit=20`,
+      { cache: "no-store" },
+    );
+  },
+);

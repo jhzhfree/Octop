@@ -43,6 +43,8 @@ class OrganizationProgressService:
     ) -> dict[str, Any]:
         if category not in {
             "awaiting_approval",
+            "queued",
+            "rejected",
             "failed",
             "unreviewed_success",
             "changes_requested",

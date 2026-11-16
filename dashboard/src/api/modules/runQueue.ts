@@ -2,6 +2,8 @@ import { request } from "../request";
 
 export const queueCategories = [
   "awaiting_approval",
+  "queued",
+  "rejected",
   "failed",
   "unreviewed_success",
   "changes_requested",
@@ -14,7 +16,12 @@ export interface RunQueue {
   as_of: number;
   items: {
     run_id: string;
-    status: "awaiting_approval" | "failed" | "succeeded";
+    status:
+      | "awaiting_approval"
+      | "queued"
+      | "rejected"
+      | "failed"
+      | "succeeded";
     created_at: number;
     decision: "accepted" | "changes_requested" | null;
   }[];
@@ -50,7 +57,10 @@ export function validRunQueue(
         !!item.run_id &&
         integer(item.created_at) &&
         item.status ===
-          (category === "awaiting_approval" || category === "failed"
+          (category === "awaiting_approval" ||
+          category === "queued" ||
+          category === "rejected" ||
+          category === "failed"
             ? category
             : "succeeded") &&
         item.decision ===

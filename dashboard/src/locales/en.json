@@ -7370,6 +7370,8 @@
     "empty": "No matching runs.",
     "error": "Queue unavailable: access denied or service unavailable.",
     "categories": {
+      "queued": "Queued (state may lag)",
+      "rejected": "Request rejected",
       "accepted": "Accepted by a human",
       "awaiting_approval": "Awaiting approval",
       "failed": "Execution failed",
@@ -7377,6 +7379,8 @@
       "changes_requested": "Delivery changes requested"
     },
     "actions": {
+      "queued": "Open the run and refresh its status. Queued does not confirm execution is in progress; nothing is dispatched again or retried automatically.",
+      "rejected": "Review the original run and operation trace. Return to the goal plans if a new request is needed; this does not reopen the rejected request.",
       "accepted": "Open this run to reread its report, human acceptance or existing publication preview. Preparing a preview remains in the scene run record. Accepted does not mean sent to Mattermost or goal completed.",
       "awaiting_approval": "Next: review the request in its scene run record. Requesters cannot approve their own request.",
       "failed": "Next: inspect the failure in its scene run record before deciding whether to request another run.",

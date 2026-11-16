@@ -85,6 +85,8 @@ class OrganizationProgressRepo:
         # Predicates are selected by the service, never interpolated from a request.
         predicates = {
             "awaiting_approval": "r.status='awaiting_approval' AND a.decision IS NULL",
+            "queued": "r.status='queued' AND a.decision IS NULL",
+            "rejected": "r.status='rejected' AND a.decision IS NULL",
             "failed": "r.status='failed' AND a.decision IS NULL",
             "unreviewed_success": "r.status='succeeded' AND a.decision IS NULL",
             "changes_requested": "r.status='succeeded' AND a.decision='changes_requested'",

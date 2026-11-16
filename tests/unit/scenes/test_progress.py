@@ -196,6 +196,8 @@ def test_queue_categories_and_no_side_effects(setup):
     db, _, service = setup
     expected = {
         "awaiting_approval": ["r6"],
+        "queued": ["r4"],
+        "rejected": ["r7"],
         "failed": ["r5"],
         "changes_requested": ["r2"],
         "accepted": ["r1"],
@@ -226,7 +228,7 @@ def test_queue_keyset_pagination_and_new_insert(setup):
     assert third["next_before"] is None
 
 
-@pytest.mark.parametrize("category", ["failed", "accepted"])
+@pytest.mark.parametrize("category", ["failed", "accepted", "queued", "rejected"])
 def test_queue_org_and_current_membership(setup, category):
     db, repo, service = setup
     with pytest.raises(ProgressAccessError):
@@ -254,7 +256,7 @@ def test_queue_invalid_arguments(setup, kwargs):
         setup[2].queue("o", **kwargs)
 
 
-@pytest.mark.parametrize("category", ["failed", "accepted"])
+@pytest.mark.parametrize("category", ["failed", "accepted", "queued", "rejected"])
 def test_queue_rechecks_disabled_admin_and_revocation(setup, monkeypatch, category):
     db, repo, service = setup
     with db.connect() as c:
@@ -301,6 +303,18 @@ def test_queue_http_contract(setup):
         for suffix in ["&limit=51", "&before=0", "&before=9223372036854775808"]:
             assert client.get(path + suffix).status_code == 422
         assert client.get(path.replace("unreviewed_success", "sent")).status_code == 422
+        for category, run_id in (("queued", "r4"), ("rejected", "r7")):
+            page = client.get(path.replace("unreviewed_success", category))
+            assert page.status_code == 200
+            assert page.headers["cache-control"] == "no-store"
+            assert page.json()["items"][0]["run_id"] == run_id
+            assert page.json()["items"][0]["status"] == category
+            assert (
+                client.get(
+                    path.replace("unreviewed_success", category).replace("/o/", "/other/")
+                ).status_code
+                == 403
+            )
         accepted = client.get(path.replace("unreviewed_success", "accepted"))
         assert accepted.status_code == 200
         assert accepted.headers["cache-control"] == "no-store"
@@ -488,3 +502,19 @@ def test_cross_connection_revocation_withholds_summary(setup, monkeypatch):
             service.inspect("o", start=100, end=107)
     finally:
         writer.close()
+
+
+@pytest.mark.parametrize("category,run_id", [("queued", "r4"), ("rejected", "r7")])
+def test_queue_new_categories_discard_invalid_acceptance_and_refresh_changes(
+    setup, category, run_id
+):
+    db, _, service = setup
+    assert [r["run_id"] for r in service.queue("o", category=category)["items"]] == [run_id]
+    with db.connect() as conn:
+        conn.execute("INSERT INTO scene_run_acceptances VALUES(?, 'o', 'accepted')", (run_id,))
+    assert service.queue("o", category=category)["items"] == []
+    with db.connect() as conn:
+        conn.execute("DELETE FROM scene_run_acceptances WHERE run_id=?", (run_id,))
+        conn.execute("UPDATE enterprise_scene_runs SET status='failed' WHERE run_id=?", (run_id,))
+    assert service.queue("o", category=category)["items"] == []
+    assert run_id in [r["run_id"] for r in service.queue("o", category="failed")["items"]]
