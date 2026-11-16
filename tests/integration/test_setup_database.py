@@ -317,3 +317,54 @@ async def test_database_config_write_failure_releases_claim_for_retry(tmp_octop_
         await bootstrap_admin(client, tmp_octop_home)
     async with octop_client(tmp_octop_home) as (_, restarted):
         assert restarted.user_manager.count() == 1
+
+
+async def test_post_link_crash_allows_setup_and_restart(tmp_octop_home, monkeypatch):
+    import multiprocessing
+    import socket
+
+    from tests.support.loopback_http import loopback_http_client
+    from tests.unit.test_config_creation import pause_after_link
+
+    path = tmp_octop_home / "config.json"
+    assert not path.exists()
+    ctx = multiprocessing.get_context("spawn")
+    ready, release = ctx.Event(), ctx.Event()
+    child = ctx.Process(target=pause_after_link, args=(path, ready, release))
+    child.start()
+    try:
+        assert ready.wait(10)
+        child.terminate()
+        child.join(5)
+        assert not child.is_alive()
+        assert path.stat().st_nlink == 2
+    finally:
+        if child.is_alive():
+            child.terminate()
+        child.join(5)
+
+    original_connect, original_dns = socket.socket.connect, socket.getaddrinfo
+
+    def denied(*args, **kwargs):
+        raise AssertionError("NON-TEST NETWORK FORBIDDEN")
+
+    for method in ("connect", "connect_ex", "sendto"):
+        monkeypatch.setattr(socket.socket, method, denied)
+    monkeypatch.setattr(socket, "getaddrinfo", denied)
+    async with (
+        octop_client(tmp_octop_home) as (asgi, srv),
+        loopback_http_client(
+            asgi._octop_app, monkeypatch, original_connect, original_dns
+        ) as client,
+    ):
+        assert path.stat().st_nlink == 1
+        response = await client.post(
+            "/api/setup/database", json={"driver": "sqlite", "sqlite_path": "recovered.db"}
+        )
+        assert response.status_code == 200, response.text
+        created = await bootstrap_admin(client, tmp_octop_home)
+        assert created.status_code == 201, created.text
+        assert srv.user_manager.count() == 1
+    async with octop_client(tmp_octop_home) as (_, restarted):
+        assert restarted.user_manager.count() == 1
+        assert restarted.services.config.database.sqlite_path == "recovered.db"

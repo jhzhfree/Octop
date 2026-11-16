@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import stat
 import tempfile
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
@@ -459,6 +460,48 @@ def _publish_default_config(path: Path, defaults: dict[str, Any]) -> bool:
             Path(staging).unlink(missing_ok=True)
 
 
+def _finish_default_config_publication(path: Path) -> None:
+    """Remove only reserved publisher staging names still linked to this config.
+
+    A crash after link() can strand the publisher's second name. This is not
+    permission to accept arbitrary shared configs: other aliases stay intact
+    and the setup guard still requires st_nlink == 1. Same-UID hostile path
+    replacement is outside this protocol, as with the setup mutex itself.
+    """
+    current = path.lstat()
+    if not stat.S_ISREG(current.st_mode) or current.st_nlink <= 1:
+        return
+    identity = (current.st_dev, current.st_ino)
+    prefix = f".{path.name}."
+    for candidate in path.parent.iterdir():
+        name = candidate.name
+        if not name.startswith(prefix) or not name.endswith(".tmp"):
+            continue
+        random_part = name[len(prefix) : -4]
+        # NamedTemporaryFile's reserved publisher namespace; don't sweep other
+        # tmp files, directories, symlinks, or links to another config inode.
+        if len(random_part) != 8 or any(
+            c not in "abcdefghijklmnopqrstuvwxyz0123456789_" for c in random_part
+        ):
+            continue
+        try:
+            entry = candidate.lstat()
+            still_current = path.lstat()
+        except FileNotFoundError:
+            continue
+        if (still_current.st_dev, still_current.st_ino) != identity:
+            return
+        if (
+            stat.S_ISREG(entry.st_mode)
+            and (entry.st_dev, entry.st_ino) == identity
+            and (
+                os.name != "posix"
+                or (entry.st_uid == os.geteuid() and stat.S_IMODE(entry.st_mode) == 0o600)
+            )
+        ):
+            candidate.unlink(missing_ok=True)
+
+
 def load_config(path: Path) -> OctopConfig:
     """Load config, publishing defaults atomically only if still absent.
 
@@ -491,6 +534,7 @@ def load_config(path: Path) -> OctopConfig:
             f"{path} must contain a JSON object, got {type(raw).__name__};"
             " fix it and retry — no settings were changed"
         )
+    _finish_default_config_publication(path)
     # Preserve first-install deferred binding only for our own unchanged defaults.
     database_in_file = "database" in raw and not (created and raw == file_defaults)
 

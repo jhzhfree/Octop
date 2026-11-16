@@ -234,3 +234,31 @@ uv run pytest tests/unit/test_config_creation.py tests/unit/test_config.py \
 
 本轮 `make lint-all typecheck-all` 通过（mypy 676 个源文件），Ruff 和 diff 检查通过。
 无前端变更，未重复构建。
+
+## 发布后中断恢复（基线 aa64a7cb）
+
+独立复核新增的实际故障点：link 已发布完整 config.json、unlink 尚未执行时杀死
+发布进程，会留下两个硬链接；51f25df 的 guard 正确拒绝共享配置，却也使本次合法
+发布残留卡住向导。之前的 kill 测试仅覆盖 link 前，不能作为此窗口的恢复证据。
+
+现在 load_config 在解析完整配置后收尾已发布的临时链接：只考虑同目录的发布器
+保留名称 `.config.json.<8位小写字母/数字/下划线>.tmp`，必须是普通文件、与当前
+配置 dev/inode 相同；POSIX 还要求当前 UID 所有且模式 0600。检查期间发现配置
+inode 改变则停止清理。不改配置内容、不删除其他 inode、目录或符号链接。这个
+内部临时名称空间保留给发布器，不能放用户文件；不是对同 UID 主动伪造路径的保护。
+
+其他位置/名称的共享硬链接保留，setup guard 仍要求 nlink=1；因此跨 home 共享
+配置不会因本次恢复被放行。清理权限或 I/O 持续失败时仍报错，待管理员修复文件
+系统条件后重新启动，不自动放宽权限。没有清除其他未发布孤立临时文件的扫盘操作。
+
+新测试在真实子进程 os.link 成功后暂停并 terminate，检查配置字节不变、残留链接
+收尾、guard 可进入；真实回环 HTTP 验证随后选择数据库、创建管理员并正常重启。
+另注入 unlink 失败后重试、附加跨 home 等价共享链接仍拒绝、无关临时文件/目录
+不删除、非私有模式的别名不作为发布残留清理。修复前 post-link 和 unlink 两项
+测试均失败。本轮仍未验证断电、Windows、网络文件系统或生产启动。
+
+最终代码定向门禁：`test_config_creation.py`、`test_config.py`、
+`test_mutation_guard.py`、`test_setup_database.py`、`test_setup_wizard.py`、
+`test_setup_bootstrap.py` 共 **152 passed**；采用 uv 离线缓存并关闭遥测。
+`make lint-all typecheck-all` 通过（mypy 676 个源文件），diff 检查通过。没有前端
+源码变化，未重复构建；未运行全量 make all、受限遥测、外部联调或生产操作。
