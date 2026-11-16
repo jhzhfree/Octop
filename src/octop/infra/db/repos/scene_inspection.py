@@ -186,7 +186,13 @@ class SceneInspectionRepo:
         return self.get(run_id) or {}
 
     def finish(
-        self, run_id: str, content: str, counts: dict[str, int], *, expected_flags: str
+        self,
+        run_id: str,
+        content: str,
+        counts: dict[str, int],
+        *,
+        expected_flags: str,
+        expected_sources: dict[str, int],
     ) -> None:
         digest = hashlib.sha256(content.encode()).hexdigest()
         lock = " FOR UPDATE" if self.db.dialect == "postgresql" else ""
@@ -250,6 +256,33 @@ class SceneInspectionRepo:
                     ):
                         raise ValueError("inspection publication source changed")
             self._check_worker(conn, run, json.loads(run["plan_snapshot_json"] or "{}"), lock)
+            # Publish only from the exact terminal source versions used to render.
+            # Lock source rows in the same transaction as report and scene hashes;
+            # a late transition cannot silently substitute different evidence.
+            batch = conn.execute(
+                "SELECT status,sources_json FROM scene_inspection_batches WHERE run_id=?" + lock,
+                (run_id,),
+            ).fetchone()
+            if not batch or batch["status"] != "running":
+                raise ValueError("inspection completion conflict")
+            sources = json.loads(batch["sources_json"])
+            if not sources or {s["run_id"] for s in sources} != set(expected_sources):
+                raise ValueError("inspection publication source set changed")
+            for source in sorted(sources, key=lambda s: s["run_id"]):
+                child = conn.execute(
+                    "SELECT r.* FROM enterprise_assistant_runs r "
+                    "JOIN scene_inspection_sources s ON s.source_run_id=r.id "
+                    "WHERE r.id=? AND s.scene_run_id=?" + lock,
+                    (source["run_id"], run_id),
+                ).fetchone()
+                if (
+                    not child
+                    or child["owner_id"] != actor_id
+                    or child["job_id"] != source["job_id"]
+                    or child["status"] not in {"succeeded", "failed"}
+                    or child["version"] != expected_sources[source["run_id"]]
+                ):
+                    raise ValueError("inspection publication evidence changed")
             cursor = conn.execute(
                 "UPDATE scene_inspection_batches SET status='reported',content=?,content_sha256=?,counts_json=?,updated_at=? WHERE run_id=? AND status='running'",
                 (content, digest, json.dumps(counts), now_ts(), run_id),

@@ -90,6 +90,7 @@ async def execute_inspection(
     batch = repo.claim(str(run["run_id"]), cron_id, user_id, agent_id)
     try:
         facts = []
+        source_versions: dict[str, int] = {}
         counts = {
             "sources": len(batch["sources"]),
             "attempted": 0,
@@ -126,6 +127,7 @@ async def execute_inspection(
                 raise RuntimeError("inspection child did not persist a terminal result")
             if child["content_hash"] != digest(child["content"], child["snapshot"]):
                 raise RuntimeError("inspection child evidence persistence incomplete")
+            source_versions[child["id"]] = child["version"]
             counts["attempted"] += int(
                 any(e.get("stage") == "collection_started" for e in child["evidence"])
             )
@@ -162,7 +164,13 @@ async def execute_inspection(
         flags_snapshot = repos.settings_repo.get(FLAGS_KEY) or ""
         for source in batch["sources"]:
             service.live_snapshot(service.run_owned(source["run_id"]))
-        repo.finish(run["run_id"], content, counts, expected_flags=flags_snapshot)
+        repo.finish(
+            run["run_id"],
+            content,
+            counts,
+            expected_flags=flags_snapshot,
+            expected_sources=source_versions,
+        )
         return content
     except BaseException:
         repo.fail(run["run_id"])

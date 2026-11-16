@@ -85,3 +85,6 @@ UV_CACHE_DIR=/tmp/octop-uv-cache UV_OFFLINE=1 make lint-all typecheck-all
 容器或重试既有受阻的 sandbox 探测，这些版本不构成部署隔离验收。未运行全量
 make all、受限遥测、真实 MCP、
 堡垒机、PG 或生产部署。恢复激活继续关闭，Mattermost 真实发送仍未接通。
+
+后续阶段见[回执签名边界与报告事务加固](inspection-receipt-authentication.md)，
+历史验证结果不代表已开放联网执行或签名回执持久化接入。

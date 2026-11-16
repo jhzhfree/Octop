@@ -450,3 +450,150 @@ async def test_reconciler_cleans_interrupted_batch_without_replay(
     assert batch["counts"]["unknown"] == 3
     assert batch["counts"]["reports_persisted"] == 0
     assert calls == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["version", "owner", "status", "source_set"])
+async def test_report_commit_rechecks_exact_rendered_sources(scene_runtime, monkeypatch, change):
+    _, jobs, _ = setup_sources(scene_runtime, monkeypatch)
+    original = SceneInspectionRepo.finish
+
+    def changed(self, run_id, content, counts, **kwargs):
+        batch = self.get(run_id)
+        child_id = batch["sources"][0]["run_id"]
+        with self.db.transaction() as conn:
+            if change == "version":
+                conn.execute(
+                    "UPDATE enterprise_assistant_runs SET evidence_json='[]',version=version+1 WHERE id=?",
+                    (child_id,),
+                )
+            elif change == "owner":
+                conn.execute(
+                    "UPDATE enterprise_assistant_runs SET owner_id=2 WHERE id=?", (child_id,)
+                )
+            elif change == "status":
+                conn.execute(
+                    "UPDATE enterprise_assistant_runs SET status='running' WHERE id=?", (child_id,)
+                )
+            else:
+                conn.execute(
+                    "DELETE FROM scene_inspection_sources WHERE source_run_id=?", (child_id,)
+                )
+        return original(self, run_id, content, counts, **kwargs)
+
+    monkeypatch.setattr(SceneInspectionRepo, "finish", changed)
+    run = request(scene_runtime, [jobs[0]])
+    cron = await approve_and_wait(scene_runtime, run)
+    assert cron.last_status == "error"
+    batch = SceneInspectionRepo(scene_runtime.db).get(run["run_id"])
+    assert batch["status"] == "failed"
+    assert batch["content"] == batch["content_sha256"] == ""
+    assert (
+        scene_runtime.repos.enterprise_scene_repo.get_run(run["run_id"])["inspection_report_sha256"]
+        == ""
+    )
+
+
+@pytest.mark.asyncio
+async def test_second_report_write_failure_rolls_back_first_write(scene_runtime, monkeypatch):
+    _, jobs, _ = setup_sources(scene_runtime, monkeypatch)
+    with scene_runtime.db.connect() as conn:
+        conn.execute("""CREATE TRIGGER fail_scene_report_hash
+            BEFORE UPDATE OF inspection_report_sha256 ON enterprise_scene_runs
+            BEGIN SELECT RAISE(ABORT, 'synthetic second write failure'); END""")
+    run = request(scene_runtime, [jobs[0]])
+    cron = await approve_and_wait(scene_runtime, run)
+    assert cron.last_status == "error"
+    batch = SceneInspectionRepo(scene_runtime.db).get(run["run_id"])
+    assert batch["status"] == "failed"
+    assert batch["content"] == batch["content_sha256"] == ""
+    assert batch["counts"]["reports_persisted"] == 0
+    assert (
+        scene_runtime.repos.enterprise_scene_repo.get_run(run["run_id"])["inspection_report_sha256"]
+        == ""
+    )
+
+
+@pytest.mark.asyncio
+async def test_concurrent_independent_connections_claim_once_and_reopen_rejects_replay(
+    scene_runtime, monkeypatch
+):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from octop.infra.db.pool import SqlitePool
+
+    _, jobs, calls = setup_sources(scene_runtime, monkeypatch)
+    original = SceneInspectionRepo.claim
+    outcomes = []
+
+    def race(self, run_id, cron_id, actor_id, agent_id):
+        barrier = Barrier(2)
+
+        def claim(_):
+            db = SqlitePool(self.db.path)
+            try:
+                barrier.wait(timeout=10)
+                try:
+                    return original(SceneInspectionRepo(db), run_id, cron_id, actor_id, agent_id)
+                except ValueError as exc:
+                    return str(exc)
+            finally:
+                db.close()
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes.extend(pool.map(claim, range(2)))
+        winners = [item for item in outcomes if isinstance(item, dict)]
+        assert len(winners) == 1
+        assert sum(isinstance(item, str) and "already attempted" in item for item in outcomes) == 1
+        return winners[0]
+
+    monkeypatch.setattr(SceneInspectionRepo, "claim", race)
+    run = request(scene_runtime, [jobs[0]])
+    cron = await approve_and_wait(scene_runtime, run)
+    assert cron.last_status == "ok"
+    assert calls == ["/healthy"]
+    db = SqlitePool(scene_runtime.db.path)
+    try:
+        with pytest.raises(ValueError, match="already attempted"):
+            original(SceneInspectionRepo(db), run["run_id"], cron.cron_id, 1, "a")
+        with db.connect() as conn:
+            assert conn.execute("SELECT COUNT(*) FROM scene_inspection_batches").fetchone()[0] == 1
+            assert conn.execute("SELECT COUNT(*) FROM scene_inspection_sources").fetchone()[0] == 1
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("revoke", ["member", "disabled", "tasks", "worker"])
+async def test_revocation_at_publication_transaction_prevents_report(
+    scene_runtime, monkeypatch, revoke
+):
+    _, jobs, _ = setup_sources(scene_runtime, monkeypatch)
+    original = SceneInspectionRepo.finish
+    revoked_at_commit = []
+
+    def revoked(self, run_id, content, counts, **kwargs):
+        statements = {
+            "member": "DELETE FROM organization_members WHERE user_id=1",
+            "disabled": "UPDATE users SET disabled=1 WHERE id=1",
+            "tasks": "UPDATE users SET permissions='[]' WHERE id=1",
+            "worker": "UPDATE digital_workers SET status='paused'",
+        }
+        with self.db.transaction() as conn:
+            conn.execute(statements[revoke])
+        revoked_at_commit.append(revoke)
+        return original(self, run_id, content, counts, **kwargs)
+
+    monkeypatch.setattr(SceneInspectionRepo, "finish", revoked)
+    run = request(scene_runtime, [jobs[0]])
+    cron = await approve_and_wait(scene_runtime, run)
+    assert revoked_at_commit == [revoke]
+    assert cron.last_status == "error"
+    batch = SceneInspectionRepo(scene_runtime.db).get(run["run_id"])
+    assert batch["status"] == "failed"
+    assert batch["content"] == batch["content_sha256"] == ""
+    assert (
+        scene_runtime.repos.enterprise_scene_repo.get_run(run["run_id"])["inspection_report_sha256"]
+        == ""
+    )

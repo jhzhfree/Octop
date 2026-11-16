@@ -184,3 +184,57 @@ def test_concurrent_parsing_has_no_shared_scope_or_replay_authority(expected):
     # must implement durable attempt claiming, not mistake this for replay protection.
     with pytest.raises(ValidationError):
         expected.binding.run_id = "changed"
+
+
+def test_signature_verifies_exact_domain_separated_bytes_without_promoting_trust(expected):
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from octop.infra.enterprise_assistant.inspection_receipts import (
+        RECEIPT_SIGNATURE_DOMAIN,
+        validate_signed_receipt,
+    )
+
+    # Ephemeral synthetic keys only; never read the application's secret store.
+    key = Ed25519PrivateKey.generate()
+    raw = payload(expected)
+    public = key.public_key().public_bytes_raw()
+    signature = key.sign(RECEIPT_SIGNATURE_DOMAIN + raw)
+    result = validate_signed_receipt(
+        raw, expected, now=1003, public_key=public, signature=signature
+    )
+    assert result == validate_receipt(raw, expected, now=1003)
+    assert expected.provenance == "simulation"
+    # Cryptographic validity is not durable replay prevention: parsing twice is allowed.
+    assert (
+        validate_signed_receipt(raw, expected, now=1003, public_key=public, signature=signature)
+        == result
+    )
+    for candidate_raw, candidate_key, candidate_signature in [
+        (raw + b" ", public, signature),
+        (raw, Ed25519PrivateKey.generate().public_key().public_bytes_raw(), signature),
+        (raw, public, key.sign(raw)),
+        (raw, public, signature[:-1]),
+        (raw, public[:-1], signature),
+    ]:
+        with pytest.raises(WorkflowError, match="SIGNATURE_INVALID"):
+            validate_signed_receipt(
+                candidate_raw,
+                expected,
+                now=1003,
+                public_key=candidate_key,
+                signature=candidate_signature,
+            )
+    # A valid signature cannot bypass correlation, expiry or parser strictness.
+    for bad, now, code in [
+        (payload(expected, principal_id="another-worker"), 1003, "SCOPE_MISMATCH"),
+        (raw, 1060, "WINDOW_INVALID"),
+        (payload(expected, credentials="forbidden"), 1003, "RECEIPT_INVALID"),
+    ]:
+        with pytest.raises(WorkflowError, match=code):
+            validate_signed_receipt(
+                bad,
+                expected,
+                now=now,
+                public_key=public,
+                signature=key.sign(RECEIPT_SIGNATURE_DOMAIN + bad),
+            )

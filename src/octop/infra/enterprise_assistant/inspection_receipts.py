@@ -10,6 +10,8 @@ import hashlib
 import json
 from typing import Annotated, Literal
 
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .adapters import WorkflowError
@@ -131,6 +133,38 @@ def validate_receipt(raw: bytes, expected: ReceiptExpectation, *, now: int) -> I
     ):
         raise WorkflowError("INSPECTION_RECEIPT_WINDOW_INVALID")
     return receipt
+
+
+# Domain separation prevents a signature for another protocol from being accepted.
+RECEIPT_SIGNATURE_DOMAIN = b"octop.inspection-receipt.v1\x00"
+
+
+def validate_signed_receipt(
+    raw: bytes,
+    expected: ReceiptExpectation,
+    *,
+    now: int,
+    public_key: bytes,
+    signature: bytes,
+) -> InspectionReceipt:
+    """Verify exact bytes with an out-of-band pinned Ed25519 public key, then correlate.
+
+    The caller must resolve the current key and revocation policy independently of
+    the envelope. This pure primitive does NOT supply that trust store, prove the
+    signer represents a worker, consume a nonce, or promote provenance to verified.
+    No algorithm/key identifier supplied by the receipt is honored.
+    """
+    if len(raw) > MAX_RECEIPT_BYTES:
+        raise WorkflowError("INSPECTION_RECEIPT_TOO_LARGE")
+    if len(public_key) != 32 or len(signature) != 64:
+        raise WorkflowError("INSPECTION_RECEIPT_SIGNATURE_INVALID")
+    try:
+        Ed25519PublicKey.from_public_bytes(public_key).verify(
+            signature, RECEIPT_SIGNATURE_DOMAIN + raw
+        )
+    except (ValueError, InvalidSignature):
+        raise WorkflowError("INSPECTION_RECEIPT_SIGNATURE_INVALID") from None
+    return validate_receipt(raw, expected, now=now)
 
 
 def receipt_preview(raw: bytes, expected: ReceiptExpectation, *, now: int, locale: str) -> str:
