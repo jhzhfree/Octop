@@ -2021,8 +2021,10 @@ def _apply_sqlite_migration(db: DatabasePool, version: int, path: Path) -> None:
     Version 17 adds sticky ``conversation_mode`` and ``pending_plan_path`` on threads.
     Version 18 adds ``user_role`` templates and non-FK role id/name snapshots.
     """
-    if version in (46, 47, 48, 49):
-        # Each repair and its schema version must commit together. SQLite
+    if 32 <= version <= 49:
+        # These enterprise/auth scripts contain transactional DDL/DML only.
+        # Keep each script and its schema version together, including ALTER
+        # TABLE steps that cannot be safely repeated after partial commits. SQLite
         # executescript otherwise autocommits each statement in this pool.
         with db.connect() as conn:
             try:
