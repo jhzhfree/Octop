@@ -10,10 +10,13 @@
 
 **AI-TAgent 企业场景仍处于开发阶段，尚不满足 1.0 发布条件。**
 当前开发分支为 `feature/akb-octop-litellm-dev`；本轮开始核对的远端提交为
-`f5efc2db4d7a630f643d624b79a60c9c250af2fb`。后续提交以 Git 实际记录为准，
+`adb042c41bcd08c23604b75a22549f2835096752`。后续提交以 Git 实际记录为准，
 本文件不是发布批准，也不授权生产操作、合并、部署或外部消息发送。
 
-本轮交付[人工验收反馈闭环](ai-tagent/acceptance-feedback.md)：验收人填写不可覆盖
+本轮交付[要求修改后的巡检修订向导](ai-tagent/inspection-revision.md)：从原运行快照创建
+独立草稿，重新选择来源并申请独立审批；隔离验证第二次验收与原决定并存。
+
+前一阶段交付[人工验收反馈闭环](ai-tagent/acceptance-feedback.md)：验收人填写不可覆盖
 的意见，申请人从同一 run 读取反馈；空库单次巡检的通过/修改分支均隔离验证。
 
 前一阶段新增[恢复产物只读核验](ai-tagent/recovery-inventory-verification.md)：必须使用

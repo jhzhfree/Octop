@@ -719,6 +719,13 @@ export const organizationsApi = {
           }
         : { method: "POST" },
     ),
+  sceneRun: (id: string, runId: string) =>
+    request<EnterpriseSceneRun>(
+      `/organizations/${encodeURIComponent(id)}/scene-runs/${encodeURIComponent(
+        runId,
+      )}`,
+      { cache: "no-store" },
+    ),
   sceneRuns: (id: string) =>
     request<EnterpriseSceneRun[]>(
       "/organizations/" + encodeURIComponent(id) + "/scene-runs",

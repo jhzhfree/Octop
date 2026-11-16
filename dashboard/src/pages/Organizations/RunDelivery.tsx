@@ -1,3 +1,4 @@
+import InspectionRevision from "./InspectionRevision";
 import AcceptanceFeedback from "./AcceptanceFeedback";
 import { Alert, Space } from "antd";
 import { useTranslation } from "react-i18next";
@@ -10,14 +11,19 @@ import MattermostPublication from "./MattermostPublication";
 export default function RunDelivery({
   target,
   currentUserId,
+  allowRevision = false,
 }: {
   target: AcceptanceTarget;
   currentUserId: number;
+  allowRevision?: boolean;
 }) {
   const { t } = useTranslation();
   return (
     <Space direction="vertical" style={{ width: "100%" }}>
       <Alert type="info" message={t("runDetails.deliveryNotice")} />
+      {allowRevision && (
+        <InspectionRevision target={target} currentUserId={currentUserId} />
+      )}
       <AcceptanceFeedback target={target} currentUserId={currentUserId} />
       <RunEvidence target={target} currentUserId={currentUserId} canRead />
       <DeliveryAcceptance

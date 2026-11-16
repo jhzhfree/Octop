@@ -80,3 +80,6 @@ UV_CACHE_DIR=/tmp/octop-uv-cache UV_OFFLINE=1 uv run pytest \
 均未参与本次单次 HTTP 流程。Mattermost 仍只有本地预览/审批且真实发送关闭。
 不将该测试视为自主规划、多轮自动修复、周期调度或 1.0 完整发布验收。未运行全量
 make all、受限遥测、生产部署或真实外发。
+
+后续阶段提供[巡检修订向导](inspection-revision.md)，具体入口和当前验证边界见该记录；
+上述结果保留为本阶段历史证据。

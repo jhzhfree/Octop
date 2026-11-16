@@ -297,3 +297,65 @@ async def test_fresh_sqlite_inspection_delivery_via_http(tmp_path, monkeypatch, 
             )["status"]
             == "active"
         )
+        if decision == "changes_requested":
+            # A separate plan and run, using the same public calls as the revision UI.
+            original_feedback = feedback.copy()
+            revised = await req(
+                "POST",
+                gp + "/plans",
+                {
+                    "title": "Revised inspection",
+                    "approach": "Repeat collection after feedback",
+                    "steps": [{"action": "Inspect HTTP again", "expected_output": "Fresh report"}],
+                },
+                code=201,
+            )
+            assert revised["status"] == "draft" and revised["plan_id"] != plan["plan_id"]
+            request_body = {
+                "plan_id": revised["plan_id"],
+                "use_memory": False,
+                "capture_memory": False,
+                "inspection_job_ids": [job["id"]],
+                "share_inspection_results": True,
+            }
+            request_path = op + "/scenes/" + scene["scene_id"] + "/runs"
+            await req("POST", request_path, request_body, code=409)
+            await req(
+                "PATCH",
+                gp + "/plans/" + revised["plan_id"],
+                {"expected_version": revised["version"], "status": "ready"},
+            )
+            next_run = await req("POST", request_path, request_body, code=201)
+            assert next_run["run_id"] != run["run_id"]
+            assert next_run["status"] == "awaiting_approval"
+            assert len(calls) == 1  # No collection merely from creating/requesting a revision.
+            next_path = op + "/scene-runs/" + next_run["run_id"]
+            await req("POST", next_path + "/approve", {"note": "No self approval"}, code=403)
+            await req(
+                "POST",
+                next_path + "/approve",
+                {"note": "Independent revision approval"},
+                headers=reviewauth,
+            )
+            for _ in range(100):
+                state = await req("GET", next_path)
+                if state["status"] in ("succeeded", "failed"):
+                    break
+                await asyncio.sleep(0.1)
+            assert state["status"] == "succeeded"
+            assert len(calls) == 2
+            second_review = await req("GET", next_path + "/acceptance/review", headers=reviewauth)
+            assert second_review["acceptance"] is None
+            await req(
+                "POST",
+                next_path + "/acceptance",
+                {
+                    "decision": "accepted",
+                    "review_note": "Revised delivery reviewed",
+                    "expected_evidence_sha256": second_review["evidence_sha256"],
+                    "expected_snapshot_sha256": second_review["snapshot_sha256"],
+                },
+                headers=reviewauth,
+            )
+            assert (await req("GET", next_path + "/acceptance"))["decision"] == "accepted"
+            assert await req("GET", rp + "/acceptance") == original_feedback

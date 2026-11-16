@@ -90,6 +90,7 @@ function DetailSession({
           )}
           {run.status === "succeeded" && currentUserId !== undefined && (
             <RunDelivery
+              allowRevision={run.decision === "changes_requested"}
               target={{ organizationId, runId }}
               currentUserId={currentUserId}
             />
