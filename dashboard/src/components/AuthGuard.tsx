@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Spin } from "antd";
-import { clearAuthToken, getAuthToken } from "../api/request";
+import {
+  captureAuthSession,
+  clearAuthToken,
+  getAuthToken,
+  isCurrentAuthSession,
+} from "../api/request";
 import { authApi, type OctopUser } from "../api/modules/auth";
 import { applyUserLocale } from "../utils/locale";
 import { isNetworkFetchError } from "../utils/networkError";
@@ -48,12 +53,25 @@ export default function AuthGuard({ children }: AuthGuardProps) {
 
   useEffect(() => {
     let cancelled = false;
+    const session = captureAuthSession();
+    // Boot calls also have caller-owned effects (setup navigation, locale and
+    // mounting children). The request interceptor cannot guard those for us.
+    const obsolete = () => {
+      if (cancelled) return true;
+      if (isCurrentAuthSession(session)) return false;
+      cancelled = true;
+      setChecking(true);
+      setAuthed(false);
+      setUser(null);
+      setRetryKey((key) => key + 1);
+      return true;
+    };
 
     const check = async () => {
       setOffline(false);
       try {
         const status = await authApi.getAuthStatus();
-        if (cancelled) return;
+        if (obsolete()) return;
 
         // No admin yet → push to setup wizard; drop any leftover JWT from a
         // previous install so background prefetch cannot stampede lockdown.
@@ -80,15 +98,15 @@ export default function AuthGuard({ children }: AuthGuardProps) {
         // need to swallow the throw here.
         try {
           const me = await authApi.me();
-          if (cancelled) return;
+          if (obsolete()) return;
           await applyUserLocale(me.locale);
-          if (!cancelled) {
+          if (!obsolete()) {
             setUser(me);
             setAuthed(true);
             setChecking(false);
           }
         } catch (err) {
-          if (cancelled) return;
+          if (obsolete()) return;
           if (isNetworkFetchError(err)) {
             setOffline(true);
             setChecking(false);
@@ -99,7 +117,7 @@ export default function AuthGuard({ children }: AuthGuardProps) {
           navigateRef.current("/login", { replace: true });
         }
       } catch (err) {
-        if (cancelled) return;
+        if (obsolete()) return;
         // Backend unreachable (or setup/status otherwise failed) — do not
         // mount MainLayout with a null user (that produced a blank white
         // shell with no recovery action).

@@ -37,6 +37,58 @@ describe("setup lockdown handling", () => {
     mod.clearSetupRequired();
   });
 
+  it.each([true, false])(
+    "ignores stale successful setup flags: %s",
+    async (required) => {
+      let finish!: (response: Response) => void;
+      fetchMock.mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            finish = resolve;
+          }),
+      );
+      const { authApi } = await import("./modules/auth");
+      const pending = authApi.getAuthStatus();
+      mod.setAuthToken("new-session");
+      if (!required) mod.markSetupRequired();
+      finish(
+        new Response(JSON.stringify({ setup_required: required }), {
+          headers: { "content-type": "application/json" },
+        }),
+      );
+      await pending;
+      expect(mod.getAuthToken()).toBe("new-session");
+      expect(mod.isSetupRequiredKnown()).toBe(!required);
+    },
+  );
+
+  it("does not share old-session probes or erase a newer in-flight probe", async () => {
+    const finish: Array<(response: Response) => void> = [];
+    fetchMock.mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          finish.push(resolve);
+        }),
+    );
+    const { authApi } = await import("./modules/auth");
+    const old = authApi.getAuthStatus();
+    mod.setAuthToken("new-session");
+    const current = authApi.getAuthStatus();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const response = (required: boolean) =>
+      new Response(JSON.stringify({ setup_required: required }), {
+        headers: { "content-type": "application/json" },
+      });
+    finish[0](response(true));
+    await old;
+    const shared = authApi.getAuthStatus();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    finish[1](response(false));
+    expect((await current).setup_required).toBe(false);
+    expect((await shared).setup_required).toBe(false);
+    expect(mod.isSetupRequiredKnown()).toBe(false);
+  });
+
   it("redirects to /setup and clears the token on lockdown 503", async () => {
     await expect(mod.request("/agents")).rejects.toThrow(
       mod.SetupRequiredError,

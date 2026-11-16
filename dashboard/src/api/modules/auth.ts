@@ -1,4 +1,7 @@
 import {
+  type AuthSessionSnapshot,
+  captureAuthSession,
+  isCurrentAuthSession,
   clearSetupRequired,
   markSetupRequired,
   request,
@@ -152,6 +155,7 @@ interface RawLoginResponse {
 
 /** Coalesce AuthGuard / Login / Setup probing the same endpoint in parallel. */
 let statusInFlight: Promise<AuthStatus> | null = null;
+let statusSession: AuthSessionSnapshot | null = null;
 
 /** Drop any in-flight setup-status probe (e.g. after creating the admin). */
 export function invalidateAuthStatusCache(): void {
@@ -170,9 +174,11 @@ function applySetupFlags(status: AuthStatus): AuthStatus {
 export const authApi = {
   /** Probe whether the initial admin has been created. */
   getAuthStatus: async (): Promise<AuthStatus> => {
-    if (statusInFlight) return statusInFlight;
+    if (statusInFlight && statusSession && isCurrentAuthSession(statusSession))
+      return statusInFlight;
 
-    statusInFlight = (async () => {
+    const session = captureAuthSession();
+    const pending: Promise<AuthStatus> = (async () => {
       try {
         const raw = await request<RawSetupStatus>("/setup/status");
         const value: AuthStatus = {
@@ -186,13 +192,14 @@ export const authApi = {
           database_bound: raw.database_bound ?? false,
           database_driver: raw.database_driver ?? null,
         };
-        return applySetupFlags(value);
+        return isCurrentAuthSession(session) ? applySetupFlags(value) : value;
       } finally {
-        statusInFlight = null;
+        if (statusSession === session) statusInFlight = null;
       }
     })();
-
-    return statusInFlight;
+    statusSession = session;
+    statusInFlight = pending;
+    return pending;
   },
 
   /** Bootstrap the first admin (only succeeds while user_manager is empty). */
