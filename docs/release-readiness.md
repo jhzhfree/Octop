@@ -10,10 +10,14 @@
 
 **AI-TAgent 企业场景仍处于开发阶段，尚不满足 1.0 发布条件。**
 当前开发分支为 `feature/akb-octop-litellm-dev`；本轮开始核对的远端提交为
-`f61793cd178e2e7eba8cdefd3562173bca3227ec`。后续提交以 Git 实际记录为准，
+`247b4567f2feb20756f79cc9a461b2daa118c116`。后续提交以 Git 实际记录为准，
 本文件不是发布批准，也不授权生产操作、合并、部署或外部消息发送。
 
-本轮交付[Mattermost 隔离持久化接收器](ai-tagent/mattermost-isolated-ingress.md)：
+本轮交付[Mattermost 签名源状态适配器](ai-tagent/mattermost-source-adapter.md)：
+受控注入 resolver/signer，绑定逐次请求挑战并验证源响应，再接入现有受理/取消事务；
+仅 MockTransport 合成测试，源端 HTTP 提案未由 Mattermost 实现，生产门禁不变。
+
+前一阶段交付[Mattermost 隔离持久化接收器](ai-tagent/mattermost-isolated-ingress.md)：
 独立 broker 请求签名、nonce、待授权受理/查询/取消与事务审计可通过合成 ASGI 测试；
 生产 app 未挂载，无真实注册或 source adapter，服务认证 profile 尚未由对端实现。
 

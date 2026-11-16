@@ -121,6 +121,7 @@ def ingress(scene_runtime):
     app.include_router(create_router(service))
     return SimpleNamespace(
         db=db,
+        broker_key=broker_key,
         repo=repo,
         service=service,
         state=state,
