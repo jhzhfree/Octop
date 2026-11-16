@@ -10,10 +10,14 @@
 
 **AI-TAgent 企业场景仍处于开发阶段，尚不满足 1.0 发布条件。**
 当前开发分支为 `feature/akb-octop-litellm-dev`；本轮开始核对的远端提交为
-`c79978e9c71ec3cab997f9819b2c90c9da25063f`。后续提交以 Git 实际记录为准，
+`f61793cd178e2e7eba8cdefd3562173bca3227ec`。后续提交以 Git 实际记录为准，
 本文件不是发布批准，也不授权生产操作、合并、部署或外部消息发送。
 
-本轮交付[Mattermost 入站协议前置解码](ai-tagent/mattermost-ingress-compatibility.md)：
+本轮交付[Mattermost 隔离持久化接收器](ai-tagent/mattermost-isolated-ingress.md)：
+独立 broker 请求签名、nonce、待授权受理/查询/取消与事务审计可通过合成 ASGI 测试；
+生产 app 未挂载，无真实注册或 source adapter，服务认证 profile 尚未由对端实现。
+
+前一阶段交付[Mattermost 入站协议前置解码](ai-tagent/mattermost-ingress-compatibility.md)：
 按对端 4790d295 的公开向量验证签名字节及身份指纹，明确 broker 服务认证、受理、
 查询与取消的边界；缺少独立凭据与 source reader，未开放生产入站路由。
 
@@ -53,7 +57,7 @@
 [操作来源记录](ai-tagent/operation-trace.md)按操作显示现有审计事实及来源未知项，
 不将单次 Cron 等同于周期自主执行。批准本地发布后仍是 `blocked_not_connected`，没有发送器。
 
-当前静态核对迁移文件 001–044 的 SQLite/PostgreSQL 配对完整；**这不是实际数据库
+当前静态核对迁移文件 001–045 的 SQLite/PostgreSQL 配对完整；**这不是实际数据库
 迁移验收**。报告读取加固及已验收交付回看的分项验证记录见
 [组织运行待办](ai-tagent/organization-run-queue.md) 的 2026-11-15 后续记录。
 其他增量证据见[验收来源标识](ai-tagent/delivery-acceptance-ui.md)及

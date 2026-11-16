@@ -104,6 +104,8 @@ class _Envelope(_Contract):
 
 
 class ProofCandidate(_Contract):
+    proof_issued: PositiveInt64
+    proof_expires: PositiveInt64
     intent: ProofIntent = Field(repr=False)
     octop_actor_id: PositiveInt64
     octop_organization_id: str
@@ -178,6 +180,8 @@ def verify_proof(raw: bytes, policy: ProofPolicy, *, now: int) -> ProofCandidate
             "Employee": policy.octop_employee_id,
         }
         return ProofCandidate(
+            proof_issued=claims.issued,
+            proof_expires=claims.expires,
             intent=intent,
             octop_actor_id=policy.octop_actor_id,
             octop_organization_id=policy.octop_organization_id,

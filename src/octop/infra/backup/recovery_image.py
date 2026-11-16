@@ -138,6 +138,7 @@ def _prepare_database(path: Path, manifest: BackupManifest, source_hash: str) ->
             conn.execute(
                 "UPDATE users SET disabled=1,password_hash=NULL,permissions='[]',role='user'"
             )
+            conn.execute("UPDATE mattermost_brokers SET enabled=0")
             conn.execute("DELETE FROM secrets WHERE k='jwt'")
             conn.execute(
                 "INSERT INTO secrets(k,v,created_at) VALUES('jwt',?,strftime('%s','now'))",
@@ -164,6 +165,8 @@ def _prepare_database(path: Path, manifest: BackupManifest, source_hash: str) ->
         if check.execute("PRAGMA journal_mode=DELETE").fetchone()[0] != "delete":
             raise _reject("standalone_database_required")
         _check_database(check)
+        if check.execute("SELECT 1 FROM mattermost_brokers WHERE enabled != 0").fetchone():
+            raise _reject("broker_quarantine_incomplete")
         if check.execute(
             "SELECT 1 FROM users WHERE disabled != 1 OR password_hash IS NOT NULL OR permissions != '[]' OR role != 'user'"
         ).fetchone():

@@ -18,7 +18,7 @@ from octop.config import DatabaseConfig
 from octop.infra.auth.tokens import InvalidToken, decode_token, sign_token
 from octop.infra.backup import recovery_image as recovery
 from octop.infra.backup.system_archive import create_system_backup
-from octop.infra.db.migrate import run_migrations
+from octop.infra.db.migrate import run_migrations, schema_baseline_version
 from octop.infra.db.pool import SqlitePool
 from octop.infra.errors import ErrorCode, OctopError
 from octop.infra.utils.paths import PathLayout
@@ -342,7 +342,7 @@ def test_old_schema_upgrades_only_private_image(source, tmp_path, monkeypatch):
         )
         output = tmp_path / "legacy.sqlite"
         result = recover(archive, output)
-        assert result["schema_version"] == 44
+        assert result["schema_version"] == schema_baseline_version()
         with old.connect() as conn:
             assert conn.execute("SELECT version FROM _schema_version").fetchone()[0] == 37
         with sqlite3.connect(output / "octop.db") as conn:
@@ -793,7 +793,10 @@ async def test_normal_startup_reuses_checked_pool_with_runtime_mocked(tmp_path, 
         await instance.start()
         assert instance._started and len(opened) == 1
         with instance.services.db.connect() as conn:
-            assert conn.execute("SELECT version FROM _schema_version").fetchone()[0] == 44
+            assert (
+                conn.execute("SELECT version FROM _schema_version").fetchone()[0]
+                == schema_baseline_version()
+            )
     finally:
         for pool in opened:
             pool.close()

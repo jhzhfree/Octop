@@ -101,3 +101,6 @@ UV_CACHE_DIR=/tmp/octop-uv-cache UV_OFFLINE=1 make lint-all typecheck-all
 幂等、双服务 HTTP 或真实消息联调。没有前端改动，不重复前端构建。未运行受限遥测
 或全量 make all，未合并/部署；Docker/bubblewrap 本轮未重新探测，不据历史版本
 宣称部署可用。真实执行与外发继续关闭，仍不满足 1.0。
+
+后续阶段：[隔离持久化接收器](mattermost-isolated-ingress.md)。提供真实 ASGI 路由和
+事务的合成测试装配，仍未开放生产路径或完成双服务联调；本文结果保留为历史记录。
