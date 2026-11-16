@@ -10,10 +10,14 @@
 
 **AI-TAgent 企业场景仍处于开发阶段，尚不满足 1.0 发布条件。**
 当前开发分支为 `feature/akb-octop-litellm-dev`；本轮开始核对的远端提交为
-`8959144341ae38bf07940f9e9a69dc41b0633567`。后续提交以 Git 实际记录为准，
+`c79978e9c71ec3cab997f9819b2c90c9da25063f`。后续提交以 Git 实际记录为准，
 本文件不是发布批准，也不授权生产操作、合并、部署或外部消息发送。
 
-本轮交付[回执签名边界与报告事务加固](ai-tagent/inspection-receipt-authentication.md)：
+本轮交付[Mattermost 入站协议前置解码](ai-tagent/mattermost-ingress-compatibility.md)：
+按对端 4790d295 的公开向量验证签名字节及身份指纹，明确 broker 服务认证、受理、
+查询与取消的边界；缺少独立凭据与 source reader，未开放生产入站路由。
+
+前一阶段交付[回执签名边界与报告事务加固](ai-tagent/inspection-receipt-authentication.md)：
 增加离线签名校验，报告提交绑定实际读取的子证据版本，验证现有持久化 claim
 在 SQLite 双连接竞争和重开后拒绝重复执行。尚无可信公钥注册或签名回执入站。
 

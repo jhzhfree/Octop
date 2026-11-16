@@ -1,0 +1,473 @@
+[
+  {
+    "Name": "unicode-html-separators",
+    "Proof": "eyJwYXlsb2FkIjoiZXlKMlpYSnphVzl1SWpveUxDSnJaWGxmYVdRaU9pSjBaWE4wTFd0bGVTSXNJbWx6YzNWbFpDSTZNVEF3TENKbGVIQnBjbVZ6SWpveE5qQXNJbWx1ZEdWdWRDSTZleUppYVc1a2FXNW5JanA3SW1sdWMzUmhibU5sSWpvaWJXMHRkR1Z6ZENJc0ltRjFaR2xsYm1ObElqb2liMk4wYjNBdGRHVnpkQ0lzSW05eVoyRnVhWHBoZEdsdmJpSTZJdWU3aE9lN2h5L292NURva0tVZ1FTSXNJbVZ0Y0d4dmVXVmxJam9pNWJLWDVMMk5PdVdJaHVhZWtPV1JtQ0lzSW5WelpYSWlPaUoxZFhWMWRYVjFkWFYxZFhWMWRYVjFkWFYxZFhWMWRYVjFkU0lzSW5SbFlXMGlPaUowZEhSMGRIUjBkSFIwZEhSMGRIUjBkSFIwZEhSMGRIUjBkQ0lzSW1Ob1lXNXVaV3dpT2lKalkyTmpZMk5qWTJOalkyTmpZMk5qWTJOalkyTmpZMk5qWXlJc0ltSnZkQ0k2SW1KaVltSmlZbUppWW1KaVltSmlZbUppWW1KaVltSmlZbUppSW4wc0luSmxZMlZwY0hRaU9pSmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhJaXdpY21WalpXbHdkRjlsZUhCcGNtVnpYMkYwSWpveE5qQTVPVGtzSW1kdllXd2lPaUpWYm5SeWRYTjBaV1FnWEhVd01ETmpjbVZ4ZFdWemRGeDFNREF6WlNCY2RUQXdNallnNUxpdDVwYUhYSFV5TURJNGJHbHVaVngxTWpBeU9XVnVaQ0lzSW0xdlpHVWlPaUoxYzJWeVgzSmxjWFZsYzNSbFpDSjlmUT09Iiwic2lnbmF0dXJlIjoiU2lKWnhoMmRTTVBRanNUS3ppdEE2S2JvMEVBOWtTSUFVcmNYK211Z3RtN1lRbmM0U1l5U1o5akNjR3NPL3B6Sk5iUFNUTXc2SVM4Smp1Ymp0ckdmQkE9PSJ9",
+    "Policy": {
+      "Enabled": true,
+      "KeyID": "test-key",
+      "PublicKey": "0Aie4yaqR6Q5/jq5//+LTS2SMJ5sl6vl7pqtH79qWpQ=",
+      "Binding": {
+        "instance": "mm-test",
+        "audience": "octop-test",
+        "organization": "组织/运营 A",
+        "employee": "岗位:分析员",
+        "user": "uuuuuuuuuuuuuuuuuuuuuuuuuu",
+        "team": "tttttttttttttttttttttttttt",
+        "channel": "cccccccccccccccccccccccccc",
+        "bot": "bbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "OctopActorID": 9,
+      "OctopOrganizationID": "target-org",
+      "OctopEmployeeID": "target-worker"
+    },
+    "Now": 101,
+    "Accepted": true,
+    "Expected": {
+      "Intent": {
+        "binding": {
+          "instance": "mm-test",
+          "audience": "octop-test",
+          "organization": "组织/运营 A",
+          "employee": "岗位:分析员",
+          "user": "uuuuuuuuuuuuuuuuuuuuuuuuuu",
+          "team": "tttttttttttttttttttttttttt",
+          "channel": "cccccccccccccccccccccccccc",
+          "bot": "bbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "receipt": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "receipt_expires_at": 160999,
+        "goal": "Untrusted \u003crequest\u003e \u0026 中文\u2028line\u2029end",
+        "mode": "user_requested"
+      },
+      "OctopActorID": 9,
+      "OctopOrganizationID": "target-org",
+      "OctopEmployeeID": "target-worker",
+      "DeliveryKey": "538d183c726b92675caa8986dee8465817bcc50071af1409b7ac554397864ac0",
+      "Fingerprint": "3bbcef4a4a890cc3f6fff2751d043ebde885fa3587ad29e3ced33e60a4cb6844"
+    }
+  },
+  {
+    "Name": "last-whole-second",
+    "Proof": "eyJwYXlsb2FkIjoiZXlKMlpYSnphVzl1SWpveUxDSnJaWGxmYVdRaU9pSjBaWE4wTFd0bGVTSXNJbWx6YzNWbFpDSTZNVEF3TENKbGVIQnBjbVZ6SWpveE5qQXNJbWx1ZEdWdWRDSTZleUppYVc1a2FXNW5JanA3SW1sdWMzUmhibU5sSWpvaWJXMHRkR1Z6ZENJc0ltRjFaR2xsYm1ObElqb2liMk4wYjNBdGRHVnpkQ0lzSW05eVoyRnVhWHBoZEdsdmJpSTZJdWU3aE9lN2h5L292NURva0tVZ1FTSXNJbVZ0Y0d4dmVXVmxJam9pNWJLWDVMMk5PdVdJaHVhZWtPV1JtQ0lzSW5WelpYSWlPaUoxZFhWMWRYVjFkWFYxZFhWMWRYVjFkWFYxZFhWMWRYVjFkU0lzSW5SbFlXMGlPaUowZEhSMGRIUjBkSFIwZEhSMGRIUjBkSFIwZEhSMGRIUjBkQ0lzSW1Ob1lXNXVaV3dpT2lKalkyTmpZMk5qWTJOalkyTmpZMk5qWTJOalkyTmpZMk5qWXlJc0ltSnZkQ0k2SW1KaVltSmlZbUppWW1KaVltSmlZbUppWW1KaVltSmlZbUppSW4wc0luSmxZMlZwY0hRaU9pSmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhJaXdpY21WalpXbHdkRjlsZUhCcGNtVnpYMkYwSWpveE5qQTVPVGtzSW1kdllXd2lPaUpWYm5SeWRYTjBaV1FnWEhVd01ETmpjbVZ4ZFdWemRGeDFNREF6WlNCY2RUQXdNallnNUxpdDVwYUhYSFV5TURJNGJHbHVaVngxTWpBeU9XVnVaQ0lzSW0xdlpHVWlPaUoxYzJWeVgzSmxjWFZsYzNSbFpDSjlmUT09Iiwic2lnbmF0dXJlIjoiU2lKWnhoMmRTTVBRanNUS3ppdEE2S2JvMEVBOWtTSUFVcmNYK211Z3RtN1lRbmM0U1l5U1o5akNjR3NPL3B6Sk5iUFNUTXc2SVM4Smp1Ymp0ckdmQkE9PSJ9",
+    "Policy": {
+      "Enabled": true,
+      "KeyID": "test-key",
+      "PublicKey": "0Aie4yaqR6Q5/jq5//+LTS2SMJ5sl6vl7pqtH79qWpQ=",
+      "Binding": {
+        "instance": "mm-test",
+        "audience": "octop-test",
+        "organization": "组织/运营 A",
+        "employee": "岗位:分析员",
+        "user": "uuuuuuuuuuuuuuuuuuuuuuuuuu",
+        "team": "tttttttttttttttttttttttttt",
+        "channel": "cccccccccccccccccccccccccc",
+        "bot": "bbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "OctopActorID": 9,
+      "OctopOrganizationID": "target-org",
+      "OctopEmployeeID": "target-worker"
+    },
+    "Now": 159,
+    "Accepted": true,
+    "Expected": {
+      "Intent": {
+        "binding": {
+          "instance": "mm-test",
+          "audience": "octop-test",
+          "organization": "组织/运营 A",
+          "employee": "岗位:分析员",
+          "user": "uuuuuuuuuuuuuuuuuuuuuuuuuu",
+          "team": "tttttttttttttttttttttttttt",
+          "channel": "cccccccccccccccccccccccccc",
+          "bot": "bbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "receipt": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "receipt_expires_at": 160999,
+        "goal": "Untrusted \u003crequest\u003e \u0026 中文\u2028line\u2029end",
+        "mode": "user_requested"
+      },
+      "OctopActorID": 9,
+      "OctopOrganizationID": "target-org",
+      "OctopEmployeeID": "target-worker",
+      "DeliveryKey": "538d183c726b92675caa8986dee8465817bcc50071af1409b7ac554397864ac0",
+      "Fingerprint": "3bbcef4a4a890cc3f6fff2751d043ebde885fa3587ad29e3ced33e60a4cb6844"
+    }
+  },
+  {
+    "Name": "expires-at-boundary",
+    "Proof": "eyJwYXlsb2FkIjoiZXlKMlpYSnphVzl1SWpveUxDSnJaWGxmYVdRaU9pSjBaWE4wTFd0bGVTSXNJbWx6YzNWbFpDSTZNVEF3TENKbGVIQnBjbVZ6SWpveE5qQXNJbWx1ZEdWdWRDSTZleUppYVc1a2FXNW5JanA3SW1sdWMzUmhibU5sSWpvaWJXMHRkR1Z6ZENJc0ltRjFaR2xsYm1ObElqb2liMk4wYjNBdGRHVnpkQ0lzSW05eVoyRnVhWHBoZEdsdmJpSTZJdWU3aE9lN2h5L292NURva0tVZ1FTSXNJbVZ0Y0d4dmVXVmxJam9pNWJLWDVMMk5PdVdJaHVhZWtPV1JtQ0lzSW5WelpYSWlPaUoxZFhWMWRYVjFkWFYxZFhWMWRYVjFkWFYxZFhWMWRYVjFkU0lzSW5SbFlXMGlPaUowZEhSMGRIUjBkSFIwZEhSMGRIUjBkSFIwZEhSMGRIUjBkQ0lzSW1Ob1lXNXVaV3dpT2lKalkyTmpZMk5qWTJOalkyTmpZMk5qWTJOalkyTmpZMk5qWXlJc0ltSnZkQ0k2SW1KaVltSmlZbUppWW1KaVltSmlZbUppWW1KaVltSmlZbUppSW4wc0luSmxZMlZwY0hRaU9pSmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhJaXdpY21WalpXbHdkRjlsZUhCcGNtVnpYMkYwSWpveE5qQTVPVGtzSW1kdllXd2lPaUpWYm5SeWRYTjBaV1FnWEhVd01ETmpjbVZ4ZFdWemRGeDFNREF6WlNCY2RUQXdNallnNUxpdDVwYUhYSFV5TURJNGJHbHVaVngxTWpBeU9XVnVaQ0lzSW0xdlpHVWlPaUoxYzJWeVgzSmxjWFZsYzNSbFpDSjlmUT09Iiwic2lnbmF0dXJlIjoiU2lKWnhoMmRTTVBRanNUS3ppdEE2S2JvMEVBOWtTSUFVcmNYK211Z3RtN1lRbmM0U1l5U1o5akNjR3NPL3B6Sk5iUFNUTXc2SVM4Smp1Ymp0ckdmQkE9PSJ9",
+    "Policy": {
+      "Enabled": true,
+      "KeyID": "test-key",
+      "PublicKey": "0Aie4yaqR6Q5/jq5//+LTS2SMJ5sl6vl7pqtH79qWpQ=",
+      "Binding": {
+        "instance": "mm-test",
+        "audience": "octop-test",
+        "organization": "组织/运营 A",
+        "employee": "岗位:分析员",
+        "user": "uuuuuuuuuuuuuuuuuuuuuuuuuu",
+        "team": "tttttttttttttttttttttttttt",
+        "channel": "cccccccccccccccccccccccccc",
+        "bot": "bbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "OctopActorID": 9,
+      "OctopOrganizationID": "target-org",
+      "OctopEmployeeID": "target-worker"
+    },
+    "Now": 160,
+    "Accepted": false,
+    "Expected": {
+      "Intent": {
+        "binding": {
+          "instance": "",
+          "audience": "",
+          "organization": "",
+          "employee": "",
+          "user": "",
+          "team": "",
+          "channel": "",
+          "bot": ""
+        },
+        "receipt": "",
+        "receipt_expires_at": 0,
+        "goal": "",
+        "mode": ""
+      },
+      "OctopActorID": 0,
+      "OctopOrganizationID": "",
+      "OctopEmployeeID": "",
+      "DeliveryKey": "",
+      "Fingerprint": ""
+    }
+  },
+  {
+    "Name": "not-yet-valid",
+    "Proof": "eyJwYXlsb2FkIjoiZXlKMlpYSnphVzl1SWpveUxDSnJaWGxmYVdRaU9pSjBaWE4wTFd0bGVTSXNJbWx6YzNWbFpDSTZNVEF3TENKbGVIQnBjbVZ6SWpveE5qQXNJbWx1ZEdWdWRDSTZleUppYVc1a2FXNW5JanA3SW1sdWMzUmhibU5sSWpvaWJXMHRkR1Z6ZENJc0ltRjFaR2xsYm1ObElqb2liMk4wYjNBdGRHVnpkQ0lzSW05eVoyRnVhWHBoZEdsdmJpSTZJdWU3aE9lN2h5L292NURva0tVZ1FTSXNJbVZ0Y0d4dmVXVmxJam9pNWJLWDVMMk5PdVdJaHVhZWtPV1JtQ0lzSW5WelpYSWlPaUoxZFhWMWRYVjFkWFYxZFhWMWRYVjFkWFYxZFhWMWRYVjFkU0lzSW5SbFlXMGlPaUowZEhSMGRIUjBkSFIwZEhSMGRIUjBkSFIwZEhSMGRIUjBkQ0lzSW1Ob1lXNXVaV3dpT2lKalkyTmpZMk5qWTJOalkyTmpZMk5qWTJOalkyTmpZMk5qWXlJc0ltSnZkQ0k2SW1KaVltSmlZbUppWW1KaVltSmlZbUppWW1KaVltSmlZbUppSW4wc0luSmxZMlZwY0hRaU9pSmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhJaXdpY21WalpXbHdkRjlsZUhCcGNtVnpYMkYwSWpveE5qQTVPVGtzSW1kdllXd2lPaUpWYm5SeWRYTjBaV1FnWEhVd01ETmpjbVZ4ZFdWemRGeDFNREF6WlNCY2RUQXdNallnNUxpdDVwYUhYSFV5TURJNGJHbHVaVngxTWpBeU9XVnVaQ0lzSW0xdlpHVWlPaUoxYzJWeVgzSmxjWFZsYzNSbFpDSjlmUT09Iiwic2lnbmF0dXJlIjoiU2lKWnhoMmRTTVBRanNUS3ppdEE2S2JvMEVBOWtTSUFVcmNYK211Z3RtN1lRbmM0U1l5U1o5akNjR3NPL3B6Sk5iUFNUTXc2SVM4Smp1Ymp0ckdmQkE9PSJ9",
+    "Policy": {
+      "Enabled": true,
+      "KeyID": "test-key",
+      "PublicKey": "0Aie4yaqR6Q5/jq5//+LTS2SMJ5sl6vl7pqtH79qWpQ=",
+      "Binding": {
+        "instance": "mm-test",
+        "audience": "octop-test",
+        "organization": "组织/运营 A",
+        "employee": "岗位:分析员",
+        "user": "uuuuuuuuuuuuuuuuuuuuuuuuuu",
+        "team": "tttttttttttttttttttttttttt",
+        "channel": "cccccccccccccccccccccccccc",
+        "bot": "bbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "OctopActorID": 9,
+      "OctopOrganizationID": "target-org",
+      "OctopEmployeeID": "target-worker"
+    },
+    "Now": 99,
+    "Accepted": false,
+    "Expected": {
+      "Intent": {
+        "binding": {
+          "instance": "",
+          "audience": "",
+          "organization": "",
+          "employee": "",
+          "user": "",
+          "team": "",
+          "channel": "",
+          "bot": ""
+        },
+        "receipt": "",
+        "receipt_expires_at": 0,
+        "goal": "",
+        "mode": ""
+      },
+      "OctopActorID": 0,
+      "OctopOrganizationID": "",
+      "OctopEmployeeID": "",
+      "DeliveryKey": "",
+      "Fingerprint": ""
+    }
+  },
+  {
+    "Name": "wrong-source-organization",
+    "Proof": "eyJwYXlsb2FkIjoiZXlKMlpYSnphVzl1SWpveUxDSnJaWGxmYVdRaU9pSjBaWE4wTFd0bGVTSXNJbWx6YzNWbFpDSTZNVEF3TENKbGVIQnBjbVZ6SWpveE5qQXNJbWx1ZEdWdWRDSTZleUppYVc1a2FXNW5JanA3SW1sdWMzUmhibU5sSWpvaWJXMHRkR1Z6ZENJc0ltRjFaR2xsYm1ObElqb2liMk4wYjNBdGRHVnpkQ0lzSW05eVoyRnVhWHBoZEdsdmJpSTZJdWU3aE9lN2h5L292NURva0tVZ1FTSXNJbVZ0Y0d4dmVXVmxJam9pNWJLWDVMMk5PdVdJaHVhZWtPV1JtQ0lzSW5WelpYSWlPaUoxZFhWMWRYVjFkWFYxZFhWMWRYVjFkWFYxZFhWMWRYVjFkU0lzSW5SbFlXMGlPaUowZEhSMGRIUjBkSFIwZEhSMGRIUjBkSFIwZEhSMGRIUjBkQ0lzSW1Ob1lXNXVaV3dpT2lKalkyTmpZMk5qWTJOalkyTmpZMk5qWTJOalkyTmpZMk5qWXlJc0ltSnZkQ0k2SW1KaVltSmlZbUppWW1KaVltSmlZbUppWW1KaVltSmlZbUppSW4wc0luSmxZMlZwY0hRaU9pSmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhJaXdpY21WalpXbHdkRjlsZUhCcGNtVnpYMkYwSWpveE5qQTVPVGtzSW1kdllXd2lPaUpWYm5SeWRYTjBaV1FnWEhVd01ETmpjbVZ4ZFdWemRGeDFNREF6WlNCY2RUQXdNallnNUxpdDVwYUhYSFV5TURJNGJHbHVaVngxTWpBeU9XVnVaQ0lzSW0xdlpHVWlPaUoxYzJWeVgzSmxjWFZsYzNSbFpDSjlmUT09Iiwic2lnbmF0dXJlIjoiU2lKWnhoMmRTTVBRanNUS3ppdEE2S2JvMEVBOWtTSUFVcmNYK211Z3RtN1lRbmM0U1l5U1o5akNjR3NPL3B6Sk5iUFNUTXc2SVM4Smp1Ymp0ckdmQkE9PSJ9",
+    "Policy": {
+      "Enabled": true,
+      "KeyID": "test-key",
+      "PublicKey": "0Aie4yaqR6Q5/jq5//+LTS2SMJ5sl6vl7pqtH79qWpQ=",
+      "Binding": {
+        "instance": "mm-test",
+        "audience": "octop-test",
+        "organization": "other-org",
+        "employee": "岗位:分析员",
+        "user": "uuuuuuuuuuuuuuuuuuuuuuuuuu",
+        "team": "tttttttttttttttttttttttttt",
+        "channel": "cccccccccccccccccccccccccc",
+        "bot": "bbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "OctopActorID": 9,
+      "OctopOrganizationID": "target-org",
+      "OctopEmployeeID": "target-worker"
+    },
+    "Now": 101,
+    "Accepted": false,
+    "Expected": {
+      "Intent": {
+        "binding": {
+          "instance": "",
+          "audience": "",
+          "organization": "",
+          "employee": "",
+          "user": "",
+          "team": "",
+          "channel": "",
+          "bot": ""
+        },
+        "receipt": "",
+        "receipt_expires_at": 0,
+        "goal": "",
+        "mode": ""
+      },
+      "OctopActorID": 0,
+      "OctopOrganizationID": "",
+      "OctopEmployeeID": "",
+      "DeliveryKey": "",
+      "Fingerprint": ""
+    }
+  },
+  {
+    "Name": "revoked-trust",
+    "Proof": "eyJwYXlsb2FkIjoiZXlKMlpYSnphVzl1SWpveUxDSnJaWGxmYVdRaU9pSjBaWE4wTFd0bGVTSXNJbWx6YzNWbFpDSTZNVEF3TENKbGVIQnBjbVZ6SWpveE5qQXNJbWx1ZEdWdWRDSTZleUppYVc1a2FXNW5JanA3SW1sdWMzUmhibU5sSWpvaWJXMHRkR1Z6ZENJc0ltRjFaR2xsYm1ObElqb2liMk4wYjNBdGRHVnpkQ0lzSW05eVoyRnVhWHBoZEdsdmJpSTZJdWU3aE9lN2h5L292NURva0tVZ1FTSXNJbVZ0Y0d4dmVXVmxJam9pNWJLWDVMMk5PdVdJaHVhZWtPV1JtQ0lzSW5WelpYSWlPaUoxZFhWMWRYVjFkWFYxZFhWMWRYVjFkWFYxZFhWMWRYVjFkU0lzSW5SbFlXMGlPaUowZEhSMGRIUjBkSFIwZEhSMGRIUjBkSFIwZEhSMGRIUjBkQ0lzSW1Ob1lXNXVaV3dpT2lKalkyTmpZMk5qWTJOalkyTmpZMk5qWTJOalkyTmpZMk5qWXlJc0ltSnZkQ0k2SW1KaVltSmlZbUppWW1KaVltSmlZbUppWW1KaVltSmlZbUppSW4wc0luSmxZMlZwY0hRaU9pSmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhJaXdpY21WalpXbHdkRjlsZUhCcGNtVnpYMkYwSWpveE5qQTVPVGtzSW1kdllXd2lPaUpWYm5SeWRYTjBaV1FnWEhVd01ETmpjbVZ4ZFdWemRGeDFNREF6WlNCY2RUQXdNallnNUxpdDVwYUhYSFV5TURJNGJHbHVaVngxTWpBeU9XVnVaQ0lzSW0xdlpHVWlPaUoxYzJWeVgzSmxjWFZsYzNSbFpDSjlmUT09Iiwic2lnbmF0dXJlIjoiU2lKWnhoMmRTTVBRanNUS3ppdEE2S2JvMEVBOWtTSUFVcmNYK211Z3RtN1lRbmM0U1l5U1o5akNjR3NPL3B6Sk5iUFNUTXc2SVM4Smp1Ymp0ckdmQkE9PSJ9",
+    "Policy": {
+      "Enabled": false,
+      "KeyID": "test-key",
+      "PublicKey": "0Aie4yaqR6Q5/jq5//+LTS2SMJ5sl6vl7pqtH79qWpQ=",
+      "Binding": {
+        "instance": "mm-test",
+        "audience": "octop-test",
+        "organization": "组织/运营 A",
+        "employee": "岗位:分析员",
+        "user": "uuuuuuuuuuuuuuuuuuuuuuuuuu",
+        "team": "tttttttttttttttttttttttttt",
+        "channel": "cccccccccccccccccccccccccc",
+        "bot": "bbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "OctopActorID": 9,
+      "OctopOrganizationID": "target-org",
+      "OctopEmployeeID": "target-worker"
+    },
+    "Now": 101,
+    "Accepted": false,
+    "Expected": {
+      "Intent": {
+        "binding": {
+          "instance": "",
+          "audience": "",
+          "organization": "",
+          "employee": "",
+          "user": "",
+          "team": "",
+          "channel": "",
+          "bot": ""
+        },
+        "receipt": "",
+        "receipt_expires_at": 0,
+        "goal": "",
+        "mode": ""
+      },
+      "OctopActorID": 0,
+      "OctopOrganizationID": "",
+      "OctopEmployeeID": "",
+      "DeliveryKey": "",
+      "Fingerprint": ""
+    }
+  },
+  {
+    "Name": "unmapped-worker",
+    "Proof": "eyJwYXlsb2FkIjoiZXlKMlpYSnphVzl1SWpveUxDSnJaWGxmYVdRaU9pSjBaWE4wTFd0bGVTSXNJbWx6YzNWbFpDSTZNVEF3TENKbGVIQnBjbVZ6SWpveE5qQXNJbWx1ZEdWdWRDSTZleUppYVc1a2FXNW5JanA3SW1sdWMzUmhibU5sSWpvaWJXMHRkR1Z6ZENJc0ltRjFaR2xsYm1ObElqb2liMk4wYjNBdGRHVnpkQ0lzSW05eVoyRnVhWHBoZEdsdmJpSTZJdWU3aE9lN2h5L292NURva0tVZ1FTSXNJbVZ0Y0d4dmVXVmxJam9pNWJLWDVMMk5PdVdJaHVhZWtPV1JtQ0lzSW5WelpYSWlPaUoxZFhWMWRYVjFkWFYxZFhWMWRYVjFkWFYxZFhWMWRYVjFkU0lzSW5SbFlXMGlPaUowZEhSMGRIUjBkSFIwZEhSMGRIUjBkSFIwZEhSMGRIUjBkQ0lzSW1Ob1lXNXVaV3dpT2lKalkyTmpZMk5qWTJOalkyTmpZMk5qWTJOalkyTmpZMk5qWXlJc0ltSnZkQ0k2SW1KaVltSmlZbUppWW1KaVltSmlZbUppWW1KaVltSmlZbUppSW4wc0luSmxZMlZwY0hRaU9pSmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhJaXdpY21WalpXbHdkRjlsZUhCcGNtVnpYMkYwSWpveE5qQTVPVGtzSW1kdllXd2lPaUpWYm5SeWRYTjBaV1FnWEhVd01ETmpjbVZ4ZFdWemRGeDFNREF6WlNCY2RUQXdNallnNUxpdDVwYUhYSFV5TURJNGJHbHVaVngxTWpBeU9XVnVaQ0lzSW0xdlpHVWlPaUoxYzJWeVgzSmxjWFZsYzNSbFpDSjlmUT09Iiwic2lnbmF0dXJlIjoiU2lKWnhoMmRTTVBRanNUS3ppdEE2S2JvMEVBOWtTSUFVcmNYK211Z3RtN1lRbmM0U1l5U1o5akNjR3NPL3B6Sk5iUFNUTXc2SVM4Smp1Ymp0ckdmQkE9PSJ9",
+    "Policy": {
+      "Enabled": true,
+      "KeyID": "test-key",
+      "PublicKey": "0Aie4yaqR6Q5/jq5//+LTS2SMJ5sl6vl7pqtH79qWpQ=",
+      "Binding": {
+        "instance": "mm-test",
+        "audience": "octop-test",
+        "organization": "组织/运营 A",
+        "employee": "岗位:分析员",
+        "user": "uuuuuuuuuuuuuuuuuuuuuuuuuu",
+        "team": "tttttttttttttttttttttttttt",
+        "channel": "cccccccccccccccccccccccccc",
+        "bot": "bbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "OctopActorID": 9,
+      "OctopOrganizationID": "target-org",
+      "OctopEmployeeID": ""
+    },
+    "Now": 101,
+    "Accepted": false,
+    "Expected": {
+      "Intent": {
+        "binding": {
+          "instance": "",
+          "audience": "",
+          "organization": "",
+          "employee": "",
+          "user": "",
+          "team": "",
+          "channel": "",
+          "bot": ""
+        },
+        "receipt": "",
+        "receipt_expires_at": 0,
+        "goal": "",
+        "mode": ""
+      },
+      "OctopActorID": 0,
+      "OctopOrganizationID": "",
+      "OctopEmployeeID": "",
+      "DeliveryKey": "",
+      "Fingerprint": ""
+    }
+  },
+  {
+    "Name": "signed-beyond-source-expiry",
+    "Proof": "eyJwYXlsb2FkIjoiZXlKMlpYSnphVzl1SWpveUxDSnJaWGxmYVdRaU9pSjBaWE4wTFd0bGVTSXNJbWx6YzNWbFpDSTZNVEF3TENKbGVIQnBjbVZ6SWpveE5qRXNJbWx1ZEdWdWRDSTZleUppYVc1a2FXNW5JanA3SW1sdWMzUmhibU5sSWpvaWJXMHRkR1Z6ZENJc0ltRjFaR2xsYm1ObElqb2liMk4wYjNBdGRHVnpkQ0lzSW05eVoyRnVhWHBoZEdsdmJpSTZJdWU3aE9lN2h5L292NURva0tVZ1FTSXNJbVZ0Y0d4dmVXVmxJam9pNWJLWDVMMk5PdVdJaHVhZWtPV1JtQ0lzSW5WelpYSWlPaUoxZFhWMWRYVjFkWFYxZFhWMWRYVjFkWFYxZFhWMWRYVjFkU0lzSW5SbFlXMGlPaUowZEhSMGRIUjBkSFIwZEhSMGRIUjBkSFIwZEhSMGRIUjBkQ0lzSW1Ob1lXNXVaV3dpT2lKalkyTmpZMk5qWTJOalkyTmpZMk5qWTJOalkyTmpZMk5qWXlJc0ltSnZkQ0k2SW1KaVltSmlZbUppWW1KaVltSmlZbUppWW1KaVltSmlZbUppSW4wc0luSmxZMlZwY0hRaU9pSmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhJaXdpY21WalpXbHdkRjlsZUhCcGNtVnpYMkYwSWpveE5qQTVPVGtzSW1kdllXd2lPaUpWYm5SeWRYTjBaV1FnWEhVd01ETmpjbVZ4ZFdWemRGeDFNREF6WlNCY2RUQXdNallnNUxpdDVwYUhYSFV5TURJNGJHbHVaVngxTWpBeU9XVnVaQ0lzSW0xdlpHVWlPaUoxYzJWeVgzSmxjWFZsYzNSbFpDSjlmUT09Iiwic2lnbmF0dXJlIjoiZklYQmJFRlcwNk5hbXg5WEQxWVNWSXBEUkVZUDVtR3FqM3JkS1p1Rk9HbDJKYUNFM05LVFBKZUIwcmxzNkJLQWVpbE8rR2IvZW9sQjg1dnYzSlRqQ2c9PSJ9",
+    "Policy": {
+      "Enabled": true,
+      "KeyID": "test-key",
+      "PublicKey": "0Aie4yaqR6Q5/jq5//+LTS2SMJ5sl6vl7pqtH79qWpQ=",
+      "Binding": {
+        "instance": "mm-test",
+        "audience": "octop-test",
+        "organization": "组织/运营 A",
+        "employee": "岗位:分析员",
+        "user": "uuuuuuuuuuuuuuuuuuuuuuuuuu",
+        "team": "tttttttttttttttttttttttttt",
+        "channel": "cccccccccccccccccccccccccc",
+        "bot": "bbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "OctopActorID": 9,
+      "OctopOrganizationID": "target-org",
+      "OctopEmployeeID": "target-worker"
+    },
+    "Now": 101,
+    "Accepted": false,
+    "Expected": {
+      "Intent": {
+        "binding": {
+          "instance": "",
+          "audience": "",
+          "organization": "",
+          "employee": "",
+          "user": "",
+          "team": "",
+          "channel": "",
+          "bot": ""
+        },
+        "receipt": "",
+        "receipt_expires_at": 0,
+        "goal": "",
+        "mode": ""
+      },
+      "OctopActorID": 0,
+      "OctopOrganizationID": "",
+      "OctopEmployeeID": "",
+      "DeliveryKey": "",
+      "Fingerprint": ""
+    }
+  },
+  {
+    "Name": "tampered-goal",
+    "Proof": "eyJwYXlsb2FkIjoiZXlKMlpYSnphVzl1SWpveUxDSnJaWGxmYVdRaU9pSjBaWE4wTFd0bGVTSXNJbWx6YzNWbFpDSTZNVEF3TENKbGVIQnBjbVZ6SWpveE5qQXNJbWx1ZEdWdWRDSTZleUppYVc1a2FXNW5JanA3SW1sdWMzUmhibU5sSWpvaWJXMHRkR1Z6ZENJc0ltRjFaR2xsYm1ObElqb2liMk4wYjNBdGRHVnpkQ0lzSW05eVoyRnVhWHBoZEdsdmJpSTZJdWU3aE9lN2h5L292NURva0tVZ1FTSXNJbVZ0Y0d4dmVXVmxJam9pNWJLWDVMMk5PdVdJaHVhZWtPV1JtQ0lzSW5WelpYSWlPaUoxZFhWMWRYVjFkWFYxZFhWMWRYVjFkWFYxZFhWMWRYVjFkU0lzSW5SbFlXMGlPaUowZEhSMGRIUjBkSFIwZEhSMGRIUjBkSFIwZEhSMGRIUjBkQ0lzSW1Ob1lXNXVaV3dpT2lKalkyTmpZMk5qWTJOalkyTmpZMk5qWTJOalkyTmpZMk5qWXlJc0ltSnZkQ0k2SW1KaVltSmlZbUppWW1KaVltSmlZbUppWW1KaVltSmlZbUppSW4wc0luSmxZMlZwY0hRaU9pSmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhJaXdpY21WalpXbHdkRjlsZUhCcGNtVnpYMkYwSWpveE5qQTVPVGtzSW1kdllXd2lPaUpoYkhSbGNtVmtJaXdpYlc5a1pTSTZJblZ6WlhKZmNtVnhkV1Z6ZEdWa0luMTkiLCJzaWduYXR1cmUiOiJTaUpaeGgyZFNNUFFqc1RLeml0QTZLYm8wRUE5a1NJQVVyY1grbXVndG03WVFuYzRTWXlTWjlqQ2NHc08vcHpKTmJQU1RNdzZJUzhKanVianRyR2ZCQT09In0=",
+    "Policy": {
+      "Enabled": true,
+      "KeyID": "test-key",
+      "PublicKey": "0Aie4yaqR6Q5/jq5//+LTS2SMJ5sl6vl7pqtH79qWpQ=",
+      "Binding": {
+        "instance": "mm-test",
+        "audience": "octop-test",
+        "organization": "组织/运营 A",
+        "employee": "岗位:分析员",
+        "user": "uuuuuuuuuuuuuuuuuuuuuuuuuu",
+        "team": "tttttttttttttttttttttttttt",
+        "channel": "cccccccccccccccccccccccccc",
+        "bot": "bbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "OctopActorID": 9,
+      "OctopOrganizationID": "target-org",
+      "OctopEmployeeID": "target-worker"
+    },
+    "Now": 101,
+    "Accepted": false,
+    "Expected": {
+      "Intent": {
+        "binding": {
+          "instance": "",
+          "audience": "",
+          "organization": "",
+          "employee": "",
+          "user": "",
+          "team": "",
+          "channel": "",
+          "bot": ""
+        },
+        "receipt": "",
+        "receipt_expires_at": 0,
+        "goal": "",
+        "mode": ""
+      },
+      "OctopActorID": 0,
+      "OctopOrganizationID": "",
+      "OctopEmployeeID": "",
+      "DeliveryKey": "",
+      "Fingerprint": ""
+    }
+  },
+  {
+    "Name": "old-protocol",
+    "Proof": "eyJwYXlsb2FkIjoiZXlKMlpYSnphVzl1SWpveExDSnJaWGxmYVdRaU9pSjBaWE4wTFd0bGVTSXNJbWx6YzNWbFpDSTZNVEF3TENKbGVIQnBjbVZ6SWpveE5qQXNJbWx1ZEdWdWRDSTZleUppYVc1a2FXNW5JanA3SW1sdWMzUmhibU5sSWpvaWJXMHRkR1Z6ZENJc0ltRjFaR2xsYm1ObElqb2liMk4wYjNBdGRHVnpkQ0lzSW05eVoyRnVhWHBoZEdsdmJpSTZJdWU3aE9lN2h5L292NURva0tVZ1FTSXNJbVZ0Y0d4dmVXVmxJam9pNWJLWDVMMk5PdVdJaHVhZWtPV1JtQ0lzSW5WelpYSWlPaUoxZFhWMWRYVjFkWFYxZFhWMWRYVjFkWFYxZFhWMWRYVjFkU0lzSW5SbFlXMGlPaUowZEhSMGRIUjBkSFIwZEhSMGRIUjBkSFIwZEhSMGRIUjBkQ0lzSW1Ob1lXNXVaV3dpT2lKalkyTmpZMk5qWTJOalkyTmpZMk5qWTJOalkyTmpZMk5qWXlJc0ltSnZkQ0k2SW1KaVltSmlZbUppWW1KaVltSmlZbUppWW1KaVltSmlZbUppSW4wc0luSmxZMlZwY0hRaU9pSmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhZV0ZoWVdGaFlXRmhJaXdpY21WalpXbHdkRjlsZUhCcGNtVnpYMkYwSWpveE5qQTVPVGtzSW1kdllXd2lPaUpoYkhSbGNtVmtJaXdpYlc5a1pTSTZJblZ6WlhKZmNtVnhkV1Z6ZEdWa0luMTkiLCJzaWduYXR1cmUiOiIrNTBPQmhudWw1UXY4b1d0aUVGSXJCTndHK3VZczloY24zdHU2amtRazA0M05tZGV2UGp5a3M4ZXFWTDMzeGFBQ0ZJOXdTSWJtSzFtQkttL2Q2eHBEZz09In0=",
+    "Policy": {
+      "Enabled": true,
+      "KeyID": "test-key",
+      "PublicKey": "0Aie4yaqR6Q5/jq5//+LTS2SMJ5sl6vl7pqtH79qWpQ=",
+      "Binding": {
+        "instance": "mm-test",
+        "audience": "octop-test",
+        "organization": "组织/运营 A",
+        "employee": "岗位:分析员",
+        "user": "uuuuuuuuuuuuuuuuuuuuuuuuuu",
+        "team": "tttttttttttttttttttttttttt",
+        "channel": "cccccccccccccccccccccccccc",
+        "bot": "bbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "OctopActorID": 9,
+      "OctopOrganizationID": "target-org",
+      "OctopEmployeeID": "target-worker"
+    },
+    "Now": 101,
+    "Accepted": false,
+    "Expected": {
+      "Intent": {
+        "binding": {
+          "instance": "",
+          "audience": "",
+          "organization": "",
+          "employee": "",
+          "user": "",
+          "team": "",
+          "channel": "",
+          "bot": ""
+        },
+        "receipt": "",
+        "receipt_expires_at": 0,
+        "goal": "",
+        "mode": ""
+      },
+      "OctopActorID": 0,
+      "OctopOrganizationID": "",
+      "OctopEmployeeID": "",
+      "DeliveryKey": "",
+      "Fingerprint": ""
+    }
+  }
+]
+
