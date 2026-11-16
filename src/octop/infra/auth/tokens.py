@@ -70,3 +70,15 @@ def require_session_age(payload: dict[str, Any], maximum_seconds: int) -> None:
         raise InvalidToken("session start missing or invalid")
     if now - started >= maximum_seconds:
         raise TokenExpired()
+
+
+def require_token_activity(payload: dict[str, Any], maximum_seconds: int) -> None:
+    """Bound time since this credential was issued, not human or family-wide activity."""
+    if maximum_seconds <= 0:
+        return
+    issued = payload.get("iat")
+    now = int(time.time())
+    if type(issued) is not int or issued < 0 or issued > now:
+        raise InvalidToken("token activity missing or invalid")
+    if now - issued >= maximum_seconds:
+        raise TokenExpired()

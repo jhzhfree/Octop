@@ -479,3 +479,28 @@ def test_absolute_session_timeout_config(tmp_path, monkeypatch, value, source):
             load()
     else:
         assert load().session_absolute_timeout_seconds == value
+
+
+@pytest.mark.parametrize("value", [-1, 1, 119, 0, 120, 1800])
+@pytest.mark.parametrize("source", ["direct", "file", "environment"])
+def test_idle_session_timeout_config(tmp_path, monkeypatch, value, source):
+    from octop.config import OctopConfig
+
+    path = tmp_path / "config.json"
+    if source == "file":
+        path.write_text(json.dumps({"session_idle_timeout_seconds": value}))
+    if source == "environment":
+        monkeypatch.setenv("OCTOP_SESSION_IDLE_TIMEOUT", str(value))
+
+    def load():
+        return (
+            OctopConfig(session_idle_timeout_seconds=value)
+            if source == "direct"
+            else load_config(path)
+        )
+
+    if value != 0 and value < 120:
+        with pytest.raises(ValueError, match="session_idle_timeout_seconds"):
+            load()
+    else:
+        assert load().session_idle_timeout_seconds == value

@@ -65,6 +65,7 @@ on each start. Schema (`OctopConfig` in `octop/config.py`):
   "log_level": "info",
   "access_token_ttl_seconds": 86400,
   "session_absolute_timeout_seconds": 0,
+  "session_idle_timeout_seconds": 0,
   "login_max_attempts": 5,
   "login_lockout_seconds": 900,
   "cors_origins": [],
@@ -142,6 +143,7 @@ Each variable, when set, takes precedence over the matching key in
 | `OCTOP_LOG_COMPRESS` | bool | `true` | logrotate-style `compress` + `delaycompress`: gzip prior rotated plains on the next cycle (`octop.log.YYYY-MM-DD.gz`); the newest rotated file stays uncompressed until then |
 | `OCTOP_ACCESS_TOKEN_TTL` | int (seconds) | `86400` | JWT access-token lifetime |
 | `OCTOP_SESSION_ABSOLUTE_TIMEOUT` | non-negative int (seconds) | `0` | Absolute session lifetime across renewals; 0 disables the policy. Enabling requires legacy tokens without a signed session start to log in again. See [policy and limits](ai-tagent/absolute-session-timeout.md). |
+| `OCTOP_SESSION_IDLE_TIMEOUT` | int (seconds), 0 or ≥120 | `0` | Signed credential inactivity limit. Only explicit renewal refreshes it; ordinary traffic does not. See [semantics and compatibility](ai-tagent/credential-idle-timeout.md). |
 | `OCTOP_LOGIN_MAX_ATTEMPTS` | int | `5` | Failed-login attempts before lockout |
 | `OCTOP_LOGIN_LOCKOUT_SECONDS` | int | `900` | Lockout duration after `OCTOP_LOGIN_MAX_ATTEMPTS` failures |
 | `OCTOP_CAPTCHA_PROVIDER` | slug | `slider` | Login captcha (`slider`, `turnstile`, `hcaptcha`, `recaptcha-v3`, `tencent`, `geetest-v4`; `recaptcha` v2 stays resolvable for existing configs but is unlisted). Boot snapshot; restart after change |

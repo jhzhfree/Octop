@@ -12,7 +12,7 @@ from octop.infra.auth import sessions
 from octop.infra.auth.tokens import InvalidToken as InvalidToken
 from octop.infra.auth.tokens import TokenExpired as TokenExpired
 from octop.infra.auth.tokens import decode_token as decode_token
-from octop.infra.auth.tokens import require_session_age
+from octop.infra.auth.tokens import require_session_age, require_token_activity
 from octop.infra.auth.tokens import sign_token as sign_token
 from octop.infra.errors import ErrorCode, OctopError
 from octop.infra.users.permissions import PERMISSIONS, user_has_permission
@@ -103,6 +103,7 @@ def _decode(server: OctopServer, token: str) -> dict[str, Any]:
     try:
         payload = decode_token(secret, token)
         require_session_age(payload, server.services.config.session_absolute_timeout_seconds)
+        require_token_activity(payload, server.services.config.session_idle_timeout_seconds)
         sessions.require_active(server.services.db, payload, token)
         return payload
     except TokenExpired as exc:
@@ -121,7 +122,7 @@ def resolve_user_from_token(server: OctopServer, token: str) -> User:
 
 
 def maybe_sliding_renew_token(server: OctopServer, token: str, user: User) -> str | None:
-    """Return a fresh access token when ``token`` is past the sliding renew threshold.
+    """Renew at the TTL threshold, or on explicit activity when idle policy is enabled.
 
     Called only by the explicit renewal endpoint; ordinary traffic is not activity.
     Threshold is max(1, TTL // 3), inclusive, so short TTLs have a valid
@@ -138,7 +139,9 @@ def maybe_sliding_renew_token(server: OctopServer, token: str, user: User) -> st
     if remaining <= 0:
         raise OctopError(ErrorCode.TOKEN_EXPIRED, "token expired")
     threshold = max(1, ttl // 3)
-    if remaining > threshold:
+    # With an idle policy, every admitted explicit activity must issue fresh
+    # signed activity evidence even while the access token has plenty of TTL.
+    if remaining > threshold and not server.services.config.session_idle_timeout_seconds:
         return None
     secret = server.services.secret_repo.get("jwt")
     if secret is None:

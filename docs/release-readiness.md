@@ -10,11 +10,14 @@
 
 **AI-TAgent 企业场景仍处于开发阶段，尚不满足 1.0 发布条件。**
 当前开发分支为 `feature/akb-octop-litellm-dev`；本轮开始核对的远端提交为
-`92a7c5b87faeee009f6e08045426a08c0606b5ca`。后续提交以 Git 实际记录为准，
+`5b322a6c15ebfd1fcb0f180b74f4819b508accfa`。后续提交以 Git 实际记录为准，
 本文件不是发布批准，也不授权生产操作、合并、部署或外部消息发送。
 
-本轮新增[可选服务端绝对会话时限](ai-tagent/absolute-session-timeout.md)。默认关闭
-以保持兼容；生产策略尚未选择，服务端 idle 时限仍未实现，不属于完整会话验收。
+本轮新增[可选凭据空闲期限](ai-tagent/credential-idle-timeout.md)，按签名凭据
+独立计时，普通轮询不刷新；不是共享家族活动账本或真人空闲检测，默认仍关闭。
+
+前一阶段新增[可选服务端绝对会话时限](ai-tagent/absolute-session-timeout.md)。默认关闭
+以保持兼容；生产策略尚未选择，完整共享会话活动管理仍未实现，不属于完整会话验收。
 
 前一阶段补充[启动认证会话归属](ai-tagent/boot-session-ownership.md)：旧启动响应不得
 清理后续登录或挂载旧身份页面；验证范围及剩余边界以该记录为准。

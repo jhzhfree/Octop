@@ -224,7 +224,7 @@ async def login(
     "/renew",
     status_code=204,
     summary="Explicitly renew an active session",
-    description="Authenticated client activity request, not proof of a human action. Ordinary API traffic never renews. Preserves session family; expired or revoked tokens cannot renew.",
+    description="Authenticated client activity request, not proof of a human action. Ordinary API traffic never renews. Preserves session family and absolute start; expired, idle-expired or revoked tokens cannot renew. With the optional idle policy, every admitted explicit request refreshes signed credential activity.",
 )
 def renew_session(
     request: Request, user: Any = Depends(current_user), server: Any = Depends(get_server)

@@ -18,7 +18,13 @@ Tokens expire after `OCTOP_ACCESS_TOKEN_TTL` seconds (default 24 h).
 When `OCTOP_SESSION_ABSOLUTE_TIMEOUT` is positive, authentication also rejects a
 session at its signed start time plus that interval, regardless of renewal or a
 later JWT `exp`. The default is 0 (disabled); legacy tokens without a signed
-start require a new login when enabled. This does not implement an idle timeout.
+start require a new login when enabled.
+Separately, `OCTOP_SESSION_IDLE_TIMEOUT` (default 0; positive values ≥120 seconds)
+limits time since the presented credential was signed. With this policy enabled,
+each admitted `POST /auth/renew` issues fresh credentials even before the TTL
+renewal window. Ordinary API requests do not refresh this deadline. Older tokens
+expire independently; a later token does not reactivate them. This is not proof
+of human activity or a shared family-wide last-activity record.
 Ordinary requests never renew tokens. Explicit authenticated `POST /api/auth/renew`
 returns 204 with `Cache-Control: no-store`; below one-third of the configured TTL
 it returns `X-Octop-Access-Token` for the same session family. Apply it only while
