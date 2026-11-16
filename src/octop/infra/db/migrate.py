@@ -1986,6 +1986,19 @@ def _apply_sqlite_migration(db: DatabasePool, version: int, path: Path) -> None:
     Version 17 adds sticky ``conversation_mode`` and ``pending_plan_path`` on threads.
     Version 18 adds ``user_role`` templates and non-FK role id/name snapshots.
     """
+    if version == 46:
+        # Column, legacy broker fence and version must commit together. SQLite
+        # executescript otherwise autocommits each statement in this pool.
+        with db.connect() as conn:
+            try:
+                conn.executescript(
+                    "BEGIN IMMEDIATE;\n" + path.read_text(encoding="utf-8") + "\nCOMMIT;"
+                )
+            except Exception:
+                if conn.in_transaction:
+                    conn.rollback()
+                raise
+        return
     if version == 2:
         if _table_exists(db, "cron_jobs"):
             _ensure_column(

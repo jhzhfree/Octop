@@ -148,6 +148,62 @@ class MattermostIngressRepo:
             self._authorize(conn, mapping)
             return self._load(conn, mapping, key)
 
+    @staticmethod
+    def _advance_observation(conn: Any, row: dict[str, Any], version: int, now: int) -> None:
+        if version < row["observed_source_version"]:
+            raise IntakeError(409, "SOURCE_VERSION_REWOUND")
+        if version == row["observed_source_version"]:
+            return
+        conn.execute(
+            "UPDATE mattermost_intakes SET observed_source_version=? WHERE delivery_key=?",
+            (version, row["delivery_key"]),
+        )
+        row["observed_source_version"] = version
+        conn.execute(
+            "INSERT INTO audit_log(ts,actor,action,target,payload) VALUES(?,?,?,?,?)",
+            (
+                now,
+                "broker:" + row["broker_id"],
+                "mattermost.source_observed",
+                row["delivery_key"],
+                json.dumps(
+                    {
+                        "fingerprint": row["fingerprint"],
+                        "observed_source_version": str(version),
+                        "state_source_version": str(row["source_version"]),
+                        "revision": row["revision"],
+                        "execution_authorized": False,
+                    }
+                ),
+            ),
+        )
+
+    def observe_source(
+        self,
+        mapping: dict[str, Any],
+        identity: dict[str, Any],
+        version: int,
+        clock: Callable[[], int],
+    ) -> None:
+        """Commit matching source evidence separately from a requested business action.
+
+        A later action may fail CAS or be denied by source state. Neither erases a
+        committed observation. Never creates a new identity or authorizes execution.
+        """
+        with self.db.transaction() as conn:
+            self._authorize(conn, mapping)
+            if not conn.execute(
+                "SELECT 1 FROM mattermost_intakes WHERE delivery_key=?", (identity["delivery_key"],)
+            ).fetchone():
+                return
+            row = self._load(conn, mapping, identity["delivery_key"])
+            if any(
+                row[k] != identity[k]
+                for k in ("fingerprint", "receipt", "commitment", "source_expires_at")
+            ):
+                raise IntakeError(409, "INTAKE_IDENTITY_CONFLICT")
+            self._advance_observation(conn, row, version, clock())
+
     def accept(
         self,
         mapping: dict[str, Any],
@@ -167,15 +223,17 @@ class MattermostIngressRepo:
             ).fetchone()
             if exists:
                 row = self._load(conn, mapping, values["delivery_key"])
-                if row["fingerprint"] != values["fingerprint"]:
+                if any(
+                    row[k] != values[k]
+                    for k in ("fingerprint", "receipt", "commitment", "source_expires_at")
+                ):
                     raise IntakeError(409, "INTAKE_IDENTITY_CONFLICT")
                 if (
                     row["state"] in {"cancelled", "expired"}
                     or now * 1000 >= row["source_expires_at"]
                 ):
                     raise IntakeError(410, "INTAKE_TERMINAL")
-                if values["source_version"] < row["source_version"]:
-                    raise IntakeError(409, "SOURCE_VERSION_REWOUND")
+                self._advance_observation(conn, row, values["source_version"], now)
                 return row, False
             # Serialize capacity by locked broker row. Terminal identities are never deleted.
             if (
@@ -199,6 +257,7 @@ class MattermostIngressRepo:
                     )
                 }
                 | {
+                    "observed_source_version": values["source_version"],
                     "state": "pending_authorization",
                     "revision": 1,
                     "created_at": now,
@@ -217,6 +276,7 @@ class MattermostIngressRepo:
                 "commitment",
                 "source_expires_at",
                 "source_version",
+                "observed_source_version",
                 "state",
                 "revision",
                 "created_at",
@@ -250,9 +310,10 @@ class MattermostIngressRepo:
                     row[k] != observed[k]
                     for k in ("fingerprint", "commitment", "receipt", "source_expires_at")
                 )
-                or source_version < row["source_version"]
+                or source_version < row["observed_source_version"]
             ):
                 raise IntakeError(409, "INTAKE_IDENTITY_CONFLICT")
+            self._advance_observation(conn, row, source_version, clock())
             if row["state"] in {"cancelled", "expired"}:
                 return row
             now = clock()

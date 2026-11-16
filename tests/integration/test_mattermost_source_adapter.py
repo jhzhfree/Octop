@@ -284,3 +284,105 @@ async def test_live_transport_and_reused_source_key_are_rejected_before_dispatch
     )
     assert (await send(adapter.env)).status_code == 503
     assert adapter.state["signed"] == 0 and not adapter.state["requests"]
+
+
+@pytest.mark.asyncio
+async def test_signed_source_high_water_survives_duplicates_and_terminal_queries(adapter):
+    e = adapter.env
+    first = await send(e)
+    assert first.status_code == 201
+    e.state["version"] = 10
+    duplicate = await send(e)
+    assert duplicate.status_code == 200
+    assert duplicate.json()["source_version"] == "10"
+    assert duplicate.json()["state_source_version"] == "1"
+    assert duplicate.json()["revision"] == 1
+    e.state["version"] = 2
+    assert (await send(e)).status_code == 409
+    e.state.update(source_state="cancelled", version=3)
+    path, body, headers = cancellation(e)
+    assert (await send(e, "POST", path, body, headers)).status_code == 409
+    query = await send(e, "GET", PATH + "/" + e.key)
+    assert (
+        query.json()["source_version"] == "10" and query.json()["state"] == "pending_authorization"
+    )
+    e.state["version"] = 11
+    path, body, headers = cancellation(e)
+    assert (await send(e, "POST", path, body, headers)).json()["state"] == "cancelled"
+    e.state["version"] = 20
+    path, body, headers = cancellation(e)
+    terminal = await send(e, "POST", path, body, headers)
+    assert terminal.json()["source_version"] == "20"
+    assert terminal.json()["state_source_version"] == "11" and terminal.json()["revision"] == 2
+    e.state["version"] = 19
+    path, body, headers = cancellation(e)
+    assert (await send(e, "POST", path, body, headers)).status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_denied_source_state_still_records_matching_high_water(adapter):
+    e = adapter.env
+    assert (await send(e)).status_code == 201
+    e.state.update(version=10, source_state="cancelled")
+    assert (await send(e)).status_code == 403
+    query = (await send(e, "GET", PATH + "/" + e.key)).json()
+    assert query["source_version"] == "10" and query["revision"] == 1
+    assert query["state"] == "pending_authorization"
+    e.state.update(version=9, source_state="awaiting_octop_authorization")
+    assert (await send(e)).status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_failed_cancel_cas_can_retry_same_observed_version(adapter):
+    e = adapter.env
+    assert (await send(e)).status_code == 201
+    e.state.update(version=10, source_state="cancelled")
+    path, body, headers = cancellation(e, revision=2)
+    assert (await send(e, "POST", path, body, headers)).status_code == 409
+    row = (await send(e, "GET", PATH + "/" + e.key)).json()
+    assert row["source_version"] == "10" and row["state_source_version"] == "1"
+    path, body, headers = cancellation(e, revision=1)
+    assert (await send(e, "POST", path, body, headers)).json()["state"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_observation_and_audit_rollback_but_business_failure_preserves_observation(adapter):
+    e = adapter.env
+    assert (await send(e)).status_code == 201
+    e.state["version"] = 10
+    with e.db.connect() as conn:
+        conn.execute("""CREATE TRIGGER fail_observation BEFORE INSERT ON audit_log
+            WHEN NEW.action='mattermost.source_observed'
+            BEGIN SELECT RAISE(ABORT,'synthetic observation failure'); END""")
+    assert (await send(e)).status_code == 503
+    assert (await send(e, "GET", PATH + "/" + e.key)).json()["source_version"] == "1"
+    with e.db.connect() as conn:
+        conn.execute("DROP TRIGGER fail_observation")
+        conn.execute("""CREATE TRIGGER fail_watermark_cancel BEFORE INSERT ON audit_log
+            WHEN NEW.action='mattermost.intake.cancelled'
+            BEGIN SELECT RAISE(ABORT,'synthetic business failure'); END""")
+    e.state["source_state"] = "cancelled"
+    path, body, headers = cancellation(e)
+    assert (await send(e, "POST", path, body, headers)).status_code == 503
+    row = (await send(e, "GET", PATH + "/" + e.key)).json()
+    assert row["source_version"] == "10" and row["state_source_version"] == "1"
+    assert row["state"] == "pending_authorization"
+
+
+@pytest.mark.asyncio
+async def test_source_observation_commit_ack_loss_requires_original_key_reconciliation(
+    adapter, monkeypatch
+):
+    e = adapter.env
+    assert (await send(e)).status_code == 201
+    original = e.repo.observe_source
+
+    def lost(*args, **kwargs):
+        original(*args, **kwargs)
+        raise RuntimeError("synthetic acknowledgement loss")
+
+    monkeypatch.setattr(e.repo, "observe_source", lost)
+    e.state["version"] = 10
+    assert (await send(e)).status_code == 503
+    row = (await send(e, "GET", PATH + "/" + e.key)).json()
+    assert row["source_version"] == "10" and row["revision"] == 1

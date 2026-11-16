@@ -131,3 +131,5 @@ PG 路径用行锁但未真实验证。nonce 事务先于业务事务：后续�
 
 后续阶段提供[签名源状态适配器](mattermost-source-adapter.md)的受控离线装配；
 未提供生产 source provider 或放开真实网络，上述本阶段结果仍为历史证据。
+
+后续修正：参见[来源高水位与 schema 046 升级限制](mattermost-source-watermark.md)。

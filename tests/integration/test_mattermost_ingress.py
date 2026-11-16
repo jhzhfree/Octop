@@ -549,3 +549,136 @@ async def test_reused_proof_key_is_not_a_separate_broker_identity(ingress):
         conn.execute("UPDATE mattermost_brokers SET broker_public_key=proof_public_key")
     assert (await send(e)).status_code == 503
     assert count(e, "mattermost_broker_nonces") == count(e, "mattermost_intakes") == 0
+
+
+@pytest.mark.asyncio
+async def test_source_high_water_cross_connection_competition(ingress):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from octop.infra.db.repos.mattermost_ingress import IntakeError
+
+    e = ingress
+    assert (await send(e)).status_code == 201
+    mapping = e.repo.mapping("fixture-broker")
+    row = e.repo.inspect(mapping, e.key)
+    barrier = Barrier(2)
+
+    def observe(version):
+        db = SqlitePool(e.db.path)
+        try:
+            barrier.wait(timeout=10)
+            try:
+                MattermostIngressRepo(db).observe_source(mapping, row, version, lambda: 101)
+                return "observed"
+            except IntakeError as exc:
+                return exc.code
+        finally:
+            db.close()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(observe, (2, 10)))
+    assert outcomes[1] == "observed"
+    assert outcomes[0] in ("observed", "SOURCE_VERSION_REWOUND")
+    db = SqlitePool(e.db.path)
+    try:
+        stored = MattermostIngressRepo(db).inspect(mapping, e.key)
+        assert stored["observed_source_version"] == 10
+        assert stored["source_version"] == stored["revision"] == 1
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_higher_observation_between_source_lookup_and_cancel_wins(ingress, monkeypatch):
+    e = ingress
+    assert (await send(e)).status_code == 201
+    original = e.repo.cancel
+
+    def race(mapping, observed, *args):
+        db = SqlitePool(e.db.path)
+        try:
+            MattermostIngressRepo(db).observe_source(mapping, observed, 10, lambda: 101)
+        finally:
+            db.close()
+        return original(mapping, observed, *args)
+
+    monkeypatch.setattr(e.repo, "cancel", race)
+    e.state.update(version=3, source_state="cancelled")
+    path, body, headers = cancellation(e)
+    assert (await send(e, "POST", path, body, headers)).status_code == 409
+    row = (await send(e, "GET", PATH + "/" + e.key)).json()
+    assert row["source_version"] == "10" and row["state"] == "pending_authorization"
+
+
+@pytest.mark.asyncio
+async def test_schema_46_fences_unrecoverable_legacy_observation_history(ingress):
+    from octop.infra.db.migrate import run_migrations
+
+    e = ingress
+    assert (await send(e)).status_code == 201
+    with e.db.transaction() as conn:
+        conn.execute("ALTER TABLE mattermost_intakes DROP COLUMN observed_source_version")
+        conn.execute("UPDATE mattermost_intakes SET source_version=3")
+        conn.execute("UPDATE _schema_version SET version=45")
+    run_migrations(e.db)
+    with e.db.connect() as conn:
+        row = conn.execute(
+            "SELECT source_version,observed_source_version,state,revision FROM mattermost_intakes"
+        ).fetchone()
+        assert tuple(row) == (3, 3, "pending_authorization", 1)
+        assert conn.execute("SELECT enabled FROM mattermost_brokers").fetchone()[0] == 0
+    assert (await send(e, "GET", PATH + "/" + e.key)).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_schema_46_failure_rolls_back_column_fence_and_version(ingress):
+    import sqlite3
+
+    from octop.infra.db.migrate import run_migrations
+
+    e = ingress
+    assert (await send(e)).status_code == 201
+    with e.db.transaction() as conn:
+        conn.execute("ALTER TABLE mattermost_intakes DROP COLUMN observed_source_version")
+        conn.execute("UPDATE _schema_version SET version=45")
+        conn.execute(
+            "CREATE TRIGGER fail_watermark_migration BEFORE UPDATE ON _schema_version "
+            "WHEN NEW.version=46 BEGIN SELECT RAISE(ABORT, 'injected'); END"
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="injected"):
+        run_migrations(e.db)
+    with e.db.connect() as conn:
+        assert not conn.in_transaction
+        assert conn.execute("SELECT version FROM _schema_version").fetchone()[0] == 45
+        assert conn.execute("SELECT enabled FROM mattermost_brokers").fetchone()[0] == 1
+        assert "observed_source_version" not in {
+            row[1] for row in conn.execute("PRAGMA table_info(mattermost_intakes)")
+        }
+        conn.execute("DROP TRIGGER fail_watermark_migration")
+    run_migrations(e.db)
+    with e.db.connect() as conn:
+        assert conn.execute("SELECT version FROM _schema_version").fetchone()[0] == 46
+        assert conn.execute("SELECT enabled FROM mattermost_brokers").fetchone()[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_higher_observation_between_lookup_and_duplicate_accept_wins(ingress, monkeypatch):
+    e = ingress
+    assert (await send(e)).status_code == 201
+    original = e.repo.accept
+
+    def race(mapping, values, **kwargs):
+        db = SqlitePool(e.db.path)
+        try:
+            MattermostIngressRepo(db).observe_source(mapping, values, 10, lambda: 101)
+        finally:
+            db.close()
+        return original(mapping, values, **kwargs)
+
+    monkeypatch.setattr(e.repo, "accept", race)
+    e.state.update(version=3)
+    assert (await send(e)).status_code == 409
+    row = (await send(e, "GET", PATH + "/" + e.key)).json()
+    assert row["source_version"] == "10"
+    assert row["state_source_version"] == "1" and row["revision"] == 1

@@ -134,3 +134,5 @@ UV_CACHE_DIR=/tmp/octop-uv-cache UV_OFFLINE=1 make lint-all typecheck-all
    key/URL/actor。不同公钥不等于秘密权限域隔离，需独立部署验收和轮换/撤销测试。
 4. 明确 TLS/允许目标/网络和源查询超时约束、nonce维护/容量、恢复 epoch、时钟策略，
    再单独评审生产 transport 及 app 挂载；不能直接放宽本适配器的 MockTransport 门禁。
+
+后续修正：参见[来源高水位与 schema 046 升级限制](mattermost-source-watermark.md)。

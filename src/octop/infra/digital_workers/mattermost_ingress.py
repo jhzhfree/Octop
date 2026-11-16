@@ -118,10 +118,9 @@ class MattermostIngressService:
             raise IntakeError(503, "SOURCE_UNAVAILABLE") from None
 
     @staticmethod
-    def _match(source: SourceObservation, row: dict[str, Any], state: str) -> None:
+    def _match(source: SourceObservation, row: dict[str, Any]) -> None:
         if (
-            source.state != state
-            or source.delivery_key != row["delivery_key"]
+            source.delivery_key != row["delivery_key"]
             or source.fingerprint != row["fingerprint"]
             or source.commitment != row["commitment"]
             or source.receipt_expires_at != row["source_expires_at"]
@@ -143,7 +142,10 @@ class MattermostIngressService:
             "source_expires_at": candidate.intent.receipt_expires_at,
         }
         source = await self._observe(mapping, candidate.intent.receipt)
-        self._match(source, values, "awaiting_octop_authorization")
+        self._match(source, values)
+        self.repo.observe_source(mapping, values, source.version, self.clock)
+        if source.state != "awaiting_octop_authorization":
+            raise IntakeError(403, "SOURCE_AUTHORITY_CHANGED")
         values["source_version"] = source.version
         # Recheck time and mapping after source I/O and again under transaction locks.
         return self.repo.accept(
@@ -159,7 +161,10 @@ class MattermostIngressService:
     ) -> dict[str, Any]:
         observed = self.repo.inspect(mapping, key)
         source = await self._observe(mapping, observed["receipt"])
-        self._match(source, observed, "cancelled")
+        self._match(source, observed)
+        self.repo.observe_source(mapping, observed, source.version, self.clock)
+        if source.state != "cancelled":
+            raise IntakeError(403, "SOURCE_AUTHORITY_CHANGED")
         return self.repo.cancel(mapping, observed, revision, operation, source.version, self.clock)
 
 
@@ -170,6 +175,7 @@ def public_intake(row: dict[str, Any]) -> dict[str, Any]:
         "fingerprint": row["fingerprint"],
         "state": row["state"],
         "revision": row["revision"],
-        "source_version": str(row["source_version"]),
+        "source_version": str(row["observed_source_version"]),
+        "state_source_version": str(row["source_version"]),
         "execution_authorized": False,
     }
