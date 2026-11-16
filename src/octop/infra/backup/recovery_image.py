@@ -17,7 +17,7 @@ from typing import IO, Any
 
 from octop.infra.backup.manifest import MANIFEST_VERSION, BackupManifest
 from octop.infra.backup.recovery_workspace import stage_workspaces
-from octop.infra.db.migrate import _max_discovered_version, run_migrations
+from octop.infra.db.migrate import _max_discovered_version, run_migrations, sqlite_guard_objects
 from octop.infra.db.pool import SqlitePool
 from octop.infra.db.sqlite_path import RECOVERY_QUARANTINE_FILE, RECOVERY_QUARANTINE_XATTR
 from octop.infra.errors import ErrorCode, OctopError
@@ -126,9 +126,18 @@ def _prepare_database(path: Path, manifest: BackupManifest, source_hash: str) ->
         versions = check.execute("SELECT version FROM _schema_version").fetchall()
         if versions != [(manifest.schema_version,)]:
             raise _reject("schema_watermark_mismatch")
-        if check.execute(
-            "SELECT 1 FROM sqlite_master WHERE type IN ('trigger','view') OR name=?", (_MARKER,)
-        ).fetchone():
+        objects = set(
+            check.execute(
+                "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE type IN ('trigger','view')"
+            ).fetchall()
+        )
+        expected = sqlite_guard_objects() if manifest.schema_version >= 49 else set()
+        if (
+            objects != expected
+            or check.execute("SELECT 1 FROM sqlite_master WHERE name=?", (_MARKER,)).fetchone()
+        ):
+            # Names alone are insufficient: reject modified/missing guard DDL,
+            # every extra trigger and every view before any quarantine writes.
             raise _reject("unsupported_schema_objects")
     pool = SqlitePool(path)
     try:

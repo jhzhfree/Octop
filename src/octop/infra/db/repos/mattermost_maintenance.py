@@ -18,7 +18,7 @@ class MattermostMaintenanceRepo:
 
     @staticmethod
     def _snapshot(conn: Any, broker: str) -> tuple[dict[str, Any], dict[str, Any]]:
-        if conn.execute("SELECT version FROM _schema_version").fetchone()[0] != 48:
+        if conn.execute("SELECT version FROM _schema_version").fetchone()[0] != 49:
             raise IntakeError(409, "MAINTENANCE_SCHEMA_REQUIRED")
         row = conn.execute(
             "SELECT * FROM mattermost_brokers WHERE broker_id=?", (broker,)

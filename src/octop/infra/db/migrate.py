@@ -72,6 +72,19 @@ def schema_baseline_version(dialect: str = "sqlite") -> int:
     return max((version for version, _ in discovered), default=0)
 
 
+def sqlite_guard_objects() -> set[tuple[str, str, str, str]]:
+    """Exact trusted schema-49 trigger DDL for quarantined image validation."""
+    sql = (_MIGRATIONS_DIR / "049_mattermost_storage_guards.sql").read_text(encoding="utf-8")
+    matches = re.findall(
+        r"(CREATE TRIGGER (\w+) BEFORE (?:UPDATE|INSERT|DELETE) ON (\w+)\b.*?END);",
+        sql,
+        re.DOTALL,
+    )
+    if len(matches) != 4:
+        raise RuntimeError("Invalid packaged SQLite guard definitions")
+    return {("trigger", name, table, statement) for statement, name, table in matches}
+
+
 def _current_version(db: DatabasePool) -> int:
     with db.connect() as conn:
         try:
@@ -1986,7 +1999,7 @@ def _apply_sqlite_migration(db: DatabasePool, version: int, path: Path) -> None:
     Version 17 adds sticky ``conversation_mode`` and ``pending_plan_path`` on threads.
     Version 18 adds ``user_role`` templates and non-FK role id/name snapshots.
     """
-    if version in (46, 47, 48):
+    if version in (46, 47, 48, 49):
         # Each repair and its schema version must commit together. SQLite
         # executescript otherwise autocommits each statement in this pool.
         with db.connect() as conn:
@@ -2244,6 +2257,9 @@ def _grant_default_nav_permissions(db: DatabasePool) -> None:
 
 
 def run_migrations(db: DatabasePool) -> None:
+    # Unknown newer schemas must not be repaired or clamped by this binary.
+    if _current_version(db) > schema_baseline_version(db.dialect):
+        raise RuntimeError("DATABASE_SCHEMA_NEWER_THAN_BINARY")
     if db.dialect == "sqlite":
         _repair_legacy_schema(db)
     for version, path in _discover(db.dialect):

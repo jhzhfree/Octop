@@ -1416,3 +1416,34 @@ def test_verify_rejects_invalid_inventory_even_with_matching_anchor(verification
     path.write_text(json.dumps(report))
     with pytest.raises(OctopError):
         verify_recovery_image(output, expected_report_sha256=sha(path))
+
+
+@pytest.mark.parametrize("mutation", ["modified", "missing", "extra", "view"])
+def test_schema49_only_exact_packaged_guards_are_allowed(source, tmp_path, mutation):
+    archive, _, _ = source
+    changed = tmp_path / "changed-guards.tar.gz"
+
+    def change(members):
+        database = tmp_path / "untrusted-archive.db"
+        database.write_bytes(members["db/octop.db"])
+        with sqlite3.connect(database) as conn:
+            assert conn.execute("PRAGMA journal_mode=DELETE").fetchone()[0] == "delete"
+            if mutation in {"modified", "missing"}:
+                conn.execute("DROP TRIGGER octop_schema_floor_update")
+            if mutation == "modified":
+                conn.execute(
+                    "CREATE TRIGGER octop_schema_floor_update BEFORE UPDATE ON _schema_version BEGIN SELECT 1; END"
+                )
+            if mutation == "extra":
+                conn.execute("CREATE TRIGGER untrusted BEFORE UPDATE ON users BEGIN SELECT 1; END")
+            if mutation == "view":
+                conn.execute("CREATE VIEW untrusted AS SELECT * FROM users")
+        conn.close()
+        members["db/octop.db"] = database.read_bytes()
+
+    rewrite_archive(archive, changed, change)
+    target = tmp_path / "rejected-image"
+    with pytest.raises(OctopError) as error:
+        recover(changed, target)
+    assert error.value.details["reason"] == "unsupported_schema_objects"
+    assert not target.exists()

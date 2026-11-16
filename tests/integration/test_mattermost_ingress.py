@@ -24,6 +24,7 @@ from octop.infra.digital_workers.mattermost_ingress import (
 )
 from octop.infra.digital_workers.mattermost_proof import DOMAIN, verify_proof
 from tests.integration.test_scene_execution_offline import scene_runtime as scene_runtime
+from tests.support.legacy_schema import remove_v49_guards_for_fixture
 from tests.unit.digital_workers.test_mattermost_proof import VECTORS, wire
 
 PATH = "/api/integrations/mattermost/v1/intakes"
@@ -618,9 +619,11 @@ async def test_schema_46_fences_unrecoverable_legacy_observation_history(ingress
     e = ingress
     assert (await send(e)).status_code == 201
     with e.db.transaction() as conn:
+        remove_v49_guards_for_fixture(conn)
         conn.execute("DROP TABLE mattermost_retired_intakes")
         conn.execute("ALTER TABLE mattermost_intakes DROP COLUMN observed_source_version")
         conn.execute("UPDATE mattermost_intakes SET source_version=3")
+        remove_v49_guards_for_fixture(conn)
         conn.execute("UPDATE _schema_version SET version=45")
     run_migrations(e.db)
     with e.db.connect() as conn:
@@ -641,8 +644,10 @@ async def test_schema_46_failure_rolls_back_column_fence_and_version(ingress):
     e = ingress
     assert (await send(e)).status_code == 201
     with e.db.transaction() as conn:
+        remove_v49_guards_for_fixture(conn)
         conn.execute("DROP TABLE mattermost_retired_intakes")
         conn.execute("ALTER TABLE mattermost_intakes DROP COLUMN observed_source_version")
+        remove_v49_guards_for_fixture(conn)
         conn.execute("UPDATE _schema_version SET version=45")
         conn.execute(
             "CREATE TRIGGER fail_watermark_migration BEFORE UPDATE ON _schema_version "
@@ -660,7 +665,7 @@ async def test_schema_46_failure_rolls_back_column_fence_and_version(ingress):
         conn.execute("DROP TRIGGER fail_watermark_migration")
     run_migrations(e.db)
     with e.db.connect() as conn:
-        assert conn.execute("SELECT version FROM _schema_version").fetchone()[0] == 48
+        assert conn.execute("SELECT version FROM _schema_version").fetchone()[0] == 49
         assert conn.execute("SELECT enabled FROM mattermost_brokers").fetchone()[0] == 0
 
 

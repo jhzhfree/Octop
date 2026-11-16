@@ -10,12 +10,12 @@
 
 **AI-TAgent 企业场景仍处于开发阶段，尚不满足 1.0 发布条件。**
 当前开发分支为 `feature/akb-octop-litellm-dev`；本轮开始核对的远端提交为
-`c590d0887b4ec238ba1f723013a0410e54db8e6d`。后续提交以 Git 实际记录为准，
+`86181b6d2dae889df0da5716176b48d3960f4ca3`。后续提交以 Git 实际记录为准，
 本文件不是发布批准，也不授权生产操作、合并、部署或外部消息发送。
 
-本轮修复[旧 broker 迁移的发布阻断](ai-tagent/mattermost-legacy-migration.md)：
-撤回 c590d088 的安全续用结论。047 仅建表，不再隐式永久隔离；048 禁用受旧路径影响的 broker。
-无法证明旧进程隔离，CLI 和底层 resume 均拒绝。保留诊断与停用，未实现安全启用成功路径。
+本轮修复[旧启动降级后重新启用链路](ai-tagent/mattermost-storage-guards.md)：
+真实旧迁移可将 048 降回 047，原有版本门禁不足。049 增加数据库降级/启用约束，并验证真实旧迁移与维护代码。
+这些约束不证明旧进程隔离，resume、在线/原地恢复和镜像激活仍关闭；不得宣称防混跑或部署验收完成。
 
 前一阶段交付[Mattermost 来源高水位修复](ai-tagent/mattermost-source-watermark.md)：
 独立持久化观察与审计，拒绝重复受理/取消的版本回退；schema 046 禁用已有 intake 的旧 broker，
@@ -69,7 +69,7 @@
 [操作来源记录](ai-tagent/operation-trace.md)按操作显示现有审计事实及来源未知项，
 不将单次 Cron 等同于周期自主执行。批准本地发布后仍是 `blocked_not_connected`，没有发送器。
 
-当前静态核对迁移文件 001–048 的 SQLite/PostgreSQL 配对完整；**这不是实际数据库
+当前静态核对迁移文件 001–049 的 SQLite/PostgreSQL 配对完整；**这不是实际数据库
 迁移验收**。报告读取加固及已验收交付回看的分项验证记录见
 [组织运行待办](ai-tagent/organization-run-queue.md) 的 2026-11-15 后续记录。
 其他增量证据见[验收来源标识](ai-tagent/delivery-acceptance-ui.md)及

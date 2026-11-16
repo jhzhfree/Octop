@@ -23,6 +23,7 @@ from octop.infra.db.repos.mattermost_maintenance import MattermostMaintenanceRep
 from tests.integration.test_mattermost_ingress import PATH, send
 from tests.integration.test_mattermost_ingress import ingress as ingress
 from tests.integration.test_scene_execution_offline import scene_runtime as scene_runtime
+from tests.support.legacy_schema import remove_v49_guards_for_fixture
 
 
 def rows(e, table):
@@ -42,6 +43,7 @@ def archive(name):
 
 def simulate_unsafe_47(e):
     with e.db.transaction() as conn:
+        remove_v49_guards_for_fixture(conn)
         conn.execute("UPDATE _schema_version SET version=47")
         conn.execute(
             "INSERT INTO mattermost_retired_intakes VALUES(?, 'schema047_unknown_legacy_history', 0)",
@@ -58,13 +60,14 @@ async def test_upgrade_never_permanently_retires_without_operator_consent(ingres
     original = rows(e, "mattermost_intakes")
     with e.db.transaction() as conn:
         conn.execute("DROP TABLE mattermost_retired_intakes")
+        remove_v49_guards_for_fixture(conn)
         conn.execute("UPDATE _schema_version SET version=46")
         conn.execute("UPDATE mattermost_brokers SET enabled=?", (enabled,))
     run_migrations(e.db)
     assert rows(e, "mattermost_retired_intakes") == []
     assert rows(e, "mattermost_intakes") == original
     assert rows(e, "mattermost_brokers")[0]["enabled"] == enabled
-    assert rows(e, "_schema_version")[0]["version"] == 48
+    assert rows(e, "_schema_version")[0]["version"] == 49
 
 
 @pytest.mark.asyncio
@@ -73,6 +76,7 @@ async def test_47_failure_rolls_back_empty_table_and_version(ingress):
     assert (await send(e)).status_code == 201
     with e.db.transaction() as conn:
         conn.execute("DROP TABLE mattermost_retired_intakes")
+        remove_v49_guards_for_fixture(conn)
         conn.execute("UPDATE _schema_version SET version=46")
         conn.execute(
             "CREATE TRIGGER fail47 BEFORE UPDATE ON _schema_version "
@@ -324,6 +328,7 @@ async def test_48_fences_historical_resume_without_creating_retirement(ingress):
     e = ingress
     assert (await send(e)).status_code == 201
     with e.db.transaction() as conn:
+        remove_v49_guards_for_fixture(conn)
         conn.execute("UPDATE _schema_version SET version=47")
         conn.execute(
             "INSERT INTO audit_log(ts,actor,action,target,payload) VALUES(101, 'local-maintenance', 'mattermost.maintenance.retire_and_resume','fixture-broker','{}')"
@@ -334,3 +339,126 @@ async def test_48_fences_historical_resume_without_creating_retirement(ingress):
     assert (await send(e)).status_code == 401
     status = MattermostMaintenanceRepo(e.db).status("fixture-broker")
     assert status["maintenance_events"][0]["action"] == "mattermost.maintenance.resume_blocked"
+
+
+def archived_migrator(tmp_path):
+    """Real c590d088 migrator and its full 001–047 discovery catalog."""
+    from octop.infra.db import migrate
+
+    catalog = tmp_path / "c590d088-migrations"
+    catalog.mkdir()
+    for path in migrate._MIGRATIONS_DIR.iterdir():
+        if path.name[:3].isdigit() and int(path.name[:3]) <= 47:
+            content = path.read_bytes()
+            if path.name.startswith("047_"):
+                content = (
+                    Path(__file__).parents[1] / "fixtures" / "047_c590d088.sql.txt"
+                ).read_bytes()
+            (catalog / path.name).write_bytes(content)
+    module = archive("migrate_c590d088.py.txt")
+    module["run_migrations"].__globals__["_MIGRATIONS_DIR"] = catalog
+    return module["run_migrations"]
+
+
+@pytest.mark.asyncio
+async def test_real_old_startup_clamp_resume_chain_then_database_guards(ingress, tmp_path):
+    e = ingress
+    assert (await send(e)).status_code == 201
+    simulate_unsafe_47(e)
+    with e.db.transaction() as conn:
+        conn.execute("UPDATE _schema_version SET version=48")
+        conn.execute("UPDATE mattermost_brokers SET enabled=0")
+    old_migrate = archived_migrator(tmp_path)
+    old_db = SqlitePool(e.db.path)
+    old_maintenance = archive("mattermost_maintenance_c590d088.py.txt")[
+        "MattermostMaintenanceRepo"
+    ](old_db)
+    old_ingress = archive("mattermost_ingress_0e950452.py.txt")["MattermostIngressRepo"](old_db)
+    try:
+        # Reproduce the exact omitted startup path before testing the repair.
+        old_migrate(old_db)
+        assert rows(e, "_schema_version")[0]["version"] == 47
+        plan = old_maintenance.plan("fixture-broker")
+        old_maintenance.retire_and_resume(
+            "fixture-broker", plan["plan_digest"], "Synthetic unsafe legacy resume", 102
+        )
+        assert (
+            old_ingress.inspect(old_ingress.mapping("fixture-broker"), e.key)["delivery_key"]
+            == e.key
+        )
+        run_migrations(e.db)
+        assert rows(e, "_schema_version")[0]["version"] == 49
+        assert rows(e, "mattermost_brokers")[0]["enabled"] == 0
+        with pytest.raises(sqlite3.IntegrityError, match="SCHEMA_DOWNGRADE_BLOCKED"):
+            old_migrate(old_db)
+        assert rows(e, "_schema_version")[0]["version"] == 49
+        with pytest.raises(IntakeError, match="MAINTENANCE_SCHEMA_REQUIRED"):
+            old_maintenance.plan("fixture-broker")
+        # Fault injection removes only the schema guards in this temporary DB.
+        # The independent broker trigger still blocks the actual old writer.
+        with e.db.transaction() as conn:
+            for name in (
+                "octop_schema_floor_update",
+                "octop_schema_floor_insert",
+                "octop_schema_floor_delete",
+            ):
+                conn.execute("DROP TRIGGER " + name)
+            conn.execute("UPDATE _schema_version SET version=47")
+        before = rows(e, "audit_log")
+        plan = old_maintenance.plan("fixture-broker")
+        with pytest.raises(sqlite3.IntegrityError, match="MATTERMOST_RESUME_STORAGE_BLOCKED"):
+            old_maintenance.retire_and_resume(
+                "fixture-broker", plan["plan_digest"], "Synthetic old writer attempt", 103
+            )
+        assert rows(e, "mattermost_brokers")[0]["enabled"] == 0
+        assert rows(e, "audit_log") == before
+    finally:
+        old_db.close()
+
+
+@pytest.mark.asyncio
+async def test_new_binary_rejects_future_schema_before_repairs(ingress, monkeypatch):
+    from octop.infra.db import migrate
+
+    e = ingress
+    with e.db.transaction() as conn:
+        conn.execute("UPDATE _schema_version SET version=9999")
+    monkeypatch.setattr(
+        migrate, "_repair_legacy_schema", lambda *_: pytest.fail("must not repair unknown schema")
+    )
+    with pytest.raises(RuntimeError, match="DATABASE_SCHEMA_NEWER_THAN_BINARY"):
+        run_migrations(e.db)
+    assert rows(e, "_schema_version")[0]["version"] == 9999
+
+
+@pytest.mark.asyncio
+async def test_49_guard_installation_is_atomic_and_retryable(ingress):
+    e = ingress
+    assert (await send(e)).status_code == 201
+    simulate_unsafe_47(e)
+    with e.db.transaction() as conn:
+        conn.execute("UPDATE _schema_version SET version=48")
+        conn.execute(
+            "CREATE TRIGGER fail49 BEFORE UPDATE ON _schema_version WHEN NEW.version=49 BEGIN SELECT RAISE(ABORT,'injected'); END"
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="injected"):
+        run_migrations(e.db)
+    assert rows(e, "_schema_version")[0]["version"] == 48
+    assert rows(e, "mattermost_brokers")[0]["enabled"] == 1
+    with e.db.connect() as conn:
+        assert not conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE name='octop_schema_floor_update'"
+        ).fetchone()
+        conn.execute("DROP TRIGGER fail49")
+    run_migrations(e.db)
+    assert rows(e, "mattermost_brokers")[0]["enabled"] == 0
+    with e.db.connect() as conn:
+        for statement in (
+            "UPDATE _schema_version SET version=47",
+            "DELETE FROM _schema_version",
+            "INSERT INTO _schema_version VALUES(47)",
+        ):
+            with pytest.raises(sqlite3.IntegrityError, match="SCHEMA_DOWNGRADE_BLOCKED"):
+                conn.execute(statement)
+        with pytest.raises(sqlite3.IntegrityError, match="MATTERMOST_RESUME_STORAGE_BLOCKED"):
+            conn.execute("UPDATE mattermost_brokers SET enabled=1")
