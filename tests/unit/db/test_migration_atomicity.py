@@ -25,7 +25,7 @@ def before_script(tmp_path, monkeypatch, version):
     db.close()
 
 
-@pytest.mark.parametrize("version", range(32, 50))
+@pytest.mark.parametrize("version", range(32, 51))
 def test_failed_script_rolls_back_and_restart_can_retry(before_script, version):
     db = before_script
     path = next(path for number, path in migrate._discover("sqlite") if number == version)
@@ -53,7 +53,9 @@ def test_failed_script_rolls_back_and_restart_can_retry(before_script, version):
         migrate.run_migrations(reopened)
         migrate.run_migrations(reopened)
         with reopened.connect() as conn:
-            assert conn.execute("SELECT version FROM _schema_version").fetchone()[0] == 49
+            assert conn.execute("SELECT version FROM _schema_version").fetchone()[
+                0
+            ] == migrate.schema_baseline_version("sqlite")
             assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
     finally:
         reopened.close()

@@ -2022,7 +2022,7 @@ def _apply_sqlite_migration(db: DatabasePool, version: int, path: Path) -> None:
     Version 17 adds sticky ``conversation_mode`` and ``pending_plan_path`` on threads.
     Version 18 adds ``user_role`` templates and non-FK role id/name snapshots.
     """
-    if 32 <= version <= 49:
+    if 32 <= version <= 50:
         # These enterprise/auth scripts contain transactional DDL/DML only.
         # Keep each script and its schema version together, including ALTER
         # TABLE steps that cannot be safely repeated after partial commits. SQLite

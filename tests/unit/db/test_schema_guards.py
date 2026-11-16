@@ -76,7 +76,9 @@ def test_invalid_guards_fail_before_any_repairs_and_are_not_rebuilt(guarded, mon
 def test_complete_guards_allow_repeat_startup(guarded):
     migrate.run_migrations(guarded)
     with guarded.connect() as conn:
-        assert conn.execute("SELECT version FROM _schema_version").fetchone()[0] == 49
+        assert conn.execute("SELECT version FROM _schema_version").fetchone()[
+            0
+        ] == migrate.schema_baseline_version("sqlite")
 
 
 @pytest.mark.asyncio

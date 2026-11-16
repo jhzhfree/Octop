@@ -18,6 +18,7 @@ from octop.infra.connectors.catalog import get_catalog_entry
 from octop.infra.connectors.probe import probe_connector
 from octop.infra.connectors.service import ConnectorService
 from octop.infra.digital_workers import DigitalWorkerError, DigitalWorkerService
+from octop.infra.digital_workers.handoffs import GoalHandoffService
 from octop.infra.digital_workers.mattermost import (
     MattermostIntentReport,
     MattermostIntentRequest,
@@ -893,3 +894,57 @@ def get_mattermost_intent(
 
 
 router.include_router(_mattermost_router)
+
+
+class GoalHandoffBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    request_id: str = Field(pattern=r"^[a-zA-Z0-9_-]{8,128}$")
+    expected_source_version: int = Field(ge=1, strict=True)
+    expected_target_version: int = Field(ge=1, strict=True)
+    target_worker_id: str = Field(min_length=1, max_length=128)
+    reason: str = Field(min_length=1, max_length=2000)
+    title: str = Field(min_length=1, max_length=200)
+    description: str = Field(default="", max_length=4000)
+    success_criteria: str = Field(min_length=1, max_length=4000)
+
+
+@router.post(
+    "/organizations/{organization_id}/digital-workers/{worker_id}/goals/{goal_id}/handoffs",
+    summary="Create an ordinary draft goal at another position with retained provenance",
+    description="Manager account, explicit request key and current source/receiver versions required. SQLite only. The source stays in its current status, its version advances, and target goal + provenance + audit commit together. Exact retries return the same record. Never executes or grants permissions.",
+)
+def create_goal_handoff(
+    organization_id: str,
+    worker_id: str,
+    goal_id: str,
+    body: GoalHandoffBody,
+    response: Response,
+    user: Any = Depends(current_user),
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    base = _service(server, user)
+    response.headers["Cache-Control"] = "no-store"
+    return _call(
+        lambda: GoalHandoffService(base.repos, user).create_handoff(
+            organization_id, worker_id, goal_id, body.model_dump()
+        )
+    )
+
+
+@router.get(
+    "/organizations/{organization_id}/goal-handoffs",
+    summary="Read current target status and retained handoff provenance",
+)
+def list_goal_handoffs(
+    organization_id: str,
+    response: Response,
+    goal_id: str | None = Query(default=None, min_length=1, max_length=128),
+    before: str | None = Query(default=None, min_length=1, max_length=128),
+    user: Any = Depends(current_user),
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    base = _service(server, user)
+    response.headers["Cache-Control"] = "no-store"
+    return _call(
+        lambda: GoalHandoffService(base.repos, user).handoffs(organization_id, goal_id, before)
+    )

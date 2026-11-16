@@ -70,6 +70,7 @@ import InspectionRunOptions, {
   type InspectionRunValue,
 } from "./InspectionRunOptions";
 import GoalStatusAction from "./GoalStatusAction";
+import GoalHandoffs from "./GoalHandoffs";
 import PlanningDialogue from "./PlanningDialogue";
 import KnowledgeMappings from "./KnowledgeMappings";
 
@@ -1322,6 +1323,23 @@ export default function OrganizationsPage() {
           >
             {t("organizations.managePlans")}
           </Button>
+          {selectedWorker && organizationId && (
+            <GoalHandoffs
+              organizationId={organizationId}
+              canManage={canManage}
+              source={{ worker: selectedWorker, goal }}
+              onClose={() => {
+                void reloadGoals().catch(() => {
+                  message.error(t("organizations.operationFailed"));
+                });
+              }}
+              onOpenWorker={(id) =>
+                setSelectedWorker(
+                  digitalWorkers.find((w) => w.worker_id === id),
+                )
+              }
+            />
+          )}
           {canManage && (
             <GoalStatusAction
               key={`${organizationId}:${selectedWorkerId}:${goal.goal_id}:${goal.status}`}
@@ -1761,6 +1779,16 @@ export default function OrganizationsPage() {
                 workers={digitalWorkers.filter(
                   (worker) => worker.organization_id === organizationId,
                 )}
+              />
+              <GoalHandoffs
+                organizationId={organizationId}
+                canManage={canManage}
+                onOpenWorker={(id) => {
+                  setActiveTab("digital-workers");
+                  setSelectedWorker(
+                    digitalWorkers.find((w) => w.worker_id === id),
+                  );
+                }}
               />
               <OrganizationProgress
                 key={organizationId}

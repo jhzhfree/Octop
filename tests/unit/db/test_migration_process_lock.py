@@ -105,7 +105,9 @@ def test_two_startups_serialize_and_reread_version(upgrade_path):
     db = SqlitePool(upgrade_path)
     try:
         with db.connect() as conn:
-            assert conn.execute("SELECT version FROM _schema_version").fetchone()[0] == 49
+            assert conn.execute("SELECT version FROM _schema_version").fetchone()[
+                0
+            ] == migrate.schema_baseline_version("sqlite")
             assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
     finally:
         db.close()
@@ -149,7 +151,9 @@ def test_process_termination_releases_migration_mutex(upgrade_path, pause_in_tra
     try:
         migrate.run_migrations(db)
         with db.connect() as conn:
-            assert conn.execute("SELECT version FROM _schema_version").fetchone()[0] == 49
+            assert conn.execute("SELECT version FROM _schema_version").fetchone()[
+                0
+            ] == migrate.schema_baseline_version("sqlite")
     finally:
         db.close()
 

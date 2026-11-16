@@ -183,12 +183,39 @@ async def test_fresh_sqlite_inspection_delivery_via_http(
         )
         wp = op + "/digital-workers/" + worker["worker_id"]
         await req("PATCH", wp, {"expected_version": 1, "status": "active"})
-        goal = await req(
+        lead_wp = op + "/digital-workers/" + lead_worker["worker_id"]
+        await req("PATCH", lead_wp, {"expected_version": 1, "status": "active"})
+        source_goal = await req(
             "POST",
-            wp + "/goals",
-            {"title": "每日服务巡检", "success_criteria": "提供可独立审阅的状态报告"},
+            lead_wp + "/goals",
+            {"title": "协调每日巡检", "success_criteria": "岗位交接后完成独立验收"},
             code=201,
         )
+        source_gp = lead_wp + "/goals/" + source_goal["goal_id"]
+        await req("PATCH", source_gp, {"expected_version": 1, "status": "active"})
+        handoff_body = {
+            "request_id": "delivery-handoff-001",
+            "expected_source_version": 2,
+            "expected_target_version": 2,
+            "target_worker_id": worker["worker_id"],
+            "reason": "由运维岗位执行只读巡检并提交独立验收",
+            "title": "每日服务巡检",
+            "description": "",
+            "success_criteria": "提供可独立审阅的状态报告",
+        }
+        await req(
+            "POST",
+            source_gp + "/handoffs",
+            {**handoff_body, "created_by": reviewer["id"]},
+            code=422,
+        )
+        handoff = await req("POST", source_gp + "/handoffs", handoff_body)
+        assert await req("POST", source_gp + "/handoffs", handoff_body) == handoff
+        goals = await req("GET", wp + "/goals")
+        goal = next(g for g in goals if g["goal_id"] == handoff["target_goal_id"])
+        assert goal["status"] == "draft"
+        trace = await req("GET", op + "/goal-handoffs?goal_id=" + goal["goal_id"])
+        assert trace["items"][0]["source_goal_id"] == source_goal["goal_id"]
         gp = wp + "/goals/" + goal["goal_id"]
         await req("PATCH", gp, {"expected_version": goal["version"], "status": "active"})
         plan = await req(
@@ -353,6 +380,14 @@ async def test_fresh_sqlite_inspection_delivery_via_http(
             code=403,
         )
         await req("GET", op + "/run-queue/" + run["run_id"], headers=reviewauth, code=403)
+        await req("GET", op + "/goal-handoffs", headers=reviewauth, code=403)
+        await req(
+            "POST",
+            source_gp + "/handoffs",
+            {**handoff_body, "request_id": "revoked-handoff"},
+            headers=reviewauth,
+            code=403,
+        )
         for action in ("approve", "reject"):
             await req(
                 "POST",
