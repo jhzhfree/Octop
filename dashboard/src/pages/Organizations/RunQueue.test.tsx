@@ -167,3 +167,44 @@ it("rejects a server response that ignores the worker filter", async () => {
   await screen.findByText("r1");
   expect(screen.queryByText("runQueue.error")).toBeNull();
 });
+it("keeps reads and pagination scoped to the selected handoff goal", async () => {
+  vi.mocked(runQueueApi.read).mockResolvedValue({ ...result(), goal_id: "g" });
+  render(<RunQueue organizationId="o" canManage goalId="g" />);
+  load();
+  await screen.findByText("r1");
+  expect(runQueueApi.read).toHaveBeenLastCalledWith(
+    "o",
+    "unreviewed_success",
+    undefined,
+    undefined,
+    "g",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "runQueue.next" }));
+  expect(runQueueApi.read).toHaveBeenLastCalledWith(
+    "o",
+    "unreviewed_success",
+    5,
+    undefined,
+    "g",
+  );
+});
+it("fails closed if an old server ignores the goal filter", async () => {
+  render(<RunQueue organizationId="o" canManage goalId="g" />);
+  load();
+  await screen.findByText("runQueue.error");
+  expect(screen.queryByText("r1")).toBeNull();
+});
+it("clears the previous goal and ignores its delayed response on goal switch", async () => {
+  let resolve!: (value: Queue) => void;
+  vi.mocked(runQueueApi.read).mockReturnValueOnce(
+    new Promise((r) => {
+      resolve = r;
+    }),
+  );
+  const view = render(<RunQueue organizationId="o" canManage goalId="g" />);
+  load();
+  view.rerender(<RunQueue organizationId="o" canManage goalId="other-goal" />);
+  await act(async () => resolve({ ...result(), goal_id: "g" }));
+  expect(screen.queryByText("r1")).toBeNull();
+  expect(screen.queryByText("runQueue.error")).toBeNull();
+});

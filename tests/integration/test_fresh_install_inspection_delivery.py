@@ -511,6 +511,17 @@ async def test_fresh_sqlite_inspection_delivery_via_http(
             headers=reviewauth,
         )
         assert assigned["worker_id"] == worker["worker_id"]
+        goal_results = await req(
+            "GET", op + "/run-queue?category=" + decision + "&goal_id=" + goal["goal_id"]
+        )
+        assert goal_results["goal_id"] == goal["goal_id"]
+        assert [r["run_id"] for r in goal_results["items"]] == [run["run_id"]]
+        source_results = await req(
+            "GET", op + "/run-queue?category=" + decision + "&goal_id=" + source_goal["goal_id"]
+        )
+        assert source_results["items"] == []
+        await req("GET", op + "/run-queue?category=" + decision + "&goal_id=missing", code=403)
+
         assert [item["run_id"] for item in assigned["items"]] == [run["run_id"]]
         other_worker_queue = await req(
             "GET",

@@ -14,6 +14,11 @@ import {
   type DigitalWorker,
   type DigitalWorkerGoal,
 } from "../../api/modules/organizations";
+vi.mock("./RunQueue", () => ({
+  default: ({ goalId }: { goalId: string }) => (
+    <div data-testid="goal-results">{goalId}</div>
+  ),
+}));
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({ i18n: { language: "en" } }),
 }));
@@ -187,4 +192,45 @@ it("shows the current target status on idempotent replay instead of claiming a n
   await screen.findByText("Handoff recorded");
   expect(screen.getByText(/g2 · cancelled/)).toBeTruthy();
   expect(screen.queryByText(/g2 · draft/)).toBeNull();
+});
+
+it("opens the exact receiving goal's existing results and clears it on failed refresh", async () => {
+  vi.mocked(goalHandoffsApi.list)
+    .mockResolvedValueOnce({ items: [result], next_before: null })
+    .mockRejectedValueOnce(new Error("revoked"));
+  render(<GoalHandoffs {...props} source={undefined} />);
+  fireEvent.click(screen.getByRole("button", { name: "Handoff history" }));
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: "View this goal's runs, reports and review",
+    }),
+  );
+  expect(screen.getByTestId("goal-results").textContent).toBe("g2");
+  fireEvent.click(screen.getByRole("button", { name: "Refresh history" }));
+  await screen.findByText(/Read or handoff failed/);
+  expect(screen.queryByTestId("goal-results")).toBeNull();
+});
+it("warns about an existing outgoing handoff without silently preventing another", async () => {
+  vi.mocked(goalHandoffsApi.list).mockResolvedValue({
+    items: [result],
+    next_before: null,
+  });
+  render(<GoalHandoffs {...props} />);
+  await openAndFill();
+  await screen.findByText(/This source goal already has a handoff/);
+  expect(goalHandoffsApi.create).not.toHaveBeenCalled();
+  expect(
+    (
+      screen.getByRole("button", {
+        name: "Confirm receiving draft",
+      }) as HTMLButtonElement
+    ).disabled,
+  ).toBe(false);
+  fireEvent.click(
+    screen.getByRole("button", { name: "Confirm receiving draft" }),
+  );
+  await screen.findByText("Handoff recorded");
+  expect(
+    screen.queryByText(/This source goal already has a handoff/),
+  ).toBeNull();
 });

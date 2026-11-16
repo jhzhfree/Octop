@@ -46,11 +46,16 @@ class OrganizationProgressService:
         limit: int = 20,
         before: int | None = None,
         worker_id: str | None = None,
+        goal_id: str | None = None,
     ) -> dict[str, Any]:
         if worker_id is not None and (
             not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 128
         ):
             raise ValueError("invalid worker filter")
+        if goal_id is not None and (
+            not isinstance(goal_id, str) or not goal_id.strip() or len(goal_id) > 128
+        ):
+            raise ValueError("invalid goal filter")
         if category not in {
             "awaiting_approval",
             "queued",
@@ -69,6 +74,7 @@ class OrganizationProgressService:
             "organization_id": organization_id,
             "category": category,
             "worker_id": worker_id,
+            "goal_id": goal_id,
             "as_of": int(time.time()),
             "execution_authorized": False,
             "persisted_state_may_lag": True,
@@ -79,6 +85,7 @@ class OrganizationProgressService:
                 limit=limit,
                 before=before,
                 worker_id=worker_id,
+                goal_id=goal_id,
             ),
         }
 

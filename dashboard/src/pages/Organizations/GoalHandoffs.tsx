@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Alert, Button, Input, Modal, Select, Space, Typography } from "antd";
 import { useTranslation } from "react-i18next";
+import RunQueue from "./RunQueue";
 import SensitiveAccessBoundary from "../../components/SensitiveAccessBoundary";
 import { useCurrentUser } from "../../hooks/useCurrentUser";
 import {
@@ -62,6 +63,7 @@ function Session({
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [done, setDone] = useState<GoalHandoff>();
+  const [resultGoal, setResultGoal] = useState<string>();
   const intent = useRef<HandoffBody>();
   const generation = useRef(0);
   const busy = useRef(false);
@@ -83,6 +85,7 @@ function Session({
     setLoading(true);
     setError(false);
     setRows([]);
+    setResultGoal(undefined);
     try {
       const [history, choices] = await Promise.all([
         goalHandoffsApi.list(organizationId, source?.goal.goal_id, before),
@@ -157,6 +160,7 @@ function Session({
     setOpen(false);
     setLoading(false);
     setRows([]);
+    setResultGoal(undefined);
     setWorkers([]);
     setError(false);
     // Retain an uncertain request key until this goal's authoritative revision changes.
@@ -193,6 +197,18 @@ function Session({
               )}
             />
           )}
+          {source &&
+            !submitted &&
+            !done &&
+            rows.some((row) => row.source_goal_id === source.goal.goal_id) && (
+              <Alert
+                type="warning"
+                message={label(
+                  "此源目标已有交接。再次确认将另建接收草稿，请先核对下方记录；这不是原请求重试。",
+                  "This source goal already has a handoff. Confirming a new request creates another receiving draft; check the records below first. This is not a retry of the original request.",
+                )}
+              />
+            )}
           {creatable && !done && (
             <>
               <Select
@@ -273,6 +289,15 @@ function Session({
               </Typography.Paragraph>
               <Button
                 disabled={row.target_goal_status == null}
+                onClick={() => setResultGoal(row.target_goal_id)}
+              >
+                {label(
+                  "查看本目标运行、报告与验收",
+                  "View this goal's runs, reports and review",
+                )}
+              </Button>
+              <Button
+                disabled={row.target_goal_status == null}
                 onClick={() => {
                   close(false);
                   onOpenWorker(row.target_worker_id);
@@ -285,6 +310,18 @@ function Session({
               </Button>
             </div>
           ))}
+          {resultGoal && (
+            <div key={resultGoal}>
+              <Typography.Paragraph>
+                {label("仅查询目标", "Goal scope")}: {resultGoal}
+              </Typography.Paragraph>
+              <RunQueue
+                organizationId={organizationId}
+                canManage={canManage}
+                goalId={resultGoal}
+              />
+            </div>
+          )}
           {!done && (
             <Button loading={loading} onClick={() => void load()}>
               {label("刷新记录", "Refresh history")}

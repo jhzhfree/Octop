@@ -565,3 +565,86 @@ def test_worker_queue_filter_pagination_and_membership_revocation(setup, monkeyp
     monkeypatch.setattr(repo, "_authorize", revoke)
     with pytest.raises(ProgressAccessError):
         service.queue("o", category="unreviewed_success", worker_id="w2")
+
+
+@pytest.mark.parametrize(
+    "category,expected",
+    [
+        ("accepted", ["r1"]),
+        ("changes_requested", ["r2"]),
+        ("unreviewed_success", ["r3"]),
+        ("queued", ["r4"]),
+        ("failed", []),
+    ],
+)
+def test_goal_queue_filters_current_ownership_and_category(setup, category, expected):
+    db, _, service = setup
+    with db.connect() as conn:
+        conn.execute("INSERT INTO digital_worker_goals VALUES('same-worker-goal','w')")
+        conn.execute(
+            "INSERT INTO digital_worker_plans VALUES('same-worker-plan','same-worker-goal')"
+        )
+        conn.execute(
+            "INSERT INTO enterprise_scene_runs VALUES(11,'unrelated','o','succeeded','same-worker-plan',108)"
+        )
+    result = service.queue("o", category=category, goal_id="g")
+    assert result["goal_id"] == "g"
+    assert [r["run_id"] for r in result["items"]] == expected
+    assert (
+        service.queue("o", category=category, goal_id="g", worker_id="w")["items"]
+        == result["items"]
+    )
+
+
+@pytest.mark.parametrize("goal,worker", [("missing", None), ("g", "w2"), ("foreign", None)])
+def test_goal_queue_missing_foreign_or_mismatched_worker_rejected(setup, goal, worker):
+    db, _, service = setup
+    with db.connect() as conn:
+        conn.execute("INSERT INTO digital_worker_goals VALUES('foreign','outside')")
+    with pytest.raises(ProgressAccessError):
+        service.queue("o", category="accepted", goal_id=goal, worker_id=worker)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "DELETE FROM organization_members WHERE user_id=1",
+        "UPDATE users SET disabled=1 WHERE id=1",
+        "UPDATE digital_worker_goals SET worker_id='outside' WHERE goal_id='g'",
+        "DELETE FROM digital_worker_goals WHERE goal_id='g'",
+    ],
+)
+def test_goal_queue_rechecks_revocation_and_concurrent_ownership_change(setup, monkeypatch, sql):
+    _, repo, service = setup
+    original = repo._authorize
+    calls = 0
+
+    def change(conn, org, user):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            conn.execute(sql)
+        original(conn, org, user)
+
+    monkeypatch.setattr(repo, "_authorize", change)
+    with pytest.raises(ProgressAccessError):
+        service.queue("o", category="accepted", goal_id="g")
+
+
+def test_goal_queue_pages_and_repeated_reads_are_read_only(setup):
+    db, _, service = setup
+    with db.connect() as conn:
+        conn.execute("INSERT INTO enterprise_scene_runs VALUES(11,'new','o','succeeded','p',108)")
+        before = conn.total_changes
+    page = service.queue("o", category="unreviewed_success", goal_id="g", limit=1)
+    assert [r["run_id"] for r in page["items"]] == ["new"]
+    assert (
+        service.queue("o", category="unreviewed_success", goal_id="g", limit=1)["items"]
+        == page["items"]
+    )
+    second = service.queue(
+        "o", category="unreviewed_success", goal_id="g", limit=1, before=page["next_before"]
+    )
+    assert [r["run_id"] for r in second["items"]] == ["r3"]
+    with db.connect() as conn:
+        assert conn.total_changes == before

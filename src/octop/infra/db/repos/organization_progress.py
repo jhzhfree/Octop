@@ -88,6 +88,7 @@ class OrganizationProgressRepo:
         limit: int,
         before: int | None,
         worker_id: str | None = None,
+        goal_id: str | None = None,
     ) -> dict[str, Any]:
         # Predicates are selected by the service, never interpolated from a request.
         predicates = {
@@ -100,25 +101,40 @@ class OrganizationProgressRepo:
             "accepted": "r.status='succeeded' AND a.decision='accepted'",
         }
         predicate = predicates[category]
+        ownership = (
+            "SELECT 1 FROM digital_worker_goals g JOIN digital_workers w ON w.worker_id=g.worker_id "
+            "WHERE w.organization_id=?"
+            + (" AND w.worker_id=?" if worker_id is not None else "")
+            + (" AND g.goal_id=?" if goal_id is not None else "")
+        )
+        filters = (
+            *((worker_id,) if worker_id is not None else ()),
+            *((goal_id,) if goal_id is not None else ()),
+        )
         worker_predicate = (
             " AND EXISTS (SELECT 1 FROM digital_worker_plans p "
             "JOIN digital_worker_goals g ON g.goal_id=p.goal_id "
             "JOIN digital_workers w ON w.worker_id=g.worker_id "
-            "WHERE p.plan_id=r.plan_id AND w.worker_id=? AND w.organization_id=r.organization_id)"
-            if worker_id is not None
+            "WHERE p.plan_id=r.plan_id AND w.organization_id=r.organization_id"
+            + (" AND w.worker_id=?" if worker_id is not None else "")
+            + (" AND g.goal_id=?" if goal_id is not None else "")
+            + ")"
+            if worker_id is not None or goal_id is not None
             else ""
         )
 
         def authorize_worker(conn: Any) -> None:
-            if (
-                worker_id is not None
-                and conn.execute(
+            if goal_id is not None:
+                found = conn.execute(ownership, (organization_id, *filters)).fetchone()
+            elif worker_id is not None:
+                found = conn.execute(
                     "SELECT 1 FROM digital_workers WHERE worker_id=? AND organization_id=?",
                     (worker_id, organization_id),
                 ).fetchone()
-                is None
-            ):
-                raise ProgressAccessError("organization worker access required")
+            else:
+                return
+            if found is None:
+                raise ProgressAccessError("organization worker/goal access required")
 
         with self.db.connect() as conn:
             self._authorize(conn, organization_id, user_id)
@@ -134,7 +150,7 @@ class OrganizationProgressRepo:
                 + " ORDER BY r.id DESC LIMIT ?",
                 (
                     organization_id,
-                    *((worker_id,) if worker_id is not None else ()),
+                    *filters,
                     *((before,) if before is not None else ()),
                     limit + 1,
                 ),

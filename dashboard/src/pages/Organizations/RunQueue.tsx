@@ -23,6 +23,7 @@ export default function RunQueue(props: {
   organizationId: string;
   canManage: boolean;
   workers?: WorkerOption[];
+  goalId?: string;
 }) {
   const user = useCurrentUser();
   const deliveryUserId =
@@ -36,6 +37,7 @@ export default function RunQueue(props: {
       key={JSON.stringify([
         props.organizationId,
         props.canManage,
+        props.goalId,
         user?.id,
         user?.role,
         user?.permissions,
@@ -54,11 +56,13 @@ function QueueSession({
   canManage,
   deliveryUserId,
   workers = [],
+  goalId,
 }: {
   organizationId: string;
   canManage: boolean;
   deliveryUserId?: number;
   workers?: WorkerOption[];
+  goalId?: string;
 }) {
   const { t } = useTranslation();
   const timeZone = useServerTimezone();
@@ -85,10 +89,27 @@ function QueueSession({
     setData(undefined);
     setDetailRun(undefined);
     try {
-      const result = workerId
+      const result = goalId
+        ? await runQueueApi.read(
+            organizationId,
+            category,
+            before,
+            workerId,
+            goalId,
+          )
+        : workerId
         ? await runQueueApi.read(organizationId, category, before, workerId)
         : await runQueueApi.read(organizationId, category, before);
-      if (!validRunQueue(result, organizationId, category, before, workerId))
+      if (
+        !validRunQueue(
+          result,
+          organizationId,
+          category,
+          before,
+          workerId,
+          goalId,
+        )
+      )
         throw new Error("Invalid queue");
       if (seq === sequence.current) setData(result);
     } catch {

@@ -92,6 +92,7 @@ class QueueItem(BaseModel):
 
 class RunQueue(BaseModel):
     worker_id: str | None = None
+    goal_id: str | None = None
     organization_id: str
     category: Literal[
         "awaiting_approval",
@@ -113,7 +114,7 @@ class RunQueue(BaseModel):
     "/organizations/{organization_id}/run-queue",
     response_model=RunQueue,
     summary="List organization run follow-ups with bounded keyset pagination",
-    description="Managers only. Optional worker_id filters by current persisted plan and goal ownership within this organization; unlinked runs remain in the unfiltered view. Newest inserted runs first. Includes queued and rejected requests, plus accepted deliveries for follow-up; queued is a persisted state, not proof of active execution; acceptance does not mean publication or goal completion. Read-only; no dispatch, retry, or acceptance.",
+    description="Managers only. Optional worker_id and goal_id filters by current persisted plan and goal ownership within this organization; unlinked runs remain in the unfiltered view. Newest inserted runs first. Includes queued and rejected requests, plus accepted deliveries for follow-up; queued is a persisted state, not proof of active execution; acceptance does not mean publication or goal completion. Read-only; no dispatch, retry, or acceptance.",
 )
 def organization_run_queue(
     organization_id: str,
@@ -130,6 +131,7 @@ def organization_run_queue(
     limit: int = Query(default=20, ge=1, le=50),
     before: int | None = Query(default=None, ge=1, le=2**63 - 1),
     worker_id: str | None = Query(default=None, min_length=1, max_length=128),
+    goal_id: str | None = Query(default=None, min_length=1, max_length=128),
     user: Any = Depends(current_user),
     server: Any = Depends(get_server),
 ) -> dict[str, Any]:
@@ -141,7 +143,12 @@ def organization_run_queue(
     service = OrganizationProgressService(OrganizationProgressRepo(server.services.db), user.id)
     try:
         return service.queue(
-            organization_id, category=category, limit=limit, before=before, worker_id=worker_id
+            organization_id,
+            category=category,
+            limit=limit,
+            before=before,
+            worker_id=worker_id,
+            goal_id=goal_id,
         )
     except ProgressAccessError as exc:
         raise HTTPException(
