@@ -12,17 +12,23 @@ export default function RunDelivery({
   target,
   currentUserId,
   allowRevision = false,
+  onOpenRun,
 }: {
   target: AcceptanceTarget;
   currentUserId: number;
   allowRevision?: boolean;
+  onOpenRun?: (runId: string) => void;
 }) {
   const { t } = useTranslation();
   return (
     <Space direction="vertical" style={{ width: "100%" }}>
       <Alert type="info" message={t("runDetails.deliveryNotice")} />
       {allowRevision && (
-        <InspectionRevision target={target} currentUserId={currentUserId} />
+        <InspectionRevision
+          target={target}
+          currentUserId={currentUserId}
+          onOpenRun={onOpenRun}
+        />
       )}
       <AcceptanceFeedback target={target} currentUserId={currentUserId} />
       <RunEvidence target={target} currentUserId={currentUserId} canRead />

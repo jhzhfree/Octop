@@ -18,8 +18,13 @@ from tests.support.auth import create_agent, seed_openai_provider
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("decision", ["accepted", "changes_requested"])
-async def test_fresh_sqlite_inspection_delivery_via_http(tmp_path, monkeypatch, decision):
+@pytest.mark.parametrize(
+    ("decision", "after_failure"),
+    [("accepted", False), ("changes_requested", False), ("accepted", True)],
+)
+async def test_fresh_sqlite_inspection_delivery_via_http(
+    tmp_path, monkeypatch, decision, after_failure
+):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setenv("LANGFUSE_TRACING_ENABLED", "false")
@@ -207,6 +212,62 @@ async def test_fresh_sqlite_inspection_delivery_via_http(tmp_path, monkeypatch, 
             code=201,
         )
         rp = op + "/scene-runs/" + run["run_id"]
+        failed_path = None
+        if after_failure:
+            # Drift invalidates the approved snapshot: no real collection is attempted.
+            await req(
+                "PUT",
+                "/enterprise-assistant/jobs/" + job["id"],
+                {
+                    "expected_version": job["version"],
+                    "config": {
+                        "name": "updated fixture",
+                        "kind": "inspection",
+                        "connection_id": conn["id"],
+                        "agent_id": aid,
+                    },
+                },
+            )
+            await req("POST", rp + "/approve", {"note": "Independent approval"}, headers=reviewauth)
+            for _ in range(100):
+                failed = await req("GET", rp)
+                if failed["status"] == "failed":
+                    break
+                await asyncio.sleep(0.1)
+            assert failed["status"] == "failed"
+            assert calls == []
+            failed_path = rp
+            plan = await req(
+                "POST",
+                gp + "/plans",
+                {
+                    "title": "Follow-up after failure",
+                    "approach": "Use reviewed current source",
+                    "steps": failed["plan_snapshot"]["plan"]["steps"],
+                },
+                code=201,
+            )
+            assert plan["status"] == "draft"
+            await req(
+                "PATCH",
+                gp + "/plans/" + plan["plan_id"],
+                {"expected_version": plan["version"], "status": "ready"},
+            )
+            run = await req(
+                "POST",
+                op + "/scenes/" + scene["scene_id"] + "/runs",
+                {
+                    "plan_id": plan["plan_id"],
+                    "use_memory": False,
+                    "capture_memory": False,
+                    "inspection_job_ids": [job["id"]],
+                    "share_inspection_results": True,
+                },
+                code=201,
+            )
+            rp = op + "/scene-runs/" + run["run_id"]
+            assert rp != failed_path and run["status"] == "awaiting_approval"
+            assert calls == []
         queue = await req("GET", op + "/run-queue?category=awaiting_approval", headers=reviewauth)
         assert any(item["run_id"] == run["run_id"] for item in queue["items"])
         detail = await req("GET", op + "/run-queue/" + run["run_id"], headers=reviewauth)
@@ -312,14 +373,14 @@ async def test_fresh_sqlite_inspection_delivery_via_http(tmp_path, monkeypatch, 
         progress = await req(
             "GET", op + f"/progress?start={int(time.time()) - 60}&end={int(time.time()) + 60}"
         )
-        assert progress["denominator"] == 1
+        assert progress["denominator"] == 1 + int(after_failure)
         assert progress["counts"] == {
             "execution": {
                 "awaiting_approval": 0,
                 "rejected": 0,
                 "queued": 0,
                 "succeeded": 1,
-                "failed": 0,
+                "failed": int(after_failure),
             },
             "delivery": {
                 "unreviewed_success": 0,
@@ -346,6 +407,8 @@ async def test_fresh_sqlite_inspection_delivery_via_http(tmp_path, monkeypatch, 
             )["status"]
             == "active"
         )
+        if failed_path:
+            assert (await req("GET", failed_path))["status"] == "failed"
         if decision == "changes_requested":
             # A separate plan and run, using the same public calls as the revision UI.
             original_feedback = feedback.copy()

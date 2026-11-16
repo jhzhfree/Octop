@@ -6,7 +6,10 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
-import InspectionRevision, { revisionMessages } from "./InspectionRevision";
+import InspectionRevision, {
+  revisionMessages,
+  failureFollowUpMessages,
+} from "./InspectionRevision";
 import { organizationsApi } from "../../api/modules/organizations";
 import { deliveryAcceptanceApi } from "../../api/modules/deliveryAcceptance";
 import { inspectionRunApi } from "../../api/modules/inspectionRun";
@@ -105,58 +108,84 @@ async function open() {
   fireEvent.click(screen.getByRole("button", { name: m.open }));
   await screen.findByRole("textbox", { name: m.title });
 }
-it("requires explicit draft, readiness, source selection, sharing and new approval request", async () => {
-  render(<InspectionRevision target={target} currentUserId={1} />);
-  expect(organizationsApi.sceneRun).not.toHaveBeenCalled();
-  await open();
-  expect(screen.getByText(/Add retry evidence/)).toBeInTheDocument();
-  expect(organizationsApi.createDigitalWorkerPlan).not.toHaveBeenCalled();
-  fireEvent.change(screen.getByRole("textbox", { name: m.approach }), {
-    target: { value: "Collect fresh retry evidence" },
-  });
-  fireEvent.click(screen.getByRole("button", { name: m.create }));
-  await screen.findByRole("button", { name: m.ready });
-  expect(organizationsApi.createDigitalWorkerPlan).toHaveBeenCalledWith(
-    "o",
-    "w",
-    "g",
-    {
-      title: "Original inspection",
-      approach: "Collect fresh retry evidence",
-      steps: [{ action: "Inspect", expected_output: "Report" }],
-    },
-  );
-  expect(organizationsApi.updateDigitalWorkerPlan).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("button", { name: m.ready }));
-  await screen.findByRole("button", { name: m.request });
-  expect(organizationsApi.updateDigitalWorkerPlan).toHaveBeenCalledWith(
-    "o",
-    "w",
-    "g",
-    "new-plan",
-    1,
-    { status: "ready" },
-  );
-  expect(screen.getByRole("button", { name: m.request })).toBeDisabled();
-  fireEvent.click(
-    screen.getByRole("checkbox", { name: inspectionRunMessages.en.mode }),
-  );
-  fireEvent.click(await screen.findByRole("checkbox", { name: /Test source/ }));
-  expect(screen.getByRole("button", { name: m.request })).toBeDisabled();
-  fireEvent.click(
-    screen.getByRole("checkbox", { name: inspectionRunMessages.en.share }),
-  );
-  fireEvent.click(screen.getByRole("button", { name: m.request }));
-  await screen.findByText(`${m.submitted}: new-run`);
-  expect(organizationsApi.requestSceneRun).toHaveBeenCalledWith(
-    "o",
-    "scene",
-    "new-plan",
-    { useMemory: false, captureMemory: false },
-    { jobIds: ["job"], share: true },
-  );
-  expect(organizationsApi.decideSceneRun).not.toHaveBeenCalled();
-});
+it.each([false, true])(
+  "requires explicit draft, readiness, sources and new approval (failure=%s)",
+  async (fromFailure) => {
+    const onOpenRun = vi.fn();
+    if (fromFailure)
+      vi.mocked(organizationsApi.sceneRun).mockResolvedValue({
+        ...source,
+        status: "failed",
+      } as never);
+    render(
+      <InspectionRevision
+        target={target}
+        currentUserId={1}
+        fromFailure={fromFailure}
+        onOpenRun={onOpenRun}
+      />,
+    );
+    expect(organizationsApi.sceneRun).not.toHaveBeenCalled();
+    const labels = fromFailure ? { ...m, ...failureFollowUpMessages.en } : m;
+    fireEvent.click(screen.getByRole("button", { name: labels.open }));
+    await screen.findByRole("textbox", { name: labels.title });
+    if (fromFailure) {
+      expect(deliveryAcceptanceApi.feedback).not.toHaveBeenCalled();
+      expect(screen.queryByText(/Add retry evidence/)).toBeNull();
+    } else expect(screen.getByText(/Add retry evidence/)).toBeInTheDocument();
+    expect(organizationsApi.createDigitalWorkerPlan).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByRole("textbox", { name: labels.approach }), {
+      target: { value: "Collect fresh retry evidence" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: m.create }));
+    await screen.findByRole("button", { name: m.ready });
+    expect(organizationsApi.createDigitalWorkerPlan).toHaveBeenCalledWith(
+      "o",
+      "w",
+      "g",
+      {
+        title: "Original inspection",
+        approach: "Collect fresh retry evidence",
+        steps: [{ action: "Inspect", expected_output: "Report" }],
+      },
+    );
+    expect(organizationsApi.updateDigitalWorkerPlan).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: m.ready }));
+    await screen.findByRole("button", { name: m.request });
+    expect(organizationsApi.updateDigitalWorkerPlan).toHaveBeenCalledWith(
+      "o",
+      "w",
+      "g",
+      "new-plan",
+      1,
+      { status: "ready" },
+    );
+    expect(screen.getByRole("button", { name: m.request })).toBeDisabled();
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: inspectionRunMessages.en.mode }),
+    );
+    fireEvent.click(
+      await screen.findByRole("checkbox", { name: /Test source/ }),
+    );
+    expect(screen.getByRole("button", { name: m.request })).toBeDisabled();
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: inspectionRunMessages.en.share }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: m.request }));
+    await screen.findByText(`${m.submitted}: new-run`);
+    expect(organizationsApi.requestSceneRun).toHaveBeenCalledWith(
+      "o",
+      "scene",
+      "new-plan",
+      { useMemory: false, captureMemory: false },
+      { jobIds: ["job"], share: true },
+    );
+    expect(organizationsApi.decideSceneRun).not.toHaveBeenCalled();
+    expect(onOpenRun).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: m.openNew }));
+    expect(onOpenRun).toHaveBeenCalledExactlyOnceWith("new-run");
+  },
+);
 it("refuses another actor and an inactive goal before writes", async () => {
   const view = render(<InspectionRevision target={target} currentUserId={2} />);
   fireEvent.click(screen.getByRole("button", { name: m.open }));
@@ -210,4 +239,54 @@ it("ignores a late draft response after close and clears on access loss", async 
   await waitFor(() =>
     expect(screen.queryByText(/Add retry evidence/)).toBeNull(),
   );
+});
+
+it.each([
+  { status: "succeeded" },
+  { requested_by: 2, status: "failed" },
+  { organization_id: "other", status: "failed" },
+  {
+    status: "failed",
+    plan_snapshot: {
+      ...source.plan_snapshot,
+      inspection: { mode: "mcp_inspection" },
+    },
+  },
+])("rejects ineligible failure follow-up %j", async (override) => {
+  vi.mocked(organizationsApi.sceneRun).mockResolvedValue({
+    ...source,
+    ...override,
+  } as never);
+  render(<InspectionRevision target={target} currentUserId={1} fromFailure />);
+  fireEvent.click(
+    screen.getByRole("button", { name: failureFollowUpMessages.en.open }),
+  );
+  await screen.findByText(m.unavailable);
+  expect(deliveryAcceptanceApi.feedback).not.toHaveBeenCalled();
+  expect(organizationsApi.createDigitalWorkerPlan).not.toHaveBeenCalled();
+});
+
+it("closes failed-run content on revoked access and ignores a late source response", async () => {
+  let finish!: (value: never) => void;
+  vi.mocked(organizationsApi.sceneRun).mockReturnValueOnce(
+    new Promise((resolve) => {
+      finish = resolve;
+    }),
+  );
+  const view = render(
+    <SensitiveAccessContext.Provider value={true}>
+      <InspectionRevision target={target} currentUserId={1} fromFailure />
+    </SensitiveAccessContext.Provider>,
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: failureFollowUpMessages.en.open }),
+  );
+  view.rerender(
+    <SensitiveAccessContext.Provider value={false}>
+      <InspectionRevision target={target} currentUserId={1} fromFailure />
+    </SensitiveAccessContext.Provider>,
+  );
+  await act(async () => finish({ ...source, status: "failed" } as never));
+  expect(screen.queryByRole("textbox")).toBeNull();
+  expect(organizationsApi.createDigitalWorkerPlan).not.toHaveBeenCalled();
 });

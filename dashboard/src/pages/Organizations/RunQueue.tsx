@@ -94,6 +94,10 @@ function QueueSession({
           currentUserId={deliveryUserId}
           onClose={() => setDetailRun(undefined)}
           onChanged={() => setData(undefined)}
+          onOpenRun={(runId) => {
+            setData(undefined);
+            setDetailRun(runId);
+          }}
         />
       )}
       <Typography.Title level={5}>{t("runQueue.title")}</Typography.Title>

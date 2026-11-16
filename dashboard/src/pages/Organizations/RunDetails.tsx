@@ -1,3 +1,4 @@
+import InspectionRevision from "./InspectionRevision";
 import RunApproval from "./RunApproval";
 import { organizationsApi } from "../../api/modules/organizations";
 import RunOperationTrace from "./RunOperationTrace";
@@ -15,6 +16,7 @@ interface Props {
   currentUserId?: number;
   onClose: () => void;
   onChanged?: () => void;
+  onOpenRun?: (runId: string) => void;
 }
 
 export default function RunDetails(props: Props) {
@@ -35,6 +37,7 @@ function DetailSession({
   onClose,
   currentUserId,
   onChanged,
+  onOpenRun,
 }: Props) {
   const { t } = useTranslation();
   const timezone = useServerTimezone();
@@ -125,8 +128,17 @@ function DetailSession({
               currentUserId={currentUserId}
             />
           )}
+          {run.status === "failed" && currentUserId !== undefined && (
+            <InspectionRevision
+              target={{ organizationId, runId }}
+              currentUserId={currentUserId}
+              fromFailure
+              onOpenRun={onOpenRun}
+            />
+          )}
           {run.status === "succeeded" && currentUserId !== undefined && (
             <RunDelivery
+              onOpenRun={onOpenRun}
               allowRevision={run.decision === "changes_requested"}
               target={{ organizationId, runId }}
               currentUserId={currentUserId}

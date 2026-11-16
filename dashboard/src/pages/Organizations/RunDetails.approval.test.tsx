@@ -146,3 +146,16 @@ it("ignores a late refresh after navigating away", async () => {
   expect(runQueueApi.detail).toHaveBeenCalledTimes(1);
   expect(changed).not.toHaveBeenCalled();
 });
+
+it("offers failure follow-up without pretending a failed run has a report", async () => {
+  vi.mocked(runQueueApi.detail).mockResolvedValue({
+    ...detail,
+    status: "failed",
+  });
+  mount();
+  await screen.findByRole("button", {
+    name: "Request a new HTTP inspection after failure",
+  });
+  expect(screen.queryByText("same-run delivery entry")).toBeNull();
+  expect(organizationsApi.sceneRun).not.toHaveBeenCalled();
+});

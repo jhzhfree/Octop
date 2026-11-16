@@ -20,6 +20,7 @@ import InspectionRunOptions, {
 export const revisionMessages = {
   en: {
     open: "Revise and request another HTTP inspection",
+    openNew: "Open the new run",
     close: "Close revision",
     notice:
       "Create a separate draft from the reviewed snapshot. Each save, readiness change and new request is explicit; another independent approval is required. Old decisions stay unchanged. Closing does not cancel submitted writes; check the goal's plans and run list after an uncertain result.",
@@ -42,6 +43,7 @@ export const revisionMessages = {
   },
   zh: {
     open: "修订并重新申请 HTTP 巡检",
+    openNew: "打开新的运行申请",
     close: "关闭修订",
     notice:
       "从原验收快照创建独立草稿。保存、标记就绪和新申请均需明确操作，并重新独立审批；旧决定不变。关闭不会取消已提交的写入；结果不确定时先到目标方案和运行列表核对。",
@@ -63,9 +65,27 @@ export const revisionMessages = {
     noNote: "未记录验收意见。",
   },
 };
+export const failureFollowUpMessages = {
+  en: {
+    open: "Request a new HTTP inspection after failure",
+    notice:
+      "Check the source tasks and permissions before submitting again. Create a new draft from the failed run; select current sources and consent to sharing again. A new independent approval is required. The old run stays failed and may have collected partial results. Nothing is automatically retried; closing does not cancel submitted writes.",
+    title: "New inspection plan title",
+    approach: "Updated inspection approach",
+  },
+  zh: {
+    open: "从失败记录重新申请 HTTP 巡检",
+    notice:
+      "再次提交前请检查来源任务与权限。从失败运行创建新草稿，重新选择当前来源并确认共享，仍需独立审批。旧运行保持失败，之前可能已经采集部分结果。不会自动重试；关闭不会取消已提交的写入。",
+    title: "新的巡检方案标题",
+    approach: "调整后的巡检方案说明",
+  },
+};
 interface Props {
   target: AcceptanceTarget;
   currentUserId: number;
+  fromFailure?: boolean;
+  onOpenRun?: (runId: string) => void;
 }
 export default function InspectionRevision(props: Props) {
   return (
@@ -74,14 +94,22 @@ export default function InspectionRevision(props: Props) {
     </SensitiveAccessBoundary>
   );
 }
-function RevisionSession({ target, currentUserId }: Props) {
+function RevisionSession({
+  target,
+  currentUserId,
+  fromFailure = false,
+  onOpenRun,
+}: Props) {
   const { i18n } = useTranslation();
-  const m =
-    revisionMessages[
-      (i18n.resolvedLanguage || i18n.language || "en").startsWith("zh")
-        ? "zh"
-        : "en"
-    ];
+  const language = (i18n.resolvedLanguage || i18n.language || "en").startsWith(
+    "zh",
+  )
+    ? "zh"
+    : "en";
+  const m = {
+    ...revisionMessages[language],
+    ...(fromFailure ? failureFollowUpMessages[language] : {}),
+  };
   const [source, setSource] = useState<EnterpriseSceneRun>();
   const [note, setNote] = useState("");
   const [title, setTitle] = useState("");
@@ -135,22 +163,25 @@ function RevisionSession({ target, currentUserId }: Props) {
     perform(async (seq) => {
       const [run, feedback] = await Promise.all([
         organizationsApi.sceneRun(target.organizationId, target.runId),
-        deliveryAcceptanceApi.feedback(target),
+        fromFailure
+          ? Promise.resolve(null)
+          : deliveryAcceptanceApi.feedback(target),
       ]);
       const snapshot = run.plan_snapshot;
       if (
         run.run_id !== target.runId ||
         run.organization_id !== target.organizationId ||
         run.requested_by !== currentUserId ||
-        run.status !== "succeeded" ||
+        run.status !== (fromFailure ? "failed" : "succeeded") ||
         snapshot?.inspection?.mode !== "http_inspection" ||
         !snapshot.plan ||
         !snapshot.goal ||
         !snapshot.worker ||
         run.plan_id !== snapshot.plan.plan_id ||
-        !feedback ||
-        !validAcceptanceRecord(feedback, target) ||
-        feedback.decision !== "changes_requested"
+        (!fromFailure &&
+          (!feedback ||
+            !validAcceptanceRecord(feedback, target) ||
+            feedback.decision !== "changes_requested"))
       )
         throw new Error("Unavailable source");
       const [workers, goals] = await Promise.all([
@@ -177,7 +208,7 @@ function RevisionSession({ target, currentUserId }: Props) {
         throw new Error("Inactive target");
       if (seq === generation.current) {
         setSource(run);
-        setNote(feedback.review_note || "");
+        setNote(feedback?.review_note || "");
         setTitle(snapshot.plan.title);
         setApproach(snapshot.plan.approach);
         setSteps(snapshot.plan.steps.map((s) => ({ ...s })));
@@ -284,9 +315,11 @@ function RevisionSession({ target, currentUserId }: Props) {
           <p>
             {m.source}: {source.run_id}
           </p>
-          <p style={{ whiteSpace: "pre-wrap" }}>
-            {m.feedback}: {note || m.noNote}
-          </p>
+          {!fromFailure && (
+            <p style={{ whiteSpace: "pre-wrap" }}>
+              {m.feedback}: {note || m.noNote}
+            </p>
+          )}
           {!plan && (
             <>
               <Input
@@ -393,7 +426,14 @@ function RevisionSession({ target, currentUserId }: Props) {
             </>
           )}
           {submitted && (
-            <Alert type="success" message={`${m.submitted}: ${submitted}`} />
+            <>
+              <Alert type="success" message={`${m.submitted}: ${submitted}`} />
+              {onOpenRun && (
+                <Button onClick={() => onOpenRun(submitted)}>
+                  {m.openNew}
+                </Button>
+              )}
+            </>
           )}
         </>
       )}
