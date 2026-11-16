@@ -8,7 +8,11 @@ import {
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import RunQueue from "./RunQueue";
 import { runQueueApi } from "../../api/modules/runQueue";
-import { organizationsApi } from "../../api/modules/organizations";
+import {
+  organizationsApi,
+  type EnterpriseSceneRun,
+} from "../../api/modules/organizations";
+import { approvalMessages } from "./RunApproval";
 import { deliveryAcceptanceApi } from "../../api/modules/deliveryAcceptance";
 import { mattermostPublicationApi } from "../../api/modules/mattermostPublication";
 const identity = vi.hoisted(() => ({
@@ -30,7 +34,11 @@ vi.mock("../../api/modules/runQueue", async (original) => ({
   runQueueApi: { read: vi.fn(), detail: vi.fn() },
 }));
 vi.mock("../../api/modules/organizations", () => ({
-  organizationsApi: { sceneRunEvidence: vi.fn() },
+  organizationsApi: {
+    sceneRunEvidence: vi.fn(),
+    sceneRun: vi.fn(),
+    decideSceneRun: vi.fn(),
+  },
 }));
 vi.mock("../../api/modules/deliveryAcceptance", async (original) => ({
   ...(await original<typeof import("../../api/modules/deliveryAcceptance")>()),
@@ -284,4 +292,77 @@ it("lets a human revisit the accepted run and its blocked publication without se
   expect(mattermostPublicationApi.candidate).not.toHaveBeenCalled();
   expect(mattermostPublicationApi.create).not.toHaveBeenCalled();
   expect(mattermostPublicationApi.decide).not.toHaveBeenCalled();
+});
+
+it("approves from the awaiting queue and invalidates the old pending list", async () => {
+  const pending = {
+    organization_id: "o",
+    run_id: "r",
+    scene_id: "s",
+    scene_name: "Inspection",
+    scene_version: 1,
+    status: "awaiting_approval" as const,
+    created_at: 1,
+    updated_at: 1,
+    plan_id: "p",
+    decision: null,
+    as_of: 1,
+    persisted_state_may_lag: true as const,
+  };
+  const request = {
+    ...pending,
+    requested_by: 1,
+    prompt_snapshot: "QUEUE REQUEST",
+    mcp_servers: [],
+    plan_snapshot: {
+      worker: { worker_id: "w" },
+      capabilities: {},
+      plan: { plan_id: "p", steps: [] },
+    },
+  } as unknown as EnterpriseSceneRun;
+  vi.mocked(runQueueApi.read).mockResolvedValue({
+    organization_id: "o",
+    category: "awaiting_approval",
+    as_of: 1,
+    items: [
+      {
+        run_id: "r",
+        status: "awaiting_approval",
+        created_at: 1,
+        decision: null,
+      },
+    ],
+    next_before: null,
+    execution_authorized: false,
+    persisted_state_may_lag: true,
+  });
+  vi.mocked(runQueueApi.detail)
+    .mockResolvedValueOnce(pending)
+    .mockResolvedValue({ ...pending, status: "queued" });
+  vi.mocked(organizationsApi.sceneRun)
+    .mockResolvedValueOnce(request)
+    .mockResolvedValue({ ...request, status: "queued" });
+  vi.mocked(organizationsApi.decideSceneRun).mockResolvedValue({
+    ...request,
+    status: "queued",
+    approved_by: 2,
+  });
+  render(<RunQueue organizationId="o" canManage />);
+  fireEvent.change(screen.getByLabelText("runQueue.category"), {
+    target: { value: "awaiting_approval" },
+  });
+  await open();
+  fireEvent.click(await screen.findByText(approvalMessages.en.open));
+  await screen.findByText("QUEUE REQUEST");
+  fireEvent.click(screen.getByText(approvalMessages.en.approve));
+  fireEvent.click(screen.getByText(approvalMessages.en.confirm));
+  await screen.findByText("organizations.runStatuses.queued");
+  fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  expect(screen.queryByRole("button", { name: "r" })).toBeNull();
+  expect(organizationsApi.decideSceneRun).toHaveBeenCalledWith(
+    "o",
+    "r",
+    "approve",
+    "",
+  );
 });

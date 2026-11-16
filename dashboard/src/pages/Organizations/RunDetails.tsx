@@ -1,7 +1,9 @@
+import RunApproval from "./RunApproval";
+import { organizationsApi } from "../../api/modules/organizations";
 import RunOperationTrace from "./RunOperationTrace";
 import RunDelivery from "./RunDelivery";
 import { useEffect, useState } from "react";
-import { Alert, Descriptions, Modal, Spin } from "antd";
+import { Alert, Button, Descriptions, Modal, Spin } from "antd";
 import { useTranslation } from "react-i18next";
 import { runQueueApi, type RunQueueDetail } from "../../api/modules/runQueue";
 import { useServerTimezone } from "../../hooks/useServerTimezone";
@@ -12,6 +14,7 @@ interface Props {
   runId: string;
   currentUserId?: number;
   onClose: () => void;
+  onChanged?: () => void;
 }
 
 export default function RunDetails(props: Props) {
@@ -31,16 +34,35 @@ function DetailSession({
   runId,
   onClose,
   currentUserId,
+  onChanged,
 }: Props) {
   const { t } = useTranslation();
   const timezone = useServerTimezone();
   const [run, setRun] = useState<RunQueueDetail>();
   const [error, setError] = useState(false);
+  const [refresh, setRefresh] = useState(0);
+  const reload = () => {
+    setRun(undefined);
+    setError(false);
+    setRefresh((value) => value + 1);
+  };
   useEffect(() => {
     let active = true;
-    void runQueueApi
-      .detail(organizationId, runId)
+    const read = async () => {
+      if (refresh > 0 && currentUserId !== undefined) {
+        const current = await organizationsApi.sceneRun(organizationId, runId);
+        if (
+          current.organization_id !== organizationId ||
+          current.run_id !== runId
+        )
+          throw new Error("Mismatched run");
+        if (!active) return;
+      }
+      return runQueueApi.detail(organizationId, runId);
+    };
+    void read()
       .then((result) => {
+        if (!active || !result) return;
         if (
           result.organization_id !== organizationId ||
           result.run_id !== runId
@@ -54,10 +76,13 @@ function DetailSession({
     return () => {
       active = false;
     };
-  }, [organizationId, runId]);
+  }, [organizationId, runId, refresh, currentUserId]);
   return (
     <Modal open title={t("runDetails.title")} onCancel={onClose} footer={null}>
       <Alert type="info" message={t("runDetails.notice")} />
+      <Button disabled={!run && !error} onClick={reload}>
+        {t("runDetails.refresh")}
+      </Button>
       {error ? (
         <Alert type="error" message={t("runDetails.error")} />
       ) : !run ? (
@@ -81,6 +106,18 @@ function DetailSession({
               {run.plan_id ?? "—"}
             </Descriptions.Item>
           </Descriptions>
+          {run.status === "awaiting_approval" &&
+            currentUserId !== undefined && (
+              <RunApproval
+                organizationId={organizationId}
+                runId={runId}
+                currentUserId={currentUserId}
+                onDecided={() => {
+                  onChanged?.();
+                  reload();
+                }}
+              />
+            )}
           {currentUserId !== undefined && (
             <RunOperationTrace
               organizationId={organizationId}

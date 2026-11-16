@@ -207,10 +207,59 @@ async def test_fresh_sqlite_inspection_delivery_via_http(tmp_path, monkeypatch, 
             code=201,
         )
         rp = op + "/scene-runs/" + run["run_id"]
+        queue = await req("GET", op + "/run-queue?category=awaiting_approval", headers=reviewauth)
+        assert any(item["run_id"] == run["run_id"] for item in queue["items"])
+        detail = await req("GET", op + "/run-queue/" + run["run_id"], headers=reviewauth)
+        assert detail["status"] == "awaiting_approval"
+        reviewed = await req("GET", rp, headers=reviewauth)
+        assert reviewed["plan_snapshot"]["inspection"]["sources"][0]["job_id"] == job["id"]
+        await req("POST", rp + "/approve", {"note": "unauthenticated"}, headers={}, code=401)
         await req("POST", rp + "/approve", {"note": "self approval must fail"}, code=403)
+        # A stale open reviewer page must not retain approval authority.
+        member_path = "/api" + op + "/members/" + str(reviewer["id"])
+        assert (await c.delete(member_path, headers=auth)).status_code == 204
+        await req("GET", op + "/run-queue/" + run["run_id"], headers=reviewauth, code=403)
+        for action in ("approve", "reject"):
+            await req(
+                "POST",
+                rp + "/" + action,
+                {"note": "revoked reviewer"},
+                headers=reviewauth,
+                code=403,
+            )
+        await req("POST", op + "/members", {"user_id": reviewer["id"], "role": "member"}, code=201)
         await req(
-            "POST", rp + "/approve", {"note": "Independent synthetic review"}, headers=reviewauth
+            "POST", rp + "/approve", {"note": "member is not manager"}, headers=reviewauth, code=403
         )
+        assert (await c.delete(member_path, headers=auth)).status_code == 204
+        await req("POST", op + "/members", {"user_id": reviewer["id"], "role": "manager"}, code=201)
+        other = await req(
+            "POST", "/organizations", {"name": "Other synthetic organization"}, code=201
+        )
+        other_path = "/organizations/" + other["organization_id"]
+        await req(
+            "POST",
+            other_path + "/members",
+            {"user_id": reviewer["id"], "role": "manager"},
+            code=201,
+        )
+        await req("GET", other_path + "/scene-runs/" + run["run_id"], headers=reviewauth, code=404)
+        assert calls == []
+        decisions = await asyncio.gather(
+            *[
+                c.post(
+                    "/api" + rp + "/approve",
+                    json={"note": "Independent synthetic review"},
+                    headers=reviewauth,
+                )
+                for _ in range(2)
+            ]
+        )
+        assert sorted(response.status_code for response in decisions) == [200, 409], [
+            r.text for r in decisions
+        ]
+        pending = await req("GET", op + "/run-queue?category=awaiting_approval", headers=reviewauth)
+        assert all(item["run_id"] != run["run_id"] for item in pending["items"])
         for _ in range(100):
             r = await c.get("/api" + rp, headers=auth)
             assert r.status_code == 200, r.text

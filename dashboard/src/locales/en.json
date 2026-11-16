@@ -7386,11 +7386,12 @@
     "asOf": "Read at"
   },
   "runDetails": {
+    "refresh": "Refresh current run status",
     "deliveryNotice": "Read the report or delivery evidence, request independent acceptance, or read an existing publication preview for this run. Each action rechecks server permissions; unavailable content may be missing or unauthorized. Nothing is sent to Mattermost.",
     "closeEvidence": "Close report / evidence",
     "title": "Run details",
-    "notice": "Persisted metadata only; status may lag. Opening details does not synchronize, start, retry, approve or accept work. No prompts, evidence or error content are returned.",
-    "error": "Unable to load this run. Close and reopen to retry.",
+    "notice": "Opening details reads persisted metadata only; status may lag. Refresh reconciles this run with existing execution records. Reviewing a request is separate; only a confirmed approval may start work. Refresh does not start or retry work.",
+    "error": "Unable to load this run. Refresh or close and reopen to check.",
     "run": "Run ID",
     "scene": "Scene",
     "status": "Run status",

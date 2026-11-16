@@ -10,10 +10,14 @@
 
 **AI-TAgent 企业场景仍处于开发阶段，尚不满足 1.0 发布条件。**
 当前开发分支为 `feature/akb-octop-litellm-dev`；本轮开始核对的远端提交为
-`511f6b78214fcc7374a551c3bea43d1fd20da69d`。后续提交以 Git 实际记录为准，
+`dfef02b0df039d406e0608ad27df5a5cf787aaef`。后续提交以 Git 实际记录为准，
 本文件不是发布批准，也不授权生产操作、合并、部署或外部消息发送。
 
-本轮补齐[正常启动 guard 完整性检查](ai-tagent/mattermost-storage-guards.md)：
+本轮补齐[待办详情审批入口](ai-tagent/queue-run-approval.md)：
+在同 run 审阅、明确确认批准/拒绝、刷新执行状态并进入报告验收，复用原接口。
+前后端隔离测试分开验证；浏览器沙箱环境受限，不能宣称真实浏览器多角色联调完成。
+
+前一阶段补齐[正常启动 guard 完整性检查](ai-tagent/mattermost-storage-guards.md)：
 schema 049 损坏/缺失保护定义时，在兼容修复、插件和运行时启动前拒绝，不自动补建。
 完整旧启动回退链已有回归；本轮修复的是完整性检查缺口，不宣称抵御同 UID 改库或防混跑。
 resume、在线/原地恢复及隔离镜像激活继续关闭。
