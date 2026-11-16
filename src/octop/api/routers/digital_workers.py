@@ -911,7 +911,7 @@ class GoalHandoffBody(BaseModel):
 @router.post(
     "/organizations/{organization_id}/digital-workers/{worker_id}/goals/{goal_id}/handoffs",
     summary="Create an ordinary draft goal at another position with retained provenance",
-    description="Manager account, explicit request key and current source/receiver versions required. SQLite only. The source stays in its current status, its version advances, and target goal + provenance + audit commit together. Exact retries return the same record. Never executes or grants permissions.",
+    description="Manager account, explicit request key and current source/receiver versions required. SQLite and PostgreSQL supported; PostgreSQL uses bounded transaction/row locks. The source stays in its current status, its version advances, and target goal + provenance + audit commit together. Exact retries return the same record. Never executes or grants permissions.",
 )
 def create_goal_handoff(
     organization_id: str,

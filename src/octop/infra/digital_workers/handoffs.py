@@ -18,7 +18,15 @@ class GoalHandoffService(DigitalWorkerService):
                 409,
                 "Handoff conflicts with current versions, roles or the original request; reload before a new request",
             ),
-            "sqlite_required": (503, "Goal handoff creation currently requires SQLite"),
+            "unsupported_database": (503, "Goal handoff creation requires SQLite or PostgreSQL"),
+            "isolation_required": (
+                503,
+                "PostgreSQL goal handoffs require READ COMMITTED isolation",
+            ),
+            "busy": (
+                409,
+                "Concurrent change or database timeout; retry the same handoff request key",
+            ),
         }
         status, message = messages[exc.reason]
         return DigitalWorkerError("GOAL_HANDOFF_" + exc.reason.upper(), message, status)

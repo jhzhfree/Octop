@@ -189,9 +189,9 @@ def test_draft_delete_preserves_handoff_history(handoff):
     assert row["source_goal_id"] == goal
 
 
-def test_pg_creation_is_explicitly_unavailable(handoff, monkeypatch):
+def test_unknown_database_creation_is_explicitly_unavailable(handoff, monkeypatch):
     db, service, goal, body = handoff
-    monkeypatch.setattr(type(db), "dialect", property(lambda self: "postgres"))
+    monkeypatch.setattr(type(db), "dialect", property(lambda self: "unsupported"))
     with pytest.raises(DigitalWorkerError) as error:
         service.create_handoff("o", "w", goal, body)
     assert error.value.status == 503

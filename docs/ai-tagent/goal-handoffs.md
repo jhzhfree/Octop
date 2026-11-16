@@ -33,7 +33,8 @@
 ## 升级与部署边界
 
 Schema 050 新增交接表及索引，不改历史目标内容；SQLite 脚本纳入逐脚本事务迁移。
-提供 PostgreSQL 对应结构脚本，但创建接口明确返回 503：尚未验证等价跨连接授权/版本锁策略。
+PostgreSQL 创建现已通过本地 17.12 隔离验证，要求 READ COMMITTED；锁策略与具体边界见
+[PostgreSQL 交接验证](goal-handoffs-postgresql.md)。不支持的隔离级别明确返回 503，不自动降级。
 不要混跑旧版本，也不要直接降低 schema；本阶段没有自动降级或全库回滚功能。
 
 真实运行仍需要有权限的模型、工具、知识库和堡垒机适配等条件。在线/原地恢复及恢复激活仍关闭，
@@ -85,8 +86,9 @@ Mattermost 真实接收/执行与外发没有因本功能开放。此阶段不�
 岗位数字员工没有新增人类登录、自动收件或主动跨岗位执行权限；操作界面仍由有权限的管理者使用，
 执行上下文沿用接收目标及计划，不能将本入口称为自主协作或消息送达。
 
-本阶段没有迁移；Schema 仍为 050。目标查询采用现有跨数据库 SQL，但仅 SQLite 实测，PG 未联调；
-交接创建的 PG 503 限制不变。真实模型、AKB、堡垒机、Mattermost、浏览器点击与部署仍未验收。
+该阶段没有迁移；Schema 仍为 050。该阶段目标查询采用现有跨数据库 SQL，但仅 SQLite 实测，PG 未联调；
+当时交接创建的 PG 503 限制不变；后续解除范围见 [PostgreSQL 验证](goal-handoffs-postgresql.md)。
+真实模型、AKB、堡垒机、Mattermost、浏览器点击与部署仍未验收。
 
 此后续阶段验证：`OCTOP_TEST_DELIVERY_HTTP=1 uv run pytest tests/unit/scenes/test_progress.py tests/integration/test_fresh_install_inspection_delivery.py -q`
 共 66 通过（含 4 条端到端场景，实际回环 HTTP 与 ASGI、合成模型/巡检响应）；

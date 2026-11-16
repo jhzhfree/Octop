@@ -1,4 +1,4 @@
-"""Live PG tests for 033/034, not a full migration-chain or service test.
+"""Live PG tests for 033/034/044, not a full migration-chain or service test.
 
 Requires OCTOP_TEST_DATABASE_URL and OCTOP_TEST_DATABASE_DISPOSABLE=1, explicitly
 attesting that the URL names a dedicated disposable database. Database names must
@@ -9,6 +9,7 @@ No connection is opened during collection or when either opt-in is absent.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import uuid
@@ -56,7 +57,7 @@ def pg_governance():
             pool = PostgresPool(scoped, min_size=1, max_size=4)
             with pool.transaction() as c:
                 assert c.execute("SELECT current_schema()").fetchone()[0] == schema
-                # Minimal predecessor schema: these tests target 033/034 and repo SQL.
+                # Minimal predecessor schema: these tests target 033/034/044 and current repo SQL.
                 statements = """
                 CREATE TABLE users(id INTEGER PRIMARY KEY,role TEXT,disabled INTEGER);
                 CREATE TABLE organizations(organization_id TEXT PRIMARY KEY);
@@ -87,10 +88,11 @@ def pg_governance():
                 for name in (
                     "033_worker_knowledge_mappings.pg.sql",
                     "034_scene_run_acceptance.pg.sql",
+                    "044_acceptance_review_note.pg.sql",
                 ):
                     for statement in _split_pg_sql((migrations / name).read_text()):
                         c.execute(statement)
-                assert c.execute("SELECT version FROM _schema_version").fetchone()[0] == 34
+                assert c.execute("SELECT version FROM _schema_version").fetchone()[0] == 44
             yield pool
         finally:
             if pool is not None:
@@ -135,6 +137,7 @@ def _assert_review_audit(db, review):
         "decision": review["decision"],
         "evidence_sha256": review["evidence_sha256"],
         "snapshot_sha256": review["snapshot_sha256"],
+        "review_note_sha256": hashlib.sha256(review["review_note"].encode()).hexdigest(),
     }
 
 

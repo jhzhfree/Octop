@@ -184,8 +184,8 @@ function Session({
           <Alert
             type="info"
             message={label(
-              "创建接收岗位的目标草稿，不执行任务、不转移权限。原目标状态不变；接收目标仍须确认、规划和审批。仅支持 SQLite。",
-              "Creates a receiving role's draft goal; no execution or permission transfer. The source status stays unchanged. Confirm, plan and approve the receiving goal using the existing workflow. SQLite only.",
+              "创建接收岗位的目标草稿，不执行任务、不转移权限。原目标状态不变；接收目标仍须确认、规划和审批。支持 SQLite 和 PostgreSQL。",
+              "Creates a receiving role's draft goal; no execution or permission transfer. The source status stays unchanged. Confirm, plan and approve the receiving goal using the existing workflow. Supports SQLite and PostgreSQL.",
             )}
           />
           {error && (

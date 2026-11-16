@@ -6,6 +6,8 @@ import hashlib
 import json
 from typing import Any
 
+from psycopg.errors import DeadlockDetected, LockNotAvailable, QueryCanceled, SerializationFailure
+
 from octop.infra.db.pool import DatabasePool
 from octop.infra.db.repos._base import now_ts
 from octop.infra.utils.ulid import new_ulid
@@ -22,7 +24,24 @@ class GoalHandoffRepo:
         self.db = db
 
     @staticmethod
-    def authorize(conn: Any, org: str, actor: int) -> None:
+    def authorize(conn: Any, org: str, actor: int, *, lock: bool = False) -> None:
+        if lock:
+            user = conn.execute(
+                "SELECT role FROM users WHERE id=? AND disabled=0 FOR SHARE", (actor,)
+            ).fetchone()
+            if user is None:
+                raise HandoffError("forbidden")
+            if (
+                user["role"] != "admin"
+                and conn.execute(
+                    "SELECT 1 FROM organization_members WHERE organization_id=? AND user_id=? "
+                    "AND role IN ('owner','manager') FOR SHARE",
+                    (org, actor),
+                ).fetchone()
+                is None
+            ):
+                raise HandoffError("forbidden")
+            return
         row = conn.execute(
             "SELECT 1 FROM users u LEFT JOIN organization_members m "
             "ON m.user_id=u.id AND m.organization_id=? WHERE u.id=? AND u.disabled=0 "
@@ -44,10 +63,18 @@ class GoalHandoffRepo:
     def create(
         self, org: str, source_worker: str, source_goal: str, actor: int, request: dict[str, Any]
     ) -> dict[str, Any]:
-        # SQLite's IMMEDIATE transaction supplies the write barrier used below.
-        # Do not claim the same guarantee for an unvalidated PG lock strategy.
-        if self.db.dialect != "sqlite":
-            raise HandoffError("sqlite_required")
+        try:
+            return self._create(org, source_worker, source_goal, actor, request)
+        except (DeadlockDetected, LockNotAvailable, QueryCanceled, SerializationFailure) as exc:
+            # No partial goal or audit survives a failed transaction. Retry the same key.
+            raise HandoffError("busy") from exc
+
+    def _create(
+        self, org: str, source_worker: str, source_goal: str, actor: int, request: dict[str, Any]
+    ) -> dict[str, Any]:
+        pg = self.db.dialect == "postgresql"
+        if self.db.dialect not in ("sqlite", "postgresql"):
+            raise HandoffError("unsupported_database")
         fingerprint = hashlib.sha256(
             json.dumps(
                 {"source_worker": source_worker, "source_goal": source_goal, **request},
@@ -57,7 +84,24 @@ class GoalHandoffRepo:
             ).encode()
         ).hexdigest()
         with self.db.transaction() as conn:
-            self.authorize(conn, org, actor)
+            if pg:
+                # Do not silently downgrade an administrator's stronger isolation.
+                if conn.execute("SHOW transaction_isolation").fetchone()[0] != "read committed":
+                    raise HandoffError("isolation_required")
+                for setting, ceiling in (("lock_timeout", 2000), ("statement_timeout", 5000)):
+                    current = int(
+                        conn.execute(
+                            "SELECT setting FROM pg_settings WHERE name=?", (setting,)
+                        ).fetchone()[0]
+                    )
+                    bounded = min(current, ceiling) if current else ceiling
+                    conn.execute("SELECT set_config(?, ?, true)", (setting, f"{bounded}ms"))
+                # Serialize only identical request keys; row locks below protect ordinary
+                # non-handoff mutations too. A hash collision merely adds contention.
+                key = json.dumps(["goal_handoff", org, actor, request["request_id"]]).encode()
+                lock_id = int.from_bytes(hashlib.sha256(key).digest()[:8], "big", signed=True)
+                conn.execute("SELECT pg_advisory_xact_lock(?)", (lock_id,))
+            self.authorize(conn, org, actor, lock=pg)
             old = conn.execute(
                 "SELECT h.*,g.status AS target_goal_status FROM goal_handoffs h "
                 "LEFT JOIN digital_worker_goals g ON g.goal_id=h.target_goal_id AND g.worker_id=h.target_worker_id "
@@ -68,17 +112,24 @@ class GoalHandoffRepo:
                 if old["request_sha256"] != fingerprint:
                     raise HandoffError("conflict")
                 return self.decode(old)
+            if pg:
+                conn.execute(
+                    "SELECT worker_id FROM digital_workers WHERE organization_id=? "
+                    "AND worker_id IN (?,?) ORDER BY worker_id FOR SHARE",
+                    (org, source_worker, request["target_worker_id"]),
+                ).fetchall()
             source = conn.execute(
                 "SELECT g.*,w.name AS worker_name,w.position_id,w.agent_id,w.status AS worker_status "
                 "FROM digital_worker_goals g JOIN digital_workers w ON w.worker_id=g.worker_id "
-                "WHERE g.goal_id=? AND w.worker_id=? AND w.organization_id=?",
+                "WHERE g.goal_id=? AND w.worker_id=? AND w.organization_id=?"
+                + (" FOR UPDATE OF g" if pg else ""),
                 (source_goal, source_worker, org),
             ).fetchone()
             target = conn.execute(
                 "SELECT w.*,p.title AS position_title,a.enabled,a.user_id AS agent_owner,a.is_shared "
                 "FROM digital_workers w JOIN organization_positions p ON p.position_id=w.position_id "
                 "AND p.organization_id=w.organization_id JOIN agents a ON a.agent_id=w.agent_id "
-                "WHERE w.worker_id=? AND w.organization_id=?",
+                "WHERE w.worker_id=? AND w.organization_id=?" + (" FOR SHARE OF p,a" if pg else ""),
                 (request["target_worker_id"], org),
             ).fetchone()
             if source is None or target is None:
@@ -92,7 +143,7 @@ class GoalHandoffRepo:
                 raise HandoffError("forbidden")
             appointed = conn.execute(
                 "SELECT 1 FROM organization_assignments WHERE position_id=? "
-                "AND subject_type='agent' AND subject_id=?",
+                "AND subject_type='agent' AND subject_id=?" + (" FOR SHARE" if pg else ""),
                 (target["position_id"], target["agent_id"]),
             ).fetchone()
             if (
