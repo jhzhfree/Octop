@@ -10,10 +10,13 @@
 
 **AI-TAgent 企业场景仍处于开发阶段，尚不满足 1.0 发布条件。**
 当前开发分支为 `feature/akb-octop-litellm-dev`；本轮开始核对的远端提交为
-`5b322a6c15ebfd1fcb0f180b74f4819b508accfa`。后续提交以 Git 实际记录为准，
+`134024c1a54c2ad668e6a5877944cabdc80c02d8`。后续提交以 Git 实际记录为准，
 本文件不是发布批准，也不授权生产操作、合并、部署或外部消息发送。
 
-本轮新增[可选凭据空闲期限](ai-tagent/credential-idle-timeout.md)，按签名凭据
+本轮交付[工作区恢复暂存](ai-tagent/workspace-recovery-staging.md)：新目录中实际
+恢复归档文件并生成绑定数据库的清单，仍不能证明源数据同一时刻一致或激活服务。
+
+前一阶段新增[可选凭据空闲期限](ai-tagent/credential-idle-timeout.md)，按签名凭据
 独立计时，普通轮询不刷新；不是共享家族活动账本或真人空闲检测，默认仍关闭。
 
 前一阶段新增[可选服务端绝对会话时限](ai-tagent/absolute-session-timeout.md)。默认关闭

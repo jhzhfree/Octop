@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import IO, Any
 
 from octop.infra.backup.manifest import MANIFEST_VERSION, BackupManifest
+from octop.infra.backup.recovery_workspace import stage_workspaces
 from octop.infra.db.migrate import _max_discovered_version, run_migrations
 from octop.infra.db.pool import SqlitePool
 from octop.infra.db.sqlite_path import RECOVERY_QUARANTINE_FILE, RECOVERY_QUARANTINE_XATTR
@@ -209,7 +210,12 @@ def _publish(prepared: Path, name: str, directory_fd: int) -> None:
 
 
 def create_recovery_image(
-    source: Path, output: Path, *, identity_policy: str, expected_sha256: str
+    source: Path,
+    output: Path,
+    *,
+    identity_policy: str,
+    expected_sha256: str,
+    include_workspaces: bool = False,
 ) -> dict[str, Any]:
     """Build a new quarantined image in an existing private local POSIX directory.
 
@@ -289,6 +295,12 @@ def create_recovery_image(
             with prepared.open("rb") as stream:
                 image_hash = hashlib.file_digest(stream, "sha256").hexdigest()
                 os.fsync(stream.fileno())
+            if include_workspaces:
+                result.update(
+                    stage_workspaces(
+                        archive, bundle, source_hash=source_hash, database_hash=image_hash
+                    )
+                )
             marker_fd = os.open(
                 bundle / RECOVERY_QUARANTINE_FILE, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
             )

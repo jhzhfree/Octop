@@ -996,6 +996,7 @@
     "access_state_unavailable": "无法确认当前访问权限，请重试。"
   },
   "backupRecovery": {
+    "workspaces": "同时暂存工作区文件并生成完整性清单；不激活 Agent。",
     "help": "将 SQLite 数据恢复到新的隔离镜像，不启动应用。",
     "output": "SQLite 镜像的新私有目录；父目录须存在；不会覆盖已有目标。",
     "policy": "禁用全部归档账号，轮换 JWT 密钥并阻止应用启动。",

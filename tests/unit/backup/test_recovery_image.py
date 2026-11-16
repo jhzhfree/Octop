@@ -237,7 +237,8 @@ r.create_recovery_image(Path(sys.argv[1]), Path(sys.argv[2]), identity_policy="q
         assert_quarantined(output)
 
 
-def test_separate_process_builder_lock_is_enforced(source, tmp_path):
+@pytest.mark.parametrize("include_workspaces", [False, True])
+def test_separate_process_builder_lock_is_enforced(source, tmp_path, include_workspaces):
     archive, _, _ = source
     lock = tmp_path / ".octop-recovery.lock"
     script = """
@@ -256,7 +257,13 @@ sys.stdin.read(1)
         try:
             assert child.stdout.readline().strip() == "locked"
             with pytest.raises(OctopError) as error:
-                recover(archive, tmp_path / "locked.sqlite")
+                recovery.create_recovery_image(
+                    archive,
+                    tmp_path / "locked.sqlite",
+                    identity_policy="quarantine-all",
+                    expected_sha256=sha(archive),
+                    include_workspaces=include_workspaces,
+                )
             assert error.value.details["reason"] == "recovery_builder_busy"
         finally:
             child.communicate("x", timeout=5)
@@ -965,3 +972,264 @@ def test_xattr_boolean_cannot_activate_detached_image(source, tmp_path):
     with pytest.raises(OctopError) as error:
         SqlitePool(detached)
     assert error.value.code == ErrorCode.BACKUP_RECOVERY_QUARANTINED
+
+
+@pytest.fixture
+def workspace_source(source, tmp_path):
+    original, _, _ = source
+    archive = tmp_path / "with-workspaces.tar.gz"
+
+    def change(members):
+        database = tmp_path / "synthetic-workspace-source.db"
+        database.write_bytes(members["db/octop.db"])
+        with sqlite3.connect(database) as conn:
+            for agent_id in ("a", "empty", "omitted"):
+                conn.execute(
+                    "INSERT INTO agents(agent_id,user_id,name,created_at,updated_at) VALUES(?,1,?,1,1)",
+                    (agent_id, agent_id),
+                )
+        conn.close()  # Close/checkpoint the synthetic WAL before archiving main-file bytes.
+        members["db/octop.db"] = database.read_bytes()
+        manifest = json.loads(members["manifest.json"])
+        manifest["agents"] = [
+            {"agent_id": agent_id, "name": agent_id, "workspace_included": agent_id != "omitted"}
+            for agent_id in ("a", "empty", "omitted")
+        ]
+        members["manifest.json"] = json.dumps(manifest).encode()
+        members["workspaces/a/reports/result.txt"] = b"synthetic inspection report\n"
+        members["workspaces/a/.notes"] = b"inert data, never loaded"
+
+    rewrite_archive(original, archive, change)
+    return archive
+
+
+def recover_workspaces(archive, output):
+    return recovery.create_recovery_image(
+        archive,
+        output,
+        identity_policy="quarantine-all",
+        expected_sha256=sha(archive),
+        include_workspaces=True,
+    )
+
+
+def test_workspace_salvage_binds_inventory_and_keeps_quarantine(workspace_source, tmp_path):
+    archive = workspace_source
+    before = sha(archive)
+    output = tmp_path / "workspace-image"
+    result = recover_workspaces(archive, output)
+    report_path = output / "workspace-recovery.json"
+    report = json.loads(report_path.read_text())
+    assert result["workspace_report_sha256"] == sha(report_path)
+    assert report["database_sha256"] == sha(output / "octop.db")
+    assert report["source_sha256"] == before == sha(archive)
+    assert report["point_in_time_consistency_verified"] is False
+    assert report["completeness_verified"] is False
+    assert report["application_start_allowed"] is False
+    assert result["workspace_files"] == 2
+    assert [a["status"] for a in report["agents"]] == [
+        "files_recovered",
+        "not_observed",
+        "omitted_by_manifest",
+    ]
+    for item in report["files"]:
+        file = output / item["path"]
+        assert sha(file) == item["sha256"]
+        assert file.stat().st_size == item["size"]
+        assert file.stat().st_mode & 0o777 == 0o600
+        assert file.parent.stat().st_mode & 0o777 == 0o700
+    assert_quarantined(output)
+
+
+def test_workspace_cli_and_default_database_only(workspace_source, tmp_path):
+    output = tmp_path / "cli-workspaces"
+    result = CliRunner().invoke(
+        backup,
+        [
+            "recover-image",
+            str(workspace_source),
+            "--output",
+            str(output),
+            "--archive-sha256",
+            sha(workspace_source),
+            "--identity-policy",
+            "quarantine-all",
+            "--include-workspaces",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["workspace_files"] == 2
+    plain = tmp_path / "plain-image"
+    recover(workspace_source, plain)
+    assert not (plain / "workspaces").exists()
+    assert_quarantined(plain)
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "traversal",
+        "backslash",
+        "undeclared",
+        "omitted",
+        "duplicate_manifest",
+        "wrong_boolean",
+        "missing_agent",
+        "collision",
+    ],
+)
+def test_workspace_mismatch_and_unsafe_paths_abort(workspace_source, tmp_path, kind):
+    altered = tmp_path / "invalid-workspaces.tar.gz"
+
+    def change(members):
+        manifest = json.loads(members["manifest.json"])
+        if kind == "duplicate_manifest":
+            manifest["agents"].append(manifest["agents"][0])
+        elif kind == "wrong_boolean":
+            manifest["agents"][0]["workspace_included"] = "true"
+        elif kind == "missing_agent":
+            manifest["agents"].pop()
+        else:
+            path = {
+                "traversal": "workspaces/a/../../escaped",
+                "backslash": "workspaces/a/..\\escaped",
+                "undeclared": "workspaces/unknown/x",
+                "omitted": "workspaces/omitted/x",
+                "collision": "workspaces/a/reports",
+            }[kind]
+            members[path] = b"untrusted"
+        members["manifest.json"] = json.dumps(manifest).encode()
+
+    rewrite_archive(workspace_source, altered, change)
+    before = sha(altered)
+    output = tmp_path / "rejected-workspaces"
+    with pytest.raises(OctopError):
+        recover_workspaces(altered, output)
+    assert not output.exists()
+    assert not (tmp_path / "escaped").exists()
+    assert sha(altered) == before
+    assert not list(tmp_path.glob(".octop-recovery-*/"))
+
+
+@pytest.mark.parametrize("kind", ["symlink", "hardlink", "fifo", "duplicate"])
+def test_workspace_nonregular_members_abort(workspace_source, tmp_path, kind):
+    altered = tmp_path / "special-workspaces.tar.gz"
+    with tarfile.open(workspace_source) as inp, tarfile.open(altered, "w:gz") as out:
+        for member in inp:
+            out.addfile(member, inp.extractfile(member))
+        item = tarfile.TarInfo(
+            "workspaces/a/.notes" if kind == "duplicate" else "workspaces/a/link"
+        )
+        if kind != "duplicate":
+            item.type = {
+                "symlink": tarfile.SYMTYPE,
+                "hardlink": tarfile.LNKTYPE,
+                "fifo": tarfile.FIFOTYPE,
+            }[kind]
+            item.linkname = "../../octop.db"
+        out.addfile(item, io.BytesIO(b""))
+    output = tmp_path / "bad-member"
+    with pytest.raises(OctopError):
+        recover_workspaces(altered, output)
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("phase", ["file_write", "directory_sync", "post_publish", "size_limit"])
+def test_workspace_failures_preserve_source_and_never_publish_partial(
+    workspace_source, tmp_path, monkeypatch, phase
+):
+    from octop.infra.backup import recovery_workspace as workspace
+
+    archive_hash = sha(workspace_source)
+    output = tmp_path / "fault-image"
+    if phase == "file_write":
+        original = os.open
+
+        def fail_open(path, flags, *args, **kwargs):
+            if str(path).endswith("reports/result.txt"):
+                raise OSError("synthetic disk full")
+            return original(path, flags, *args, **kwargs)
+
+        monkeypatch.setattr(os, "open", fail_open)
+    elif phase == "directory_sync":
+        original_sync = os.fsync
+
+        def fail_sync(fd):
+            if os.readlink(f"/proc/self/fd/{fd}").endswith("/workspaces/a"):
+                raise OSError("synthetic directory sync failure")
+            original_sync(fd)
+
+        monkeypatch.setattr(os, "fsync", fail_sync)
+    elif phase == "size_limit":
+        monkeypatch.setattr(workspace, "_MAX_TOTAL", 1)
+    else:
+        sync = recovery._sync_directory
+        calls = 0
+
+        def fail_after_publish(fd):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise OSError("synthetic parent sync failure")
+            sync(fd)
+
+        monkeypatch.setattr(recovery, "_sync_directory", fail_after_publish)
+    with pytest.raises(OctopError) as error:
+        recover_workspaces(workspace_source, output)
+    assert sha(workspace_source) == archive_hash
+    if phase == "post_publish":
+        assert error.value.code == ErrorCode.BACKUP_RECOVERY_COMMIT_UNCERTAIN
+        assert (output / "workspace-recovery.json").is_file()
+        assert (output / "workspaces/a/reports/result.txt").is_file()
+        assert_quarantined(output)
+    else:
+        assert not output.exists()
+
+
+def test_workspace_competing_publish_keeps_winner(workspace_source, tmp_path, monkeypatch):
+    original = recovery._publish
+    output = tmp_path / "competing-workspace"
+
+    def competing(prepared, name, fd):
+        output.mkdir()
+        (output / "winner").write_text("concurrent creator")
+        original(prepared, name, fd)
+
+    monkeypatch.setattr(recovery, "_publish", competing)
+    with pytest.raises(OctopError):
+        recover_workspaces(workspace_source, output)
+    assert list(output.iterdir()) == [output / "winner"]
+
+
+def test_real_backup_to_workspace_salvage_does_not_follow_archived_host_path(source, tmp_path):
+    from types import SimpleNamespace
+
+    _, pool, _ = source
+    workspace = tmp_path / "existing-workspace"
+    workspace.mkdir()
+    (workspace / "report.txt").write_text("archived report")
+    config = json.dumps({"workspace_dir": str(workspace)})
+    with pool.transaction() as conn:
+        conn.execute(
+            "INSERT INTO agents(agent_id,user_id,name,config_json,created_at,updated_at) VALUES('a',1,'Agent',?,1,1)",
+            (config,),
+        )
+    archive = tmp_path / "actual-writer.tar.gz"
+    create_system_backup(
+        paths=PathLayout(tmp_path / "original"),
+        agent_rows=[SimpleNamespace(agent_id="a", name="Agent", config_json=config)],
+        pool=pool,
+        db_config=DatabaseConfig(),
+        dest=archive,
+        include_workspaces=True,
+        include_config=False,
+        include_skill_packages=False,
+        include_plugins=False,
+        include_knowledge=False,
+    )
+    (workspace / "report.txt").write_text("current report must remain")
+    output = tmp_path / "actual-recovered"
+    recover_workspaces(archive, output)
+    assert (output / "workspaces/a/report.txt").read_text() == "archived report"
+    assert (workspace / "report.txt").read_text() == "current report must remain"
+    assert_quarantined(output)

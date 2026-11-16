@@ -996,6 +996,7 @@
     "access_state_unavailable": "Current access could not be verified. Please retry."
   },
   "backupRecovery": {
+    "workspaces": "Also stage inert workspace files with an integrity inventory; does not activate agents.",
     "help": "Recover SQLite data into a new quarantined image, without activating it.",
     "output": "New private directory for the SQLite image; parent must exist; never overwrites.",
     "policy": "Disable all archived accounts, rotate JWT, and block application startup.",

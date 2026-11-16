@@ -191,13 +191,20 @@ def restore(
     help=tr("backupRecovery.policy"),
 )
 @click.option("--archive-sha256", required=True, help=tr("backupRecovery.checksum"))
-def recover_image(archive: Path, output: Path, identity_policy: str, archive_sha256: str) -> None:
+@click.option("--include-workspaces", is_flag=True, help=tr("backupRecovery.workspaces"))
+def recover_image(
+    archive: Path, output: Path, identity_policy: str, archive_sha256: str, include_workspaces: bool
+) -> None:
     """Recover SQLite data into a new quarantined image, without activating it."""
     from octop.infra.backup.recovery_image import create_recovery_image
 
     try:
         result = create_recovery_image(
-            archive, output, identity_policy=identity_policy, expected_sha256=archive_sha256
+            archive,
+            output,
+            identity_policy=identity_policy,
+            expected_sha256=archive_sha256,
+            include_workspaces=include_workspaces,
         )
     except OctopError as exc:
         raise click.ClickException(exc.message) from exc
