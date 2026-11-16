@@ -454,3 +454,28 @@ def test_access_token_ttl_preserves_supported_values(tmp_path, ttl):
     path = tmp_path / "config.json"
     path.write_text(json.dumps({"access_token_ttl_seconds": ttl}))
     assert load_config(path).access_token_ttl_seconds == ttl
+
+
+@pytest.mark.parametrize("value", [-1, 0, 28800, 86400])
+@pytest.mark.parametrize("source", ["direct", "file", "environment"])
+def test_absolute_session_timeout_config(tmp_path, monkeypatch, value, source):
+    from octop.config import OctopConfig
+
+    path = tmp_path / "config.json"
+    if source == "file":
+        path.write_text(json.dumps({"session_absolute_timeout_seconds": value}))
+    if source == "environment":
+        monkeypatch.setenv("OCTOP_SESSION_ABSOLUTE_TIMEOUT", str(value))
+
+    def load():
+        return (
+            OctopConfig(session_absolute_timeout_seconds=value)
+            if source == "direct"
+            else load_config(path)
+        )
+
+    if value < 0:
+        with pytest.raises(ValueError, match="session_absolute_timeout_seconds"):
+            load()
+    else:
+        assert load().session_absolute_timeout_seconds == value

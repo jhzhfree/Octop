@@ -127,6 +127,7 @@ class OctopConfig:
     port: int = 8088
     log_level: str = "info"
     access_token_ttl_seconds: int = 86400
+    session_absolute_timeout_seconds: int = 0
     login_max_attempts: int = 5
     login_lockout_seconds: int = 900
     cors_origins: list[str] = field(default_factory=list)
@@ -145,6 +146,8 @@ class OctopConfig:
     browser_idle_timeout_minutes: int = DEFAULT_BROWSER_IDLE_TIMEOUT_MINUTES
 
     def __post_init__(self) -> None:
+        if self.session_absolute_timeout_seconds < 0:
+            raise ValueError("session_absolute_timeout_seconds must be non-negative")
         # JWT iat/exp and activity cadence use whole seconds. A one-second
         # lifetime has no valid second in which renewal can extend expiry.
         if self.access_token_ttl_seconds < 2:
@@ -475,6 +478,10 @@ def load_config(path: Path) -> OctopConfig:
         merged["access_token_ttl_seconds"] = _coerce_int(
             "OCTOP_ACCESS_TOKEN_TTL", v, merged["access_token_ttl_seconds"]
         )
+    if v := os.environ.get("OCTOP_SESSION_ABSOLUTE_TIMEOUT"):
+        merged["session_absolute_timeout_seconds"] = _coerce_int(
+            "OCTOP_SESSION_ABSOLUTE_TIMEOUT", v, merged["session_absolute_timeout_seconds"]
+        )
     if v := os.environ.get("OCTOP_LOGIN_MAX_ATTEMPTS"):
         merged["login_max_attempts"] = _coerce_int(
             "OCTOP_LOGIN_MAX_ATTEMPTS", v, merged.get("login_max_attempts", 5)
@@ -607,6 +614,7 @@ def load_config(path: Path) -> OctopConfig:
         port=int(merged["port"]),
         log_level=merged["log_level"],
         access_token_ttl_seconds=int(merged["access_token_ttl_seconds"]),
+        session_absolute_timeout_seconds=int(merged["session_absolute_timeout_seconds"]),
         login_max_attempts=int(merged.get("login_max_attempts", 5)),
         login_lockout_seconds=int(merged.get("login_lockout_seconds", 900)),
         cors_origins=list(merged.get("cors_origins") or []),

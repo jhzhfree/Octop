@@ -12,6 +12,7 @@ from octop.infra.auth import sessions
 from octop.infra.auth.tokens import InvalidToken as InvalidToken
 from octop.infra.auth.tokens import TokenExpired as TokenExpired
 from octop.infra.auth.tokens import decode_token as decode_token
+from octop.infra.auth.tokens import require_session_age
 from octop.infra.auth.tokens import sign_token as sign_token
 from octop.infra.errors import ErrorCode, OctopError
 from octop.infra.users.permissions import PERMISSIONS, user_has_permission
@@ -101,6 +102,7 @@ def _decode(server: OctopServer, token: str) -> dict[str, Any]:
         raise OctopError(ErrorCode.INTERNAL_ERROR, "jwt secret missing")
     try:
         payload = decode_token(secret, token)
+        require_session_age(payload, server.services.config.session_absolute_timeout_seconds)
         sessions.require_active(server.services.db, payload, token)
         return payload
     except TokenExpired as exc:
@@ -148,6 +150,7 @@ def maybe_sliding_renew_token(server: OctopServer, token: str, user: User) -> st
         role=row.role,
         ttl_seconds=ttl,
         session_id=sessions.session_id(payload, token),
+        session_started_at=payload.get("session_started_at"),
     )
 
 
