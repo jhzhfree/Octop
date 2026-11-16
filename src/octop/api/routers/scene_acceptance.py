@@ -20,6 +20,11 @@ router = APIRouter()
 class AcceptanceDecisionBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     decision: Literal["accepted", "changes_requested"]
+    review_note: str = Field(
+        default="",
+        max_length=2000,
+        description="Optional human review feedback, immutable with the decision; empty for legacy clients.",
+    )
     expected_evidence_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     expected_snapshot_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
@@ -28,6 +33,11 @@ class AcceptanceRecord(BaseModel):
     run_id: str
     organization_id: str
     decision: Literal["accepted", "changes_requested"]
+    review_note: str = Field(
+        default="",
+        max_length=2000,
+        description="Optional human review feedback, immutable with the decision; empty for legacy clients.",
+    )
     reviewer_id: int
     reviewed_at: int
     evidence_sha256: str
@@ -100,6 +110,25 @@ async def review_delivery(
     response.headers["Cache-Control"] = "no-store"
     try:
         return await _service(server, user).review(organization_id, run_id)
+    except SceneError as exc:
+        raise _http_error(exc) from exc
+
+
+@router.get(
+    "/organizations/{organization_id}/scene-runs/{run_id}/acceptance",
+    response_model=AcceptanceRecord | None,
+    summary="Read delivery feedback as the requester or authorized reviewer",
+)
+def read_feedback(
+    organization_id: str,
+    run_id: str,
+    response: Response,
+    user: Any = Depends(current_user),
+    server: Any = Depends(get_server),
+) -> dict[str, Any] | None:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return _service(server, user).feedback(organization_id, run_id)
     except SceneError as exc:
         raise _http_error(exc) from exc
 

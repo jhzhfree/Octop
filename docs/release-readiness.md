@@ -10,10 +10,13 @@
 
 **AI-TAgent 企业场景仍处于开发阶段，尚不满足 1.0 发布条件。**
 当前开发分支为 `feature/akb-octop-litellm-dev`；本轮开始核对的远端提交为
-`cace3408693395856232b1f0b4b405084efee884`。后续提交以 Git 实际记录为准，
+`f5efc2db4d7a630f643d624b79a60c9c250af2fb`。后续提交以 Git 实际记录为准，
 本文件不是发布批准，也不授权生产操作、合并、部署或外部消息发送。
 
-本轮新增[恢复产物只读核验](ai-tagent/recovery-inventory-verification.md)：必须使用
+本轮交付[人工验收反馈闭环](ai-tagent/acceptance-feedback.md)：验收人填写不可覆盖
+的意见，申请人从同一 run 读取反馈；空库单次巡检的通过/修改分支均隔离验证。
+
+前一阶段新增[恢复产物只读核验](ai-tagent/recovery-inventory-verification.md)：必须使用
 外部留存清单哈希，检查损坏与可观察的并发变化；成功仍明确禁止激活。
 
 前一阶段交付[工作区恢复暂存](ai-tagent/workspace-recovery-staging.md)：新目录中实际
@@ -35,7 +38,7 @@
 [操作来源记录](ai-tagent/operation-trace.md)按操作显示现有审计事实及来源未知项，
 不将单次 Cron 等同于周期自主执行。批准本地发布后仍是 `blocked_not_connected`，没有发送器。
 
-当前静态核对迁移文件 001–043 的 SQLite/PostgreSQL 配对完整；**这不是实际数据库
+当前静态核对迁移文件 001–044 的 SQLite/PostgreSQL 配对完整；**这不是实际数据库
 迁移验收**。报告读取加固及已验收交付回看的分项验证记录见
 [组织运行待办](ai-tagent/organization-run-queue.md) 的 2026-11-15 后续记录。
 其他增量证据见[验收来源标识](ai-tagent/delivery-acceptance-ui.md)及

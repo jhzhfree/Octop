@@ -18,7 +18,8 @@ from tests.support.auth import create_agent, seed_openai_provider
 
 
 @pytest.mark.asyncio
-async def test_fresh_sqlite_inspection_delivery_via_http(tmp_path, monkeypatch):
+@pytest.mark.parametrize("decision", ["accepted", "changes_requested"])
+async def test_fresh_sqlite_inspection_delivery_via_http(tmp_path, monkeypatch, decision):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setenv("LANGFUSE_TRACING_ENABLED", "false")
@@ -250,7 +251,10 @@ async def test_fresh_sqlite_inspection_delivery_via_http(tmp_path, monkeypatch):
             "POST",
             rp + "/acceptance",
             {
-                "decision": "accepted",
+                "decision": decision,
+                "review_note": "Please include the retry evidence"
+                if decision == "changes_requested"
+                else "Evidence reviewed",
                 "expected_evidence_sha256": review["evidence_sha256"],
                 "expected_snapshot_sha256": review["snapshot_sha256"],
             },
@@ -268,11 +272,28 @@ async def test_fresh_sqlite_inspection_delivery_via_http(tmp_path, monkeypatch):
                 "succeeded": 1,
                 "failed": 0,
             },
-            "delivery": {"unreviewed_success": 0, "accepted": 1, "changes_requested": 0},
+            "delivery": {
+                "unreviewed_success": 0,
+                "accepted": int(decision == "accepted"),
+                "changes_requested": int(decision == "changes_requested"),
+            },
         }
         assert progress["external_systems_verified"] is False
         assert progress["execution_authorized"] is False
         final_review = await req("GET", rp + "/acceptance/review", headers=reviewauth)
-        assert final_review["acceptance"]["decision"] == "accepted"
+        assert final_review["acceptance"]["decision"] == decision
         assert final_review["acceptance"]["reviewer_id"] == reviewer["id"]
         assert final_review["evidence_sha256"] == review["evidence_sha256"]
+
+        feedback = await req("GET", rp + "/acceptance")
+        assert feedback["review_note"] == final_review["acceptance"]["review_note"]
+        assert feedback["reviewer_id"] == reviewer["id"]
+        assert feedback["decision"] == decision
+        assert (
+            next(
+                item
+                for item in await req("GET", wp + "/goals")
+                if item["goal_id"] == goal["goal_id"]
+            )["status"]
+            == "active"
+        )

@@ -1,3 +1,4 @@
+import AcceptanceFeedback from "./AcceptanceFeedback";
 import { Alert, Space } from "antd";
 import { useTranslation } from "react-i18next";
 import RunEvidence from "./RunEvidence";
@@ -17,6 +18,7 @@ export default function RunDelivery({
   return (
     <Space direction="vertical" style={{ width: "100%" }}>
       <Alert type="info" message={t("runDetails.deliveryNotice")} />
+      <AcceptanceFeedback target={target} currentUserId={currentUserId} />
       <RunEvidence target={target} currentUserId={currentUserId} canRead />
       <DeliveryAcceptance
         target={target}

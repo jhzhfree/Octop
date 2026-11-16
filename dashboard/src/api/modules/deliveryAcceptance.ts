@@ -9,6 +9,7 @@ export interface AcceptanceRecord {
   run_id: string;
   organization_id: string;
   decision: AcceptanceDecision;
+  review_note?: string;
   reviewer_id: number;
   reviewed_at: number;
   evidence_sha256: string;
@@ -35,17 +36,21 @@ const path = (target: AcceptanceTarget) =>
     target.organizationId,
   )}/scene-runs/${encodeURIComponent(target.runId)}/acceptance`;
 export const deliveryAcceptanceApi = {
+  feedback: (target: AcceptanceTarget) =>
+    request<AcceptanceRecord | null>(path(target), { cache: "no-store" }),
   review: (target: AcceptanceTarget) =>
     request<AcceptanceReview>(`${path(target)}/review`, { cache: "no-store" }),
   decide: (
     target: AcceptanceTarget,
     decision: AcceptanceDecision,
     review: AcceptanceReview,
+    reviewNote = "",
   ) =>
     request<AcceptanceRecord>(path(target), {
       method: "POST",
       body: JSON.stringify({
         decision,
+        review_note: reviewNote,
         expected_evidence_sha256: review.evidence_sha256,
         expected_snapshot_sha256: review.snapshot_sha256,
       }),
@@ -59,6 +64,9 @@ export function validAcceptanceRecord(
     record.run_id === target.runId &&
     record.organization_id === target.organizationId &&
     ["accepted", "changes_requested"].includes(record.decision) &&
+    (record.review_note === undefined ||
+      (typeof record.review_note === "string" &&
+        Array.from(record.review_note).length <= 2000)) &&
     Number.isSafeInteger(record.reviewer_id) &&
     Number.isFinite(record.reviewed_at)
   );

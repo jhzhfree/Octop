@@ -146,6 +146,7 @@ describe("delivery acceptance", () => {
       target,
       "accepted",
       review,
+      "",
     );
     expect(screen.queryByRole("button", { name: "Accept summary" })).toBeNull();
   });
@@ -322,4 +323,32 @@ it("rejects source metadata from another run without showing its content", async
   await screen.findByText(/Review unavailable/);
   expect(screen.queryByText(review.answer)).toBeNull();
   expect(screen.queryByText(/Automatic local report/)).toBeNull();
+});
+
+it("records actionable changes feedback only after explicit confirmation", async () => {
+  vi.mocked(deliveryAcceptanceApi.decide).mockResolvedValue({
+    ...record,
+    decision: "changes_requested",
+    review_note: "Add retry evidence",
+  });
+  render(<DeliveryAcceptance currentUserId={42} target={target} canReview />);
+  await open();
+  fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+  expect(
+    screen.getByRole("button", { name: "Confirm permanent decision" }),
+  ).toBeDisabled();
+  fireEvent.change(screen.getByRole("textbox", { name: /Review feedback/ }), {
+    target: { value: "Add retry evidence" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Confirm permanent decision" }),
+  );
+  await screen.findByText("Add retry evidence");
+  expect(deliveryAcceptanceApi.decide).toHaveBeenCalledWith(
+    target,
+    "changes_requested",
+    review,
+    "Add retry evidence",
+  );
 });

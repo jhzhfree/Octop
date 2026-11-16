@@ -1,5 +1,10 @@
 export const deliveryAcceptanceMessages = {
   en: {
+    feedback: "Read acceptance feedback",
+    feedbackEmpty: "No acceptance decision yet.",
+    note: "Review feedback (up to 2000 characters)",
+    noteMissing: "No feedback recorded (including legacy decisions).",
+    noteRequired: "Explain what needs to change before confirming.",
     sources: "Evidence sources for this review",
     sourceBoundary:
       "Source labels describe persisted evidence, not an autonomous workflow. Acceptance is your explicit human decision. No Mattermost delivery or AKB write is performed here.",
@@ -34,6 +39,11 @@ export const deliveryAcceptanceMessages = {
     snapshot: "Snapshot hash",
   },
   zh: {
+    feedback: "查看验收反馈",
+    feedbackEmpty: "尚无验收决定。",
+    note: "验收意见（最多 2000 字符）",
+    noteMissing: "未记录验收意见（含历史决定）。",
+    noteRequired: "确认前请说明需要修改的内容。",
     sources: "本次验收的证据来源",
     sourceBoundary:
       "来源标识描述已保存的证据，不代表自主工作流。验收由你明确作出人工决定；此处不发送 Mattermost 消息，也不写入 AKB。",

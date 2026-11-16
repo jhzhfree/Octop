@@ -1,6 +1,6 @@
 import SensitiveAccessBoundary from "../../components/SensitiveAccessBoundary";
 import { useEffect, useRef, useState } from "react";
-import { Alert, Button, Space, Typography } from "antd";
+import { Alert, Button, Input, Space, Typography } from "antd";
 import { useTranslation } from "react-i18next";
 import {
   deliveryAcceptanceApi,
@@ -54,6 +54,7 @@ function AcceptanceSession({ target, canReview }: DeliveryAcceptanceProps) {
     failed?: boolean;
     review?: AcceptanceReview;
     pending?: AcceptanceDecision;
+    note?: string;
   }>({ key });
   useEffect(() => {
     generation.current += 1;
@@ -89,6 +90,8 @@ function AcceptanceSession({ target, canReview }: DeliveryAcceptanceProps) {
   const decide = async () => {
     if (!canReview || busy.current || !current?.review || !current.pending)
       return;
+    if (current.pending === "changes_requested" && !current.note?.trim())
+      return;
     busy.current = true;
     const seq = ++generation.current;
     const review = current.review;
@@ -99,10 +102,12 @@ function AcceptanceSession({ target, canReview }: DeliveryAcceptanceProps) {
         target,
         decision,
         review,
+        current.note?.trim() ?? "",
       );
       if (
         !validAcceptanceRecord(record, target) ||
         record.decision !== decision ||
+        (record.review_note ?? "") !== (current.note?.trim() ?? "") ||
         record.evidence_sha256 !== review.evidence_sha256 ||
         record.snapshot_sha256 !== review.snapshot_sha256
       )
@@ -171,6 +176,9 @@ function AcceptanceSession({ target, canReview }: DeliveryAcceptanceProps) {
               {current.review.acceptance ? (
                 <div role="status">
                   <p>{m[current.review.acceptance.decision]}</p>
+                  <p style={{ whiteSpace: "pre-wrap" }}>
+                    {current.review.acceptance.review_note || m.noteMissing}
+                  </p>
                   <p>
                     {m.reviewer}: {current.review.acceptance.reviewer_id}
                   </p>
@@ -183,6 +191,21 @@ function AcceptanceSession({ target, canReview }: DeliveryAcceptanceProps) {
                 </div>
               ) : (
                 <>
+                  <Input.TextArea
+                    aria-label={m.note}
+                    maxLength={2000}
+                    showCount
+                    value={current.note ?? ""}
+                    disabled={current.loading}
+                    onChange={(event) =>
+                      setState({
+                        ...current,
+                        key,
+                        note: event.target.value,
+                        pending: undefined,
+                      })
+                    }
+                  />
                   <Space>
                     <Button
                       disabled={current.loading}
@@ -210,8 +233,14 @@ function AcceptanceSession({ target, canReview }: DeliveryAcceptanceProps) {
                       <p>
                         {m.confirmation} {m[current.pending]}
                       </p>
+                      {current.pending === "changes_requested" &&
+                        !current.note?.trim() && <p>{m.noteRequired}</p>}
                       <Button
-                        disabled={current.loading}
+                        disabled={
+                          current.loading ||
+                          (current.pending === "changes_requested" &&
+                            !current.note?.trim())
+                        }
                         onClick={() => void decide()}
                       >
                         {m.confirm}

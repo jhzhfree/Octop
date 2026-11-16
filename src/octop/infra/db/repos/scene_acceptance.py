@@ -60,6 +60,31 @@ class SceneAcceptanceRepo:
             ).fetchone()
         return dict(row) if row else None
 
+    def feedback(self, organization_id: str, run_id: str, user_id: int) -> dict[str, Any] | None:
+        with self.db.connect() as conn:
+            authority = conn.execute(
+                "SELECT u.disabled,u.role,m.role AS member_role,r.requested_by,r.approved_by "
+                "FROM enterprise_scene_runs r JOIN users u ON u.id=? "
+                "LEFT JOIN organization_members m ON m.organization_id=r.organization_id AND m.user_id=u.id "
+                "WHERE r.organization_id=? AND r.run_id=?",
+                (user_id, organization_id, run_id),
+            ).fetchone()
+            if authority is None:
+                raise AcceptanceStoreError("not_found", "run or reader missing")
+            if authority["disabled"] or not (
+                authority["role"] == "admin"
+                or (
+                    authority["member_role"] is not None
+                    and user_id in {authority["requested_by"], authority["approved_by"]}
+                )
+            ):
+                raise AcceptanceStoreError("forbidden", "feedback access denied")
+            row = conn.execute(
+                "SELECT * FROM scene_run_acceptances WHERE organization_id=? AND run_id=?",
+                (organization_id, run_id),
+            ).fetchone()
+        return dict(row) if row else None
+
     def check_reviewer(self, organization_id: str, run_id: str, reviewer_id: int) -> None:
         """Recheck current identity for sensitive read paths, without cached admin claims."""
         with self.db.connect() as conn:
@@ -92,7 +117,10 @@ class SceneAcceptanceRepo:
         evidence_sha256: str,
         evidence_length: int,
         expected_snapshot_hash: str,
+        review_note: str = "",
     ) -> dict[str, Any]:
+        if not isinstance(review_note, str) or len(review_note) > 2000 or "\x00" in review_note:
+            raise AcceptanceStoreError("invalid", "invalid review note")
         if decision not in {"accepted", "changes_requested"}:
             raise AcceptanceStoreError("invalid", "invalid acceptance decision")
         lock = " FOR UPDATE" if self.db.dialect == "postgresql" else ""
@@ -130,6 +158,7 @@ class SceneAcceptanceRepo:
                     for k, v in {
                         "reviewer_id": reviewer_id,
                         "decision": decision,
+                        "review_note": review_note,
                         "evidence_sha256": evidence_sha256,
                         "snapshot_sha256": expected_snapshot_hash,
                     }.items()
@@ -139,8 +168,8 @@ class SceneAcceptanceRepo:
             now = now_ts()
             conn.execute(
                 "INSERT INTO scene_run_acceptances(run_id,organization_id,decision,reviewer_id,"
-                "reviewed_at,evidence_sha256,evidence_length,snapshot_sha256,scene_version) "
-                "VALUES (?,?,?,?,?,?,?,?,?)",
+                "reviewed_at,evidence_sha256,evidence_length,snapshot_sha256,scene_version,review_note) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (
                     run_id,
                     organization_id,
@@ -151,6 +180,7 @@ class SceneAcceptanceRepo:
                     evidence_length,
                     expected_snapshot_hash,
                     run["scene_version"],
+                    review_note,
                 ),
             )
             conn.execute(
@@ -166,6 +196,7 @@ class SceneAcceptanceRepo:
                             "decision": decision,
                             "evidence_sha256": evidence_sha256,
                             "snapshot_sha256": expected_snapshot_hash,
+                            "review_note_sha256": hashlib.sha256(review_note.encode()).hexdigest(),
                         }
                     ),
                 ),

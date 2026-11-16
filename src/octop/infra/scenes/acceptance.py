@@ -109,6 +109,13 @@ class SceneAcceptanceService:
             "evidence_sources": sources,
         }
 
+    def feedback(self, organization_id: str, run_id: str) -> dict[str, Any] | None:
+        self.scenes.get_run_evidence_access(organization_id, run_id, reconcile=False)
+        try:
+            return self.repo.feedback(organization_id, run_id, self.scenes.actor.id)
+        except AcceptanceStoreError as exc:
+            raise SceneError("ACCEPTANCE_FORBIDDEN", str(exc), 403) from exc
+
     async def decide(
         self,
         organization_id: str,
@@ -117,6 +124,7 @@ class SceneAcceptanceService:
         decision: str,
         expected_evidence_sha256: str,
         expected_snapshot_sha256: str,
+        review_note: str = "",
     ) -> dict[str, Any]:
         if decision not in {"accepted", "changes_requested"}:
             raise SceneError("ACCEPTANCE_INVALID", "invalid acceptance decision", 422)
@@ -132,6 +140,7 @@ class SceneAcceptanceService:
                 run_id=run_id,
                 reviewer_id=self.scenes.actor.id,
                 decision=decision,
+                review_note=review_note.strip(),
                 evidence_sha256=review["evidence_sha256"],
                 evidence_length=review["evidence_length"],
                 expected_snapshot_hash=review["snapshot_sha256"],

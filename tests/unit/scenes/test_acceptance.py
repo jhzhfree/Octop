@@ -42,6 +42,7 @@ def setup(tmp_path):
             / "src/octop/infra/db/migrations/034_scene_run_acceptance.sql"
         )
         conn.executescript(migration.read_text())
+        conn.executescript((migration.parent / "044_acceptance_review_note.sql").read_text())
     repo = SceneAcceptanceRepo(db)
     with db.connect() as conn:
         run = dict(conn.execute("SELECT * FROM enterprise_scene_runs").fetchone())
@@ -258,3 +259,81 @@ def test_repo_has_no_scene_service_dependency():
     tree = ast.parse(Path(module.__file__).read_text())
     imports = [node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]
     assert not any(name and name.startswith("octop.infra.scenes") for name in imports)
+
+
+def test_feedback_is_immutable_and_audit_contains_hash_not_text(setup):
+    db, repo, args, _ = setup
+    first = repo.decide(
+        **(args | {"decision": "changes_requested", "review_note": "Add retry evidence"})
+    )
+    assert repo.feedback("o", "r", 1) == first
+    assert (
+        repo.decide(
+            **(args | {"decision": "changes_requested", "review_note": "Add retry evidence"})
+        )
+        == first
+    )
+    with pytest.raises(AcceptanceStoreError, match="already reviewed"):
+        repo.decide(
+            **(args | {"decision": "changes_requested", "review_note": "Changed instructions"})
+        )
+    with db.connect() as conn:
+        payload = conn.execute("SELECT payload FROM audit_log").fetchone()[0]
+    assert "Add retry evidence" not in payload
+    assert "review_note_sha256" in payload
+    with pytest.raises(AcceptanceStoreError):
+        repo.feedback("o", "r", 3)
+    with db.transaction() as conn:
+        conn.execute("DELETE FROM organization_members WHERE user_id=1")
+    with pytest.raises(AcceptanceStoreError):
+        repo.feedback("o", "r", 1)
+
+
+@pytest.mark.parametrize("note", ["x" * 2001, "null\x00byte"])
+def test_invalid_feedback_does_not_commit(setup, note):
+    db, repo, args, _ = setup
+    with pytest.raises(AcceptanceStoreError):
+        repo.decide(**(args | {"review_note": note}))
+    assert repo.get("o", "r") is None
+    with db.connect() as conn:
+        assert conn.execute("SELECT count(*) FROM audit_log").fetchone()[0] == 0
+
+
+def test_competing_feedback_only_one_commits(setup):
+    db, repo, args, _ = setup
+
+    def decide(note):
+        try:
+            return repo.decide(**(args | {"review_note": note}))["review_note"]
+        except AcceptanceStoreError as exc:
+            return exc.reason
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(decide, ["first", "second"]))
+    assert results.count("conflict") == 1
+    assert repo.get("o", "r")["review_note"] in {"first", "second"}
+    with db.connect() as conn:
+        assert conn.execute("SELECT count(*) FROM audit_log").fetchone()[0] == 1
+
+
+def test_feedback_migration_preserves_legacy_decisions(tmp_path):
+    db = SqlitePool(tmp_path / "legacy.db")
+    try:
+        with db.connect() as conn:
+            conn.executescript(
+                "CREATE TABLE scene_run_acceptances(run_id TEXT,decision TEXT); INSERT INTO scene_run_acceptances VALUES('old','changes_requested'); CREATE TABLE _schema_version(version INTEGER); INSERT INTO _schema_version VALUES(43);"
+            )
+            migration = (
+                Path(__file__).resolve().parents[3]
+                / "src/octop/infra/db/migrations/044_acceptance_review_note.sql"
+            )
+            conn.executescript(migration.read_text())
+            row = conn.execute("SELECT * FROM scene_run_acceptances").fetchone()
+            assert dict(row) == {
+                "run_id": "old",
+                "decision": "changes_requested",
+                "review_note": "",
+            }
+            assert conn.execute("SELECT version FROM _schema_version").fetchone()[0] == 44
+    finally:
+        db.close()

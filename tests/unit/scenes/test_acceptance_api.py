@@ -31,7 +31,7 @@ def api_env(request, monkeypatch):
         lambda repos, actor: SimpleNamespace(
             actor=actor,
             _require_manager=lambda org: None,
-            get_run_evidence_access=lambda org, rid: run.copy(),
+            get_run_evidence_access=lambda org, rid, **kw: run.copy(),
         ),
     )
     server = SimpleNamespace(
@@ -155,3 +155,31 @@ def test_source_openapi_contract(api_env):
         "owner_shared_report",
     ]
     assert all(fields[key]["description"] for key in fields)
+
+
+async def test_requester_reads_feedback_but_unrelated_reader_cannot(api_env):
+    app, user, _ = api_env
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        review = (await client.get(BASE + "/review")).json()
+        body = {
+            "decision": "changes_requested",
+            "review_note": "  Add retry evidence  ",
+            "expected_evidence_sha256": review["evidence_sha256"],
+            "expected_snapshot_sha256": review["snapshot_sha256"],
+        }
+        response = await client.post(BASE, json=body)
+        assert response.status_code == 200
+        assert response.json()["review_note"] == "Add retry evidence"
+        user.id = 1
+        feedback = await client.get(BASE)
+        assert feedback.status_code == 200
+        assert feedback.headers["cache-control"] == "no-store"
+        assert feedback.json()["review_note"] == "Add retry evidence"
+        user.id = 3
+        assert (await client.get(BASE)).status_code == 403
+        user.id = 2
+        assert (
+            await client.post(BASE, json=body | {"review_note": "different"})
+        ).status_code == 409
