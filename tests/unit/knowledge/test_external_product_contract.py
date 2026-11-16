@@ -751,11 +751,20 @@ def test_upgrading_schema30_invalidates_old_resource_checks(product):
     saved = source(product)
     row = repo.get(saved["source_id"])
     repo.record_check(row.connection_id, row.source_id, "", "retrieval", "success")
+    from tests.support.legacy_schema import remove_v49_guards_for_fixture
+
     with pool.transaction() as db:
+        remove_v49_guards_for_fixture(db)
         db.execute("ALTER TABLE external_connection_checks DROP COLUMN resource_revision")
         db.execute("UPDATE _schema_version SET version=30")
-    run_migrations(pool)
-    run_migrations(pool)
+    from octop.infra.db.migrate import _apply_sqlite_migration
+
+    # Exercise the 30 -> 31 repair twice, not later migrations against a
+    # synthetic layout that already contains their columns. Full upgrades
+    # belong to historical-schema integration fixtures. Version 31 uses its
+    # idempotent helper and does not read the supplied SQL path.
+    _apply_sqlite_migration(pool, 31, Path("unused.sql"))
+    _apply_sqlite_migration(pool, 31, Path("unused.sql"))
     assert repo.checks(row.connection_id, row.source_id) == []
     with pool.connect() as db:
         assert (
@@ -907,3 +916,141 @@ def test_management_retrieval_rejects_empty_questions(value):
     for schema in (SearchBody, IdentitySearchBody):
         with pytest.raises(ValidationError):
             schema(query=value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["none", "disable", "ref", "key", "delete", "denied"])
+async def test_akb_rest_delivery_rechecks_concurrent_configuration(product, monkeypatch, change):
+    """Real adapter/HTTP decoding, synthetic upstream and independent SQLite writer."""
+    import socket
+
+    def no_network(*args, **kwargs):
+        raise AssertionError("real network forbidden")
+
+    monkeypatch.setattr(socket.socket, "connect", no_network)
+    monkeypatch.setattr(socket, "getaddrinfo", no_network)
+    service, repo, _, _, owner, other, pool = product
+    row = service.create_source(
+        user_id=owner,
+        kind="akb-rest",
+        display_name="Synthetic manual",
+        endpoint="https://akb.invalid",
+        api_key="synthetic",
+        ref="KB_A",
+    )
+    entered, release = asyncio.Event(), asyncio.Event()
+    calls = []
+
+    async def upstream(request):
+        calls.append(request)
+        assert request.url.path == "/api/v1/external/kb/retrievals"
+        assert request.headers["X-API-Key"] == "synthetic"
+        assert json.loads(request.content)["knowledgeBaseId"] == "KB_A"
+        entered.set()
+        await release.wait()
+        if change == "denied":
+            return httpx.Response(
+                403, json={"code": "FORBIDDEN", "message": "secret upstream detail"}
+            )
+        return httpx.Response(
+            200,
+            json={
+                "chunks": [
+                    {
+                        "id": "evidence-1",
+                        "content": "Synthetic inspection procedure",
+                        "sourceName": "synthetic-manual",
+                        "score": 0.9,
+                    }
+                ]
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+        token = http._CLIENT.set(client)
+        try:
+            with pytest.raises(ExternalSourceError):
+                await service.search_source(
+                    row["source_id"], "check", user_id=other, is_admin=False
+                )
+            assert not calls
+            task = asyncio.create_task(
+                service.search_source(row["source_id"], "check", user_id=owner, is_admin=False)
+            )
+            await asyncio.wait_for(entered.wait(), 2)
+            writer = SqlitePool(pool.path)
+            try:
+                other_repo = ExternalKnowledgeRepo(writer)
+                if change == "disable":
+                    other_repo.update(row["source_id"], enabled=False)
+                elif change == "ref":
+                    other_repo.update(row["source_id"], ref="KB_B")
+                elif change == "key":
+                    other_repo.update(
+                        row["source_id"], credential_blob=b"replaced", replace_credentials=True
+                    )
+                elif change == "delete":
+                    other_repo.delete(row["source_id"])
+            finally:
+                writer.close()
+                release.set()
+            if change == "none":
+                result = await task
+                assert result["chunks"][0]["source"] == "synthetic-manual"
+                assert result["chunks"][0]["ref"] == "KB_A"
+                assert result["chunks"][0]["id"] == "evidence-1"
+            else:
+                with pytest.raises(ExternalSourceError) as failure:
+                    await task
+                assert failure.value.code == "FORBIDDEN"
+                assert "secret upstream detail" not in str(failure.value)
+            assert len(calls) == 1
+        finally:
+            http._CLIENT.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_fusion_discards_source_revoked_while_other_source_pending(product, monkeypatch):
+    service, repo, _, _, _, _, _ = product
+    first, second = source(product), source(product)
+    completed = asyncio.Event()
+
+    async def search(spec, query, *, top_k):
+        if spec.binding_id == first["source_id"]:
+            completed.set()
+        else:
+            await completed.wait()
+            await asyncio.sleep(0)
+            repo.update(first["source_id"], enabled=False)
+        return ExternalSearchResult([ExternalChunk(spec.binding_id, "synthetic", 0.9, "manual")])
+
+    monkeypatch.setattr(service, "_search_spec", search)
+    result = await service.retrieve(
+        query="q", specs=[service.to_spec(repo.get(row["source_id"])) for row in (first, second)]
+    )
+    assert result["status"] == "partial"
+    assert [chunk["source_id"] for chunk in result["chunks"]] == [second["source_id"]]
+    assert result["warnings"][0]["source_id"] == first["source_id"]
+    assert result["warnings"][0]["code"] == "FORBIDDEN"
+
+
+@pytest.mark.asyncio
+async def test_agent_result_is_discarded_after_source_revocation(product, monkeypatch):
+    from octop.infra.knowledge.external import agent_identity
+
+    service, repo, _, _, _, _, _ = product
+    saved = source(product)
+    row = repo.get(saved["source_id"])
+    monkeypatch.setattr(service, "auth_type", lambda row: "agent")
+    monkeypatch.setattr(
+        service, "credentials_for", lambda row: {"agent_identity": {"simple": True}}
+    )
+
+    async def synthetic_agent(*args, **kwargs):
+        repo.update(row.source_id, enabled=False)
+        return ExternalSearchResult([ExternalChunk("one", "discard this", 0.9, "manual")])
+
+    monkeypatch.setattr(agent_identity, "search_as_agent", synthetic_agent)
+    with pytest.raises(ExternalSourceError, match="source changed"):
+        await service._search_spec(service.to_spec(row), "q", top_k=1)
+    assert not repo.checks(row.connection_id, row.source_id)

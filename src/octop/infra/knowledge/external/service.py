@@ -742,6 +742,14 @@ class ExternalKnowledgeService:
             "trace_ids": result.trace_ids,
         }
 
+    def _require_unchanged_result(self, row: ExternalSourceRow) -> None:
+        # Checks/verification timestamps are not part of ExternalSourceRow.
+        # Never deliver evidence produced under a replaced/revoked configuration.
+        if self._repo.get(row.source_id) != row:
+            raise ExternalSourceError(
+                "FORBIDDEN", "source changed during retrieval; request again", origin=row.kind
+            )
+
     async def _search_spec(
         self, spec: ExternalSourceSpec, query: str, *, top_k: int
     ) -> ExternalSearchResult:
@@ -783,6 +791,7 @@ class ExternalKnowledgeService:
                     row, spec, creds["agent_identity"], "failure", str(exc.code)
                 )
                 raise
+            self._require_unchanged_result(row)
             self._record_runtime_verification(row, spec, creds["agent_identity"], "success")
             return result
         try:
@@ -821,6 +830,7 @@ class ExternalKnowledgeService:
                 expected_resource_revision=row.resource_revision,
             )
             raise
+        self._require_unchanged_result(row)
         self._repo.record_check(
             row.connection_id,
             row.source_id,
@@ -886,11 +896,14 @@ class ExternalKnowledgeService:
         runtime_specs = [replace(spec, octop_identity=octop_identity) for spec in specs]
         semaphore = asyncio.Semaphore(4)
 
-        async def search_one(spec: ExternalSourceSpec) -> ExternalSearchResult:
+        async def search_one(
+            spec: ExternalSourceSpec,
+        ) -> tuple[ExternalSearchResult, ExternalSourceRow]:
             try:
                 async with asyncio.timeout(min(spec.timeout_seconds, MAX_TIMEOUT_SECONDS)):
                     async with semaphore:
-                        return await self._search_spec(spec, query, top_k=spec.top_k)
+                        result = await self._search_spec(spec, query, top_k=spec.top_k)
+                        return result, self._require_get(spec.binding_id)
             except TimeoutError as exc:
                 raise ExternalSourceError(
                     "TIMEOUT", "retrieval deadline exceeded", origin=spec.kind
@@ -907,6 +920,13 @@ class ExternalKnowledgeService:
         groups: list[list[ExternalChunk]] = []
         warnings: list[SourceWarning] = []
         for spec, outcome in zip(runtime_specs, outcomes, strict=True):
+            if not isinstance(outcome, BaseException):
+                result, observed = outcome
+                try:
+                    # Another source can still be pending after this one finishes.
+                    self._require_unchanged_result(observed)
+                except ExternalSourceError as exc:
+                    outcome = exc
             if isinstance(outcome, BaseException):
                 code = "UNEXPECTED"
                 message = "retrieval failed"
@@ -925,8 +945,8 @@ class ExternalKnowledgeService:
                     )
                 )
                 continue
-            groups.append([replace(chunk, source_id=spec.binding_id) for chunk in outcome.chunks])
-            warnings.extend(outcome.warnings)
+            groups.append([replace(chunk, source_id=spec.binding_id) for chunk in result.chunks])
+            warnings.extend(result.warnings)
         fused = rrf_fuse(
             groups,
             limit=limit,

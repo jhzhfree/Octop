@@ -10,10 +10,14 @@
 
 **AI-TAgent 企业场景仍处于开发阶段，尚不满足 1.0 发布条件。**
 当前开发分支为 `feature/akb-octop-litellm-dev`；本轮开始核对的远端提交为
-`95525c667808574117a194f28f1ab684932d6985`。后续提交以 Git 实际记录为准，
+`5b62cf8e7298749bd015b75b3524a500662e3a97`。后续提交以 Git 实际记录为准，
 本文件不是发布批准，也不授权生产操作、合并、部署或外部消息发送。
 
-本轮补齐[失败巡检重新申请](ai-tagent/inspection-failure-follow-up.md)：复用原方案和独立审批流程，
+本轮修复[AKB 检索结果交付边界](ai-tagent/akb-retrieval-delivery-boundary.md)：
+来源配置在等待期间失效时丢弃迟到片段，多来源合并前再次检查。
+仅隔离适配器和合成身份测试，缺少授权 AKB 实例与用户 ACL 证明，知识规划仍不可激活。
+
+前一阶段补齐[失败巡检重新申请](ai-tagent/inspection-failure-follow-up.md)：复用原方案和独立审批流程，
 旧失败记录保留，重新选择来源和共享，新申请可直接打开。没有自动重试或真实外部联调。
 
 前一阶段补齐[待办详情审批入口](ai-tagent/queue-run-approval.md)：
