@@ -996,6 +996,8 @@
     "access_state_unavailable": "Current access could not be verified. Please retry."
   },
   "backupRecovery": {
+    "verify": "Verify a quarantined recovery inventory read-only; never authorizes activation.",
+    "reportChecksum": "Report SHA-256 retained separately when the recovery image was created.",
     "workspaces": "Also stage inert workspace files with an integrity inventory; does not activate agents.",
     "help": "Recover SQLite data into a new quarantined image, without activating it.",
     "output": "New private directory for the SQLite image; parent must exist; never overwrites.",

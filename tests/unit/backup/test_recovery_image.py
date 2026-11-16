@@ -1233,3 +1233,183 @@ def test_real_backup_to_workspace_salvage_does_not_follow_archived_host_path(sou
     assert (output / "workspaces/a/report.txt").read_text() == "archived report"
     assert (workspace / "report.txt").read_text() == "current report must remain"
     assert_quarantined(output)
+
+
+@pytest.fixture
+def verification_image(workspace_source, tmp_path):
+    output = tmp_path / "verify-image"
+    result = recover_workspaces(workspace_source, output)
+    return output, result["workspace_report_sha256"]
+
+
+def test_verify_inventory_is_read_only_and_never_opens_sqlite(verification_image, monkeypatch):
+    from octop.infra.backup.recovery_verify import verify_recovery_image
+
+    output, anchor = verification_image
+    before = {str(p.relative_to(output)): sha(p) for p in output.rglob("*") if p.is_file()}
+
+    def no_sqlite(*args, **kwargs):
+        raise AssertionError("verification must not open SQLite or replay journals")
+
+    monkeypatch.setattr(sqlite3, "connect", no_sqlite)
+    result = verify_recovery_image(output, expected_report_sha256=anchor)
+    assert result["inventory_match_observed"] is True
+    assert result["workspace_files"] == 2
+    assert result["application_start_allowed"] is False
+    assert result["point_in_time_consistency_verified"] is False
+    assert result["completeness_verified"] is False
+    assert "source_snapshot_not_proven" in result["activation_blockers"]
+    assert before == {str(p.relative_to(output)): sha(p) for p in output.rglob("*") if p.is_file()}
+    cli = CliRunner().invoke(backup, ["verify-image", str(output), "--report-sha256", anchor])
+    assert cli.exit_code == 0, cli.output
+    assert json.loads(cli.output)["application_start_allowed"] is False
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "workspace",
+        "database",
+        "report",
+        "marker",
+        "missing",
+        "extra",
+        "wal",
+        "shm",
+        "journal",
+        "symlink",
+        "directory_symlink",
+        "hardlink",
+        "root_symlink",
+        "xattr",
+        "permissions",
+    ],
+)
+def test_verify_rejects_damaged_or_aliased_artifacts(verification_image, tmp_path, kind):
+    from octop.infra.backup.recovery_verify import verify_recovery_image
+
+    output, anchor = verification_image
+    target = output / "workspaces/a/.notes"
+    if kind in ("workspace", "database", "report", "marker"):
+        changed = {
+            "workspace": target,
+            "database": output / "octop.db",
+            "report": output / "workspace-recovery.json",
+            "marker": output / recovery.RECOVERY_QUARANTINE_FILE,
+        }[kind]
+        changed.write_bytes(changed.read_bytes() + b"corrupt")
+    elif kind == "missing":
+        target.unlink()
+    elif kind in ("extra", "wal", "shm", "journal"):
+        (output / ("unexpected" if kind == "extra" else "octop.db-" + kind)).write_bytes(
+            b"untrusted extra"
+        )
+    elif kind in ("symlink", "hardlink"):
+        replacement = tmp_path / "replacement"
+        replacement.write_bytes(target.read_bytes())
+        target.unlink()
+        target.symlink_to(replacement) if kind == "symlink" else os.link(replacement, target)
+    elif kind == "directory_symlink":
+        old = output / "workspaces/a"
+        moved = tmp_path / "moved"
+        old.rename(moved)
+        old.symlink_to(moved, target_is_directory=True)
+    elif kind == "root_symlink":
+        alias = tmp_path / "alias"
+        alias.symlink_to(output, target_is_directory=True)
+        output = alias
+    elif kind == "xattr":
+        os.removexattr(output / "octop.db", recovery.RECOVERY_QUARANTINE_XATTR)
+    else:
+        target.chmod(0o644)
+    before = (output / "octop.db").read_bytes()
+    with pytest.raises(OctopError):
+        verify_recovery_image(output, expected_report_sha256=anchor)
+    assert (output / "octop.db").read_bytes() == before
+
+
+def test_verify_requires_separately_retained_anchor(verification_image):
+    from octop.infra.backup.recovery_verify import verify_recovery_image
+
+    output, _ = verification_image
+    for anchor in ["", "invalid", "0" * 64]:
+        with pytest.raises(OctopError):
+            verify_recovery_image(output, expected_report_sha256=anchor)
+
+
+@pytest.mark.parametrize(
+    "kind", ["late_edit", "path_replace", "root_replace", "read_failure", "process_write"]
+)
+def test_verify_detects_changes_during_read_without_rolling_back_data(
+    verification_image, tmp_path, monkeypatch, kind
+):
+    from octop.infra.backup import recovery_verify as verifier
+
+    output, anchor = verification_image
+    original = verifier._read
+    changed = False
+    database = output / "octop.db"
+
+    def change_after_read(fd, limit, **kwargs):
+        nonlocal changed
+        result = original(fd, limit, **kwargs)
+        if not changed and os.readlink(f"/proc/self/fd/{fd}").endswith("reports/result.txt"):
+            changed = True
+            if kind == "read_failure":
+                raise OSError("synthetic interrupted read")
+            if kind == "process_write":
+                subprocess.run(
+                    [
+                        sys.executable,
+                        "-c",
+                        "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('UPDATE users SET disabled=0'); c.commit(); c.close()",
+                        str(database),
+                    ],
+                    check=True,
+                    timeout=10,
+                )
+            elif kind == "late_edit":
+                database.write_bytes(database.read_bytes() + b"concurrent change")
+            elif kind == "path_replace":
+                old = tmp_path / "original-not-replaced"
+                database.rename(old)
+                database.write_bytes(old.read_bytes())
+                database.chmod(0o600)
+            else:
+                output.rename(tmp_path / "moved-root")
+                output.mkdir(mode=0o700)
+                (output / "winner").write_text("concurrent owner")
+        return result
+
+    monkeypatch.setattr(verifier, "_read", change_after_read)
+    with pytest.raises(OctopError):
+        verifier.verify_recovery_image(output, expected_report_sha256=anchor)
+    assert changed
+    if kind == "root_replace":
+        assert (output / "winner").read_text() == "concurrent owner"
+    elif kind == "late_edit":
+        assert database.read_bytes().endswith(b"concurrent change")
+    else:
+        assert database.exists()
+
+
+@pytest.mark.parametrize("kind", ["activation", "path", "duplicate", "size", "hash"])
+def test_verify_rejects_invalid_inventory_even_with_matching_anchor(verification_image, kind):
+    from octop.infra.backup.recovery_verify import verify_recovery_image
+
+    output, _ = verification_image
+    path = output / "workspace-recovery.json"
+    report = json.loads(path.read_text())
+    if kind == "activation":
+        report["application_start_allowed"] = True
+    elif kind == "path":
+        report["files"][0]["path"] = "workspaces/a/../../escape"
+    elif kind == "duplicate":
+        report["files"].append(report["files"][0])
+    elif kind == "size":
+        report["files"][0]["size"] = -1
+    else:
+        report["files"][0]["sha256"] = "invalid"
+    path.write_text(json.dumps(report))
+    with pytest.raises(OctopError):
+        verify_recovery_image(output, expected_report_sha256=sha(path))

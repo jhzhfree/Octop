@@ -209,3 +209,17 @@ def recover_image(
     except OctopError as exc:
         raise click.ClickException(exc.message) from exc
     click.echo(json.dumps(result, sort_keys=True))
+
+
+@backup.command("verify-image", help=tr("backupRecovery.verify"))
+@click.argument("image", type=click.Path(path_type=Path))
+@click.option("--report-sha256", required=True, help=tr("backupRecovery.reportChecksum"))
+def verify_image(image: Path, report_sha256: str) -> None:
+    """Verify an anchored recovery inventory without opening SQLite or activating it."""
+    from octop.infra.backup.recovery_verify import verify_recovery_image
+
+    try:
+        result = verify_recovery_image(image, expected_report_sha256=report_sha256)
+    except OctopError as exc:
+        raise click.ClickException(exc.message) from exc
+    click.echo(json.dumps(result, sort_keys=True))

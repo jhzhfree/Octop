@@ -10,10 +10,13 @@
 
 **AI-TAgent 企业场景仍处于开发阶段，尚不满足 1.0 发布条件。**
 当前开发分支为 `feature/akb-octop-litellm-dev`；本轮开始核对的远端提交为
-`134024c1a54c2ad668e6a5877944cabdc80c02d8`。后续提交以 Git 实际记录为准，
+`cace3408693395856232b1f0b4b405084efee884`。后续提交以 Git 实际记录为准，
 本文件不是发布批准，也不授权生产操作、合并、部署或外部消息发送。
 
-本轮交付[工作区恢复暂存](ai-tagent/workspace-recovery-staging.md)：新目录中实际
+本轮新增[恢复产物只读核验](ai-tagent/recovery-inventory-verification.md)：必须使用
+外部留存清单哈希，检查损坏与可观察的并发变化；成功仍明确禁止激活。
+
+前一阶段交付[工作区恢复暂存](ai-tagent/workspace-recovery-staging.md)：新目录中实际
 恢复归档文件并生成绑定数据库的清单，仍不能证明源数据同一时刻一致或激活服务。
 
 前一阶段新增[可选凭据空闲期限](ai-tagent/credential-idle-timeout.md)，按签名凭据

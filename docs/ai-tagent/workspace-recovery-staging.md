@@ -74,3 +74,8 @@ tests/unit/i18n -q`：197 项通过，无失败。`UV_CACHE_DIR=/tmp/octop-uv-ca
 make lint-all typecheck-all` 通过；mypy 664 文件、ESLint 69 warnings / 0 errors。
 未运行全量 make all、受限遥测或
 真实外部联调，未合并、部署或发送消息；无前端源码变更，不重跑生产构建。
+
+## 后续只读核验
+
+可使用创建时单独留存的清单哈希执行 [`verify-image`](recovery-inventory-verification.md)，
+检测产物损坏和可观察的并发变化。核验成功不证明源快照一致，也不授权服务激活。
