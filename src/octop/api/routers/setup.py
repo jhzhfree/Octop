@@ -300,6 +300,7 @@ async def apply_database(
     from octop.infra.db.probe import probe_database
     from octop.infra.db.rebind import (
         assert_control_plane_database_empty,
+        assert_rebind_allowed,
         database_config_from_payload,
         persist_database_config,
         rebind_control_plane,
@@ -309,6 +310,8 @@ async def apply_database(
         db_cfg = database_config_from_payload(body.as_payload())
     except ValueError as exc:
         raise OctopError(ErrorCode.SLASH_BAD_ARGS, str(exc)) from exc
+    if server.database_bound:
+        assert_rebind_allowed(server)
     probe_database(db_cfg, server.paths)
     assert_control_plane_database_empty(db_cfg, server.paths)
     persist_database_config(server.paths.config, db_cfg)

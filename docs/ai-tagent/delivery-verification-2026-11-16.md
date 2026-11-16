@@ -111,3 +111,43 @@ Mattermost、PG、生产部署及受限遥测。
 `UV_CACHE_DIR=/tmp/octop-uv-cache UV_OFFLINE=1 make lint-all typecheck-all` 通过
 （mypy 675 个源文件，既有 ESLint 警告保留）。无前端源码变动，未重复生产构建；
 未运行全量 make all 或受限遥测测试。
+
+## 版本化历史下拒绝切库的配置一致性（基线 f765e119）
+
+复现：干净 SQLite 安装启用 `history_v2_enabled=true`，尚未创建管理员时，向
+`POST /api/setup/database` 提交另一个空库路径。原接口返回 400，但已创建/迁移目标库
+并改写 config.json；当前进程仍使用原库，下次启动却选择新库，可能触发历史库身份
+不匹配。修复前集成测试在“配置应保持字节不变”断言失败。
+
+现在复用原有切库资格检查，在探测、迁移目标库和持久化配置之前拒绝；底层 rebind
+入口仍重新检查。移除错误信息中“重启即可切库”的误导。正常未启用版本化历史的空库
+切换保留；不支持历史迁移，也不尝试修改已错配的安装。
+
+新增测试使用实际 HistoryArchive、临时 SQLite 和 ASGI/真实回环 HTTP 两种入口，
+断言拒绝后配置字节、当前池不变且未创建目标库，然后创建管理员、停止并重新启动，
+验证管理员仍存在。harness 为替身，网络只允许测试回环 listener；正常重启在同一
+测试进程中，不能声称已验证 OS 服务重启或断电。
+
+范围限制：本修复提前阻止已知不兼容运行时的确定性失败，不提供 config.json 与
+数据库切换的跨进程事务；并发管理员/其他配置写入、切换中的后续 I/O 故障等仍不应
+依赖此预检查作为全局互斥保证。已有 SQLite 迁移锁只协调合作升级进程，不是全局停写。
+
+本轮回归命令（`LANGFUSE_TRACING_ENABLED=false OTEL_SDK_DISABLED=true`，uv 离线缓存）：
+
+```sh
+uv run pytest tests/integration/test_setup_database.py \
+  tests/unit/db/test_migration_process_lock.py \
+  tests/unit/db/test_migration_atomicity.py \
+  tests/unit/db/test_runtime_replace_services.py \
+  tests/integration/test_setup_wizard.py::test_concurrent_initial_admin_claim_creates_only_one \
+  tests/integration/test_setup_wizard.py::test_initial_admin_insert_failure_rolls_back_setup_claim \
+  tests/integration/test_setup_wizard.py::test_bootstrap_failure_does_not_report_completed_and_restart_stays_closed -q
+```
+
+结果 **46 passed**（既有依赖弃用警告保留）：数据库选择 6、独立 spawn 进程迁移锁 6、
+迁移原子性 29、runtime retarget 2、管理员并发/插入失败/引导失败 3。管理员 HTTP
+竞争是同进程异步请求；跨进程验证针对迁移，不扩称多进程向导或配置写入已安全。
+未运行完整 make all、受限遥测、真实 PG、浏览器或外部服务；没有部署和真实外发。
+
+本轮 `make lint-all typecheck-all` 通过（mypy 675 个源文件）；变更文件 Ruff 和
+`git diff --check` 通过。没有前端源码变更，未重复构建。

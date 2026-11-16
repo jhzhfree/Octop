@@ -99,12 +99,8 @@ def assert_control_plane_database_empty(db_config: DatabaseConfig, paths: PathLa
         )
 
 
-def rebind_control_plane(server: OctopServer) -> None:
-    """Close the current pool, open from config, migrate, and retarget runtime repos.
-
-    Only allowed while ``user_count == 0`` (first-run setup). Target DB must also
-    be empty (greenfield); otherwise raise ``DATABASE_NOT_EMPTY`` without swapping.
-    """
+def assert_rebind_allowed(server: OctopServer) -> None:
+    """Reject incompatible live runtimes before setup mutates config or target DB."""
     if server.user_manager is None or server.services is None:
         raise OctopError(ErrorCode.INTERNAL_ERROR, "server not started")
     if server.user_manager.count() != 0:
@@ -118,8 +114,18 @@ def rebind_control_plane(server: OctopServer) -> None:
 
     if isinstance(getattr(server.app_runtime, "history_archive", None), HistoryArchive):
         raise OctopError(
-            ErrorCode.SLASH_BAD_ARGS, "Restart to rebind a database with versioned history"
+            ErrorCode.SLASH_BAD_ARGS,
+            "Live database switching is unavailable with versioned history",
         )
+
+
+def rebind_control_plane(server: OctopServer) -> None:
+    """Retarget an empty first-run runtime; recheck eligibility at the swap entry.
+
+    This is not a cross-process configuration transaction or a history migration.
+    """
+    assert_rebind_allowed(server)
+    assert server.services is not None
     config = load_config(server.paths.config)
     old_db = server.services.db
     new_db = open_database(config, server.paths)

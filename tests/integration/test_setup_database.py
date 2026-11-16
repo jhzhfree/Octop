@@ -154,3 +154,56 @@ async def test_setup_database_refused_after_admin(patched_app_client) -> None:
         json={"driver": "sqlite", "sqlite_path": "octop.db"},
     )
     assert r.status_code == 410
+
+
+@pytest.mark.parametrize("wire_http", [False, True])
+async def test_history_rebind_rejection_preserves_restart_database(
+    tmp_octop_home, monkeypatch, wire_http
+):
+    """A rejected change must not leave config pointing at a different database."""
+    import socket
+    from contextlib import asynccontextmanager
+
+    from octop.infra.history.service import HistoryArchive
+    from tests.support.app import write_octop_config
+    from tests.support.loopback_http import loopback_http_client
+
+    original_connect, original_dns = socket.socket.connect, socket.getaddrinfo
+
+    def denied(*args, **kwargs):
+        raise AssertionError("NON-TEST NETWORK FORBIDDEN")
+
+    for method in ("connect", "connect_ex", "sendto"):
+        monkeypatch.setattr(socket.socket, method, denied)
+    monkeypatch.setattr(socket, "getaddrinfo", denied)
+
+    @asynccontextmanager
+    async def client_for(server_client):
+        if not wire_http:
+            yield server_client
+        else:
+            async with loopback_http_client(
+                server_client._octop_app, monkeypatch, original_connect, original_dns
+            ) as wire:
+                yield wire
+
+    write_octop_config(tmp_octop_home, history_v2_enabled=True)
+    async with (
+        octop_client(tmp_octop_home) as (asgi, srv),
+        client_for(asgi) as client,
+    ):
+        assert isinstance(srv.app_runtime.history_archive, HistoryArchive)
+        before = srv.paths.config.read_bytes()
+        old_db = srv.services.db
+        response = await client.post(
+            "/api/setup/database", json={"driver": "sqlite", "sqlite_path": "other.db"}
+        )
+        assert response.status_code == 400, response.text
+        assert srv.paths.config.read_bytes() == before
+        assert srv.services.db is old_db
+        assert not (tmp_octop_home / "other.db").exists()
+        await bootstrap_admin(client, tmp_octop_home)
+        assert srv.user_manager.count() == 1
+    async with octop_client(tmp_octop_home) as (_, restarted):
+        assert restarted.user_manager.count() == 1
+        assert restarted.database_bound
