@@ -9,6 +9,7 @@ import {
   type AcceptanceTarget,
   type AcceptanceReview,
   type AcceptanceDecision,
+  type AcceptanceRecord,
 } from "../../api/modules/deliveryAcceptance";
 import { deliveryAcceptanceMessages } from "./deliveryAcceptanceMessages";
 
@@ -16,6 +17,7 @@ interface DeliveryAcceptanceProps {
   target: AcceptanceTarget;
   canReview: boolean;
   currentUserId: number;
+  onDecided?: (record: AcceptanceRecord) => void;
 }
 
 /** Every authorization context change destroys the previous evidence session. */
@@ -36,7 +38,11 @@ export default function DeliveryAcceptance(props: DeliveryAcceptanceProps) {
 }
 
 /** canReview gates the entry only; the server determines actual evidence access. */
-function AcceptanceSession({ target, canReview }: DeliveryAcceptanceProps) {
+function AcceptanceSession({
+  target,
+  canReview,
+  onDecided,
+}: DeliveryAcceptanceProps) {
   const { i18n } = useTranslation();
   const m =
     deliveryAcceptanceMessages[
@@ -112,12 +118,14 @@ function AcceptanceSession({ target, canReview }: DeliveryAcceptanceProps) {
         record.snapshot_sha256 !== review.snapshot_sha256
       )
         throw new Error("invalid decision");
-      if (generation.current === seq)
+      if (generation.current === seq) {
         setState({
           key,
           open: true,
           review: { ...review, acceptance: record },
         });
+        onDecided?.(record);
+      }
     } catch {
       if (generation.current === seq)
         setState({ key, open: true, failed: true });

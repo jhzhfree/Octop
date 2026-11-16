@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -130,8 +131,14 @@ describe("delivery acceptance", () => {
     expect(deliveryAcceptanceApi.decide).not.toHaveBeenCalled();
   });
   it("requires explicit read, decision and confirmation and binds hashes", async () => {
+    const onDecided = vi.fn();
     const { container } = render(
-      <DeliveryAcceptance currentUserId={42} target={target} canReview />,
+      <DeliveryAcceptance
+        currentUserId={42}
+        target={target}
+        canReview
+        onDecided={onDecided}
+      />,
     );
     expect(deliveryAcceptanceApi.review).not.toHaveBeenCalled();
     await open();
@@ -142,6 +149,7 @@ describe("delivery acceptance", () => {
       screen.getByRole("button", { name: "Confirm permanent decision" }),
     );
     await screen.findByText("Accepted by a human");
+    expect(onDecided).toHaveBeenCalledExactlyOnceWith(record);
     expect(deliveryAcceptanceApi.decide).toHaveBeenCalledExactlyOnceWith(
       target,
       "accepted",
@@ -165,8 +173,14 @@ describe("delivery acceptance", () => {
       vi.mocked(deliveryAcceptanceApi.decide).mockRejectedValue(
         new Error(error),
       );
+      const onDecided = vi.fn();
       render(
-        <DeliveryAcceptance currentUserId={42} target={target} canReview />,
+        <DeliveryAcceptance
+          currentUserId={42}
+          target={target}
+          canReview
+          onDecided={onDecided}
+        />,
       );
       await open();
       fireEvent.click(screen.getByRole("button", { name: "Accept summary" }));
@@ -174,6 +188,7 @@ describe("delivery acceptance", () => {
         screen.getByRole("button", { name: "Confirm permanent decision" }),
       );
       await screen.findByText(/Review unavailable/);
+      expect(onDecided).not.toHaveBeenCalled();
       expect(screen.queryByText(review.answer)).toBeNull();
       expect(screen.queryByText("Accepted by a human")).toBeNull();
       expect(deliveryAcceptanceApi.decide).toHaveBeenCalledTimes(1);
@@ -352,3 +367,44 @@ it("records actionable changes feedback only after explicit confirmation", async
     "Add retry evidence",
   );
 });
+
+it.each(["close", "revocation"])(
+  "does not notify the parent after %s during submission",
+  async (action) => {
+    let resolve!: (value: AcceptanceRecord) => void;
+    vi.mocked(deliveryAcceptanceApi.decide).mockImplementationOnce(
+      () =>
+        new Promise((r) => {
+          resolve = r;
+        }),
+    );
+    const onDecided = vi.fn();
+    const view = render(
+      <DeliveryAcceptance
+        currentUserId={42}
+        target={target}
+        canReview
+        onDecided={onDecided}
+      />,
+    );
+    await open();
+    fireEvent.click(screen.getByRole("button", { name: "Accept summary" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Confirm permanent decision" }),
+    );
+    if (action === "close")
+      fireEvent.click(screen.getByRole("button", { name: "Close review" }));
+    else
+      view.rerender(
+        <DeliveryAcceptance
+          currentUserId={42}
+          target={target}
+          canReview={false}
+          onDecided={onDecided}
+        />,
+      );
+    await act(async () => resolve(record));
+    expect(onDecided).not.toHaveBeenCalled();
+    expect(screen.queryByText("Accepted by a human")).toBeNull();
+  },
+);

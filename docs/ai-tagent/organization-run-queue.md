@@ -251,3 +251,32 @@ ASGI 使用合成 SQLite，前端使用 jsdom/API 替身；不是实际机器或
 - Vitest 的 runQueue API、RunQueue、RunQueue.delivery、RunDetails、RunDetails.approval、OrganizationProgress 六个文件：43 passed。
 - `UV_CACHE_DIR=/tmp/octop-uv-cache UV_OFFLINE=1 make lint-all typecheck-all` 和 `NODE_ENV=production NODE_OPTIONS=--max-old-space-size=2048 npm run build` 均通过；mypy 675 个源文件。既有 ESLint/jsdom/构建体积警告仍在，无本轮失败。
 - 未运行全量 `make all` 或受限遥测测试；真实浏览器、PostgreSQL、模型、AKB、堡垒机、Mattermost 双服务及部署未验证。没有新增依赖、真实发送或恢复激活。
+
+## 2026-11-16：验收后立即更新当前交付入口
+
+基线 51f25df7244b4d730c994e2547d9bd7bf4fac753。复现：从未验收待办打开运行，
+提交“要求修改”成功后，验收面板已显示成功，但父详情仍持有 decision=null，修订
+入口不显示，旧待办也仍显示未验收；必须另行手动刷新。新增组件组合测试修复前失败。
+
+现在仅在验收响应通过现有组织/run、决定、意见及证据哈希校验，且仍属于当前页面
+会话时通知父详情。详情更新决定并清空旧待办列表；要求修改时立即显示既有修订入口，
+原验收成功反馈保留。验收意见/发布预览的旧读取会话销毁，重新打开时按原权限重读。
+不会额外提交验收、派发执行、自动创建修订或发送消息；其他运行元数据不冒充已刷新。
+
+关闭、身份/权限变化导致会话失效后的迟到写入响应不通知新页面；403、409、网络
+不确定结果仍按现有错误路径清理内容，不假定写入已成功。服务端现有验收事务、
+权限与不可覆盖规则未改，用户可显式刷新核对实际状态。
+
+真实 API 回归在合成巡检验收后检查：同 run 详情返回实际决定，运行从未验收分类
+移到 accepted/changes_requested；原要求修改→新方案→新运行→独立审批→再验收路径
+继续通过。UI 使用 jsdom/API 替身；API 使用临时 SQLite，包含真实回环 HTTP，
+采集和模型 harness 为替身，不是堡垒机/模型/AKB/Mattermost 真实联调。
+
+本轮验证：
+
+- `uv run pytest tests/integration/test_fresh_install_inspection_delivery.py tests/unit/scenes/test_progress.py -q`：48 passed（`OCTOP_TEST_DELIVERY_HTTP=1`，遥测关闭，uv 离线缓存）。
+- Vitest：DeliveryAcceptance、RunQueue.delivery、RunQueue、RunDetails、RunDetails.approval、InspectionRevision 六个文件，55 passed。包括关闭/撤权后迟到决定不通知父页面，403/409/不确定失败不更新决定。
+- 未运行真实浏览器多角色点击、PG、真实外部服务、生产部署或受限遥测；无全量 make all 通过宣称。
+
+本轮 `make lint-all typecheck-all` 与生产 `npm run build` 通过（mypy 676 个源文件）；
+既有 ESLint、jsdom 和构建体积/导入警告保留。`git diff --check` 通过。

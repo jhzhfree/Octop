@@ -409,3 +409,39 @@ it.each(["queued", "rejected"] as const)(
     expect(screen.queryByText("Inspection (v1)")).toBeNull();
   },
 );
+
+it("updates follow-ups immediately after requesting delivery changes", async () => {
+  vi.mocked(deliveryAcceptanceApi.decide).mockResolvedValue({
+    run_id: "r",
+    organization_id: "o",
+    decision: "changes_requested",
+    review_note: "Check disk again",
+    reviewer_id: 2,
+    reviewed_at: 2,
+    evidence_sha256: "a".repeat(64),
+    snapshot_sha256: "b".repeat(64),
+    evidence_length: 13,
+    scene_version: 1,
+  });
+  render(<RunQueue organizationId="o" canManage />);
+  await open();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Review delivery summary" }),
+  );
+  await screen.findByText("REVIEW REPORT");
+  fireEvent.change(screen.getByRole("textbox"), {
+    target: { value: "Check disk again" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Confirm permanent decision" }),
+  );
+  await screen.findByRole("button", {
+    name: "Revise and request another HTTP inspection",
+  });
+  expect(screen.queryByText("runQueue.actions.unreviewed_success")).toBeNull();
+  expect(screen.getByText("Check disk again")).toBeTruthy();
+  expect(runQueueApi.detail).toHaveBeenCalledTimes(1);
+  expect(organizationsApi.sceneRun).not.toHaveBeenCalled();
+  expect(deliveryAcceptanceApi.decide).toHaveBeenCalledTimes(1);
+});

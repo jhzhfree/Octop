@@ -3,7 +3,11 @@ import AcceptanceFeedback from "./AcceptanceFeedback";
 import { Alert, Space } from "antd";
 import { useTranslation } from "react-i18next";
 import RunEvidence from "./RunEvidence";
-import type { AcceptanceTarget } from "../../api/modules/deliveryAcceptance";
+import type {
+  AcceptanceTarget,
+  AcceptanceDecision,
+  AcceptanceRecord,
+} from "../../api/modules/deliveryAcceptance";
 import DeliveryAcceptance from "./DeliveryAcceptance";
 import MattermostPublication from "./MattermostPublication";
 
@@ -11,33 +15,41 @@ import MattermostPublication from "./MattermostPublication";
 export default function RunDelivery({
   target,
   currentUserId,
-  allowRevision = false,
+  decision = null,
+  onDecided,
   onOpenRun,
 }: {
   target: AcceptanceTarget;
   currentUserId: number;
-  allowRevision?: boolean;
+  decision?: AcceptanceDecision | null;
+  onDecided?: (record: AcceptanceRecord) => void;
   onOpenRun?: (runId: string) => void;
 }) {
   const { t } = useTranslation();
   return (
     <Space direction="vertical" style={{ width: "100%" }}>
       <Alert type="info" message={t("runDetails.deliveryNotice")} />
-      {allowRevision && (
+      {decision === "changes_requested" && (
         <InspectionRevision
           target={target}
           currentUserId={currentUserId}
           onOpenRun={onOpenRun}
         />
       )}
-      <AcceptanceFeedback target={target} currentUserId={currentUserId} />
+      <AcceptanceFeedback
+        key={decision ?? "unreviewed"}
+        target={target}
+        currentUserId={currentUserId}
+      />
       <RunEvidence target={target} currentUserId={currentUserId} canRead />
       <DeliveryAcceptance
+        onDecided={onDecided}
         target={target}
         currentUserId={currentUserId}
         canReview
       />
       <MattermostPublication
+        key={decision ?? "unreviewed"}
         target={target}
         currentUserId={currentUserId}
         canRead

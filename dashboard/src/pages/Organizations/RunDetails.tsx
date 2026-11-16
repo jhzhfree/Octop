@@ -139,7 +139,13 @@ function DetailSession({
           {run.status === "succeeded" && currentUserId !== undefined && (
             <RunDelivery
               onOpenRun={onOpenRun}
-              allowRevision={run.decision === "changes_requested"}
+              decision={run.decision}
+              onDecided={(record) => {
+                setRun((current) =>
+                  current ? { ...current, decision: record.decision } : current,
+                );
+                onChanged?.();
+              }}
               target={{ organizationId, runId }}
               currentUserId={currentUserId}
             />

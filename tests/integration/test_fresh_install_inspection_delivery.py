@@ -442,6 +442,15 @@ async def test_fresh_sqlite_inspection_delivery_via_http(
         assert final_review["acceptance"]["reviewer_id"] == reviewer["id"]
         assert final_review["evidence_sha256"] == review["evidence_sha256"]
 
+        detail = await req("GET", op + "/run-queue/" + run["run_id"], headers=reviewauth)
+        assert detail["decision"] == decision
+        old_queue = await req(
+            "GET", op + "/run-queue?category=unreviewed_success", headers=reviewauth
+        )
+        assert not any(item["run_id"] == run["run_id"] for item in old_queue["items"])
+        decided_queue = await req("GET", op + "/run-queue?category=" + decision, headers=reviewauth)
+        assert any(item["run_id"] == run["run_id"] for item in decided_queue["items"])
+
         feedback = await req("GET", rp + "/acceptance")
         assert feedback["review_note"] == final_review["acceptance"]["review_note"]
         assert feedback["reviewer_id"] == reviewer["id"]
