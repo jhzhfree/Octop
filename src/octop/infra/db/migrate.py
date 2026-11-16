@@ -73,7 +73,7 @@ def schema_baseline_version(dialect: str = "sqlite") -> int:
 
 
 def sqlite_guard_objects() -> set[tuple[str, str, str, str]]:
-    """Exact trusted schema-49 trigger DDL for quarantined image validation."""
+    """Exact trusted schema-49 trigger DDL for startup and image validation."""
     sql = (_MIGRATIONS_DIR / "049_mattermost_storage_guards.sql").read_text(encoding="utf-8")
     matches = re.findall(
         r"(CREATE TRIGGER (\w+) BEFORE (?:UPDATE|INSERT|DELETE) ON (\w+)\b.*?END);",
@@ -83,6 +83,28 @@ def sqlite_guard_objects() -> set[tuple[str, str, str, str]]:
     if len(matches) != 4:
         raise RuntimeError("Invalid packaged SQLite guard definitions")
     return {("trigger", name, table, statement) for statement, name, table in matches}
+
+
+def validate_sqlite_guards(db: DatabasePool, version: int) -> None:
+    """Fail closed on an incomplete guarded schema; never repair lost guards.
+
+    This is a startup observation, not exclusion of same-UID database writers.
+    Guard fragments on an older watermark also indicate an inconsistent layout.
+    """
+    expected = sqlite_guard_objects()
+    names = sorted(item[1] for item in expected)
+    with db.connect() as conn:
+        actual = {
+            tuple(row)
+            for row in conn.execute(
+                "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name IN ("
+                + ",".join("?" for _ in names)
+                + ")",
+                names,
+            ).fetchall()
+        }
+    if (version >= 49 or actual) and (version < 49 or actual != expected):
+        raise RuntimeError("DATABASE_SCHEMA_GUARDS_INVALID")
 
 
 def _current_version(db: DatabasePool) -> int:
@@ -2258,9 +2280,11 @@ def _grant_default_nav_permissions(db: DatabasePool) -> None:
 
 def run_migrations(db: DatabasePool) -> None:
     # Unknown newer schemas must not be repaired or clamped by this binary.
-    if _current_version(db) > schema_baseline_version(db.dialect):
+    current = _current_version(db)
+    if current > schema_baseline_version(db.dialect):
         raise RuntimeError("DATABASE_SCHEMA_NEWER_THAN_BINARY")
     if db.dialect == "sqlite":
+        validate_sqlite_guards(db, current)
         _repair_legacy_schema(db)
     for version, path in _discover(db.dialect):
         if version <= _current_version(db):

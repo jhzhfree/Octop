@@ -341,6 +341,10 @@ class OctopServer:
             else open_database(config, self.paths)
         )
         try:
+            if db is not None:
+                # Guard validation and migrations precede probes, plugins and
+                # runtime construction; a damaged schema must not boot services.
+                run_migrations(db)
             # fnOS/容器内非 root 用户场景：把用户级 npm 全局 bin 目录（~/.npm-global）
             # 纳入进程 PATH，保证连接器 CLI（wecom-cli / lark-cli）可被检测与调用。
             from octop.infra.connectors.gateway.cli_install import ensure_cli_path  # noqa: PLC0415
@@ -375,7 +379,6 @@ class OctopServer:
                 logger.info("control-plane database deferred until setup wizard chooses a backend")
                 return
 
-            run_migrations(db)
             self.services = build_shared_services(db=db, paths=self.paths, config=config)
         except Exception:
             if db is not None:

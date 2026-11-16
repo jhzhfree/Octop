@@ -10,12 +10,13 @@
 
 **AI-TAgent 企业场景仍处于开发阶段，尚不满足 1.0 发布条件。**
 当前开发分支为 `feature/akb-octop-litellm-dev`；本轮开始核对的远端提交为
-`86181b6d2dae889df0da5716176b48d3960f4ca3`。后续提交以 Git 实际记录为准，
+`511f6b78214fcc7374a551c3bea43d1fd20da69d`。后续提交以 Git 实际记录为准，
 本文件不是发布批准，也不授权生产操作、合并、部署或外部消息发送。
 
-本轮修复[旧启动降级后重新启用链路](ai-tagent/mattermost-storage-guards.md)：
-真实旧迁移可将 048 降回 047，原有版本门禁不足。049 增加数据库降级/启用约束，并验证真实旧迁移与维护代码。
-这些约束不证明旧进程隔离，resume、在线/原地恢复和镜像激活仍关闭；不得宣称防混跑或部署验收完成。
+本轮补齐[正常启动 guard 完整性检查](ai-tagent/mattermost-storage-guards.md)：
+schema 049 损坏/缺失保护定义时，在兼容修复、插件和运行时启动前拒绝，不自动补建。
+完整旧启动回退链已有回归；本轮修复的是完整性检查缺口，不宣称抵御同 UID 改库或防混跑。
+resume、在线/原地恢复及隔离镜像激活继续关闭。
 
 前一阶段交付[Mattermost 来源高水位修复](ai-tagent/mattermost-source-watermark.md)：
 独立持久化观察与审计，拒绝重复受理/取消的版本回退；schema 046 禁用已有 intake 的旧 broker，
