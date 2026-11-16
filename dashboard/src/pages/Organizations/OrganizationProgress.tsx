@@ -1,3 +1,5 @@
+import SensitiveAccessBoundary from "../../components/SensitiveAccessBoundary";
+import { useCurrentUser } from "../../hooks/useCurrentUser";
 import { useEffect, useRef, useState } from "react";
 import { Alert, Button, Space, Typography } from "antd";
 import { useTranslation } from "react-i18next";
@@ -10,7 +12,28 @@ import {
 } from "../../api/modules/organizationProgress";
 
 /** Local visibility is not authorization; the server rechecks organization membership. */
-export default function OrganizationProgress({
+interface Props {
+  organizationId: string;
+  canManage: boolean;
+}
+export default function OrganizationProgress(props: Props) {
+  const user = useCurrentUser();
+  return (
+    <SensitiveAccessBoundary>
+      <ProgressSession
+        key={JSON.stringify([
+          props.organizationId,
+          props.canManage,
+          user?.id,
+          user?.role,
+          user?.permissions,
+        ])}
+        {...props}
+      />
+    </SensitiveAccessBoundary>
+  );
+}
+function ProgressSession({
   organizationId,
   canManage,
 }: {

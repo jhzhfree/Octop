@@ -63,3 +63,26 @@ HTTP 403 表示无管理权限，422 表示窗口无效，503 表示数据库未
 后的具体样本不会展示。此限制不是数据库物理扫描条数或响应时延的严格保证，
 仍需 PostgreSQL 数据分布、索引执行计划和负载验证。业务 403/422/503 错误也带
 `no-store`；框架参数校验的 422 为默认框架响应且不含统计数据。
+
+## 2026-11-16：权限变化后不恢复旧统计
+
+本阶段基线 6270de216c3b742d717443893aa496af38d175f9。复核发现原组件仅以
+organizationId/canManage 标记缓存，canManage 从 true→false→true 后可能重新显示
+撤权前统计。现在复用 SensitiveAccessBoundary，访问状态未就绪时卸载统计子组件；
+组织、管理权限、用户 ID、角色或页面权限改变均创建新会话。恢复访问后需主动读取，
+不恢复旧计数，迟到响应也不能写回；没有增加自动查询或执行权限。
+
+这依赖既有 AccessSession 检测结果及当前 props，不保证远端撤权立即清屏。
+权限轮询、浏览器冻结、离线检测的时效边界保持原样，不能声称固定实时上限。
+
+新增回归覆盖组织/权限/身份/访问状态往返、迟到响应和刷新失败清除旧统计。
+独立 SQLite 写连接验证查询期间撤权拒绝交付，以及验收并发更新后下一次查询显示
+新统计；单次查询可以合理保留此前的完整快照。合成阶段状态验证待审批、排队、失败、
+成功与要求修改的区分，不代表这些合成记录来自真实堡垒机。
+
+本阶段定向验证：前端 OrganizationProgress、AccessSession.sensitive、RunQueue.delivery
+共 27 通过；后端 test_progress 和 fresh-install inspection delivery 共 41 通过。
+使用临时合成数据和 HTTP 替身，不是实际机器巡检。未运行受限遥测/完整 make all，
+也未运行真实浏览器、PostgreSQL 或生产验收；浏览器沙箱与 bubblewrap 既有限制未绕过。
+make lint-all typecheck-all 与 NODE_ENV=production NODE_OPTIONS=--max-old-space-size=2048
+npm run build 均通过；保留已有 lint、构建体积与 Browserslist 提示，无新增依赖。

@@ -412,3 +412,79 @@ def test_accepted_pagination_excludes_wrong_org_and_inconsistent_states(setup):
         "old",
         "r1",
     ]
+
+
+def test_refresh_tracks_execution_and_review_without_marking_goal_complete(setup):
+    db, _, service = setup
+    for status in ("awaiting_approval", "queued", "failed", "succeeded"):
+        with db.connect() as c:
+            c.execute("UPDATE enterprise_scene_runs SET status=? WHERE run_id='r6'", (status,))
+        result = service.inspect("o", start=105, end=106)
+        assert result["denominator"] == 1
+        assert result["counts"]["execution"][status] == 1
+        assert sum(result["counts"]["delivery"].values()) == int(status == "succeeded")
+        assert result["execution_authorized"] is False
+    with db.connect() as c:
+        c.execute("INSERT INTO scene_run_acceptances VALUES('r6','o','changes_requested')")
+    result = service.inspect("o", start=105, end=106)
+    assert result["counts"]["delivery"] == {
+        "unreviewed_success": 0,
+        "accepted": 0,
+        "changes_requested": 1,
+    }
+    assert result["counts"]["execution"]["succeeded"] == 1
+
+
+def test_concurrent_acceptance_is_visible_on_next_read_as_a_coherent_snapshot(setup, monkeypatch):
+    db, repo, service = setup
+    writer = SqlitePool(db.path)
+    original = repo._authorize
+    calls = 0
+
+    def authorize(conn, organization_id, user_id):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            with writer.connect() as c:
+                c.execute("INSERT INTO scene_run_acceptances VALUES('r3','o','accepted')")
+        original(conn, organization_id, user_id)
+
+    monkeypatch.setattr(repo, "_authorize", authorize)
+    try:
+        first = service.inspect("o", start=102, end=103)
+        second = service.inspect("o", start=102, end=103)
+        assert first["counts"]["delivery"] == {
+            "unreviewed_success": 1,
+            "accepted": 0,
+            "changes_requested": 0,
+        }
+        assert second["counts"]["delivery"] == {
+            "unreviewed_success": 0,
+            "accepted": 1,
+            "changes_requested": 0,
+        }
+        assert first["denominator"] == second["denominator"] == 1
+    finally:
+        writer.close()
+
+
+def test_cross_connection_revocation_withholds_summary(setup, monkeypatch):
+    db, repo, service = setup
+    writer = SqlitePool(db.path)
+    original = repo._authorize
+    calls = 0
+
+    def authorize(conn, organization_id, user_id):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            with writer.connect() as c:
+                c.execute("DELETE FROM organization_members WHERE user_id=1")
+        original(conn, organization_id, user_id)
+
+    monkeypatch.setattr(repo, "_authorize", authorize)
+    try:
+        with pytest.raises(ProgressAccessError):
+            service.inspect("o", start=100, end=107)
+    finally:
+        writer.close()

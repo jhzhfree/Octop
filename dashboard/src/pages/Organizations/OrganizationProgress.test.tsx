@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -6,6 +7,15 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { SensitiveAccessContext } from "../../components/SensitiveAccessBoundary";
+const identity = vi.hoisted(() => ({
+  id: 1,
+  role: "user",
+  permissions: ["tasks"],
+}));
+vi.mock("../../hooks/useCurrentUser", () => ({
+  useCurrentUser: () => identity,
+}));
 import OrganizationProgress from "./OrganizationProgress";
 import {
   organizationProgressApi,
@@ -48,6 +58,8 @@ function result(org: string, start: number, end: number): Summary {
   };
 }
 beforeEach(() => {
+  identity.id = 1;
+  identity.permissions = ["tasks"];
   vi.mocked(organizationProgressApi.read)
     .mockReset()
     .mockImplementation(async (org, start, end) => result(org, start, end));
@@ -132,3 +144,63 @@ it.each([true, undefined, null, "false"])(
     expect(screen.queryByText(/Run records:/)).toBeNull();
   },
 );
+
+it.each(["organization", "permission", "identity", "access"])(
+  "destroys old counts across %s round trips",
+  async (kind) => {
+    const element = (changed = false) => (
+      <SensitiveAccessContext.Provider value={!(changed && kind === "access")}>
+        <OrganizationProgress
+          organizationId={changed && kind === "organization" ? "other" : "o"}
+          canManage={!(changed && kind === "permission")}
+        />
+      </SensitiveAccessContext.Provider>
+    );
+    const view = render(element());
+    load();
+    await screen.findByText("Run records: 0");
+    if (kind === "identity") identity.id = 2;
+    view.rerender(element(true));
+    expect(screen.queryByText(/Run records:/)).toBeNull();
+    identity.id = 1;
+    view.rerender(element());
+    expect(screen.queryByText(/Run records:/)).toBeNull();
+    expect(organizationProgressApi.read).toHaveBeenCalledTimes(1);
+    load();
+    await screen.findByText("Run records: 0");
+  },
+);
+
+it("ignores late counts after access loss and recovery", async () => {
+  let resolve!: (r: Summary) => void;
+  let args!: [string, number, number];
+  vi.mocked(organizationProgressApi.read).mockImplementation((...a) => {
+    args = a;
+    return new Promise((r) => {
+      resolve = r;
+    });
+  });
+  const element = (ready: boolean) => (
+    <SensitiveAccessContext.Provider value={ready}>
+      <OrganizationProgress organizationId="o" canManage />
+    </SensitiveAccessContext.Provider>
+  );
+  const view = render(element(true));
+  load();
+  view.rerender(element(false));
+  view.rerender(element(true));
+  await act(async () => resolve(result(...args)));
+  expect(screen.queryByText(/Run records:/)).toBeNull();
+});
+
+it("removes previous counts when refresh fails instead of showing them as current", async () => {
+  render(<OrganizationProgress organizationId="o" canManage />);
+  load();
+  await screen.findByText("Run records: 0");
+  vi.mocked(organizationProgressApi.read).mockRejectedValueOnce(
+    new Error("403"),
+  );
+  load();
+  await screen.findByText(/No counts to display/);
+  expect(screen.queryByText(/Run records:/)).toBeNull();
+});
