@@ -67,3 +67,22 @@ Python 命令统一使用 `UV_CACHE_DIR=/tmp/octop-uv-cache UV_OFFLINE=1`。
   生产或部署访问。没有读取真实凭据或修改 OS/网络/安全设置。
 - Docker daemon 29.9.2 可连接，bubblewrap 0.12.0 已安装；仅查询版本。此前实际隔离
   探测受只读 uid_map 限制，本轮未重测，未宣称隔离可用。
+
+## 2026-11-16 目标收尾复核
+
+基线 8a3371a3。重新执行目标完成/取消、权限变化、旧页面版本冲突、并发 CAS 与
+审计失败回滚测试，发现历史迁移测试还用“删 version 列，再将当前库水位改成 41”
+构造旧库，被 schema 49 的降级保护正确拒绝；另有固定基线 42 的过时断言。
+这不是目标操作新缺陷，不能移除保护来让测试通过。
+
+测试现改为只应用真实 001–041 可发现迁移（包含仓库已有历史迁移辅助逻辑），在
+临时库中复制合成关联数据的旧版列，检查旧目标没有 version；升级到当前版本后
+数据保持且 version=1，再次迁移无变化并检查 integrity_check。基线从迁移目录读取，
+SQLite/PG 文件版本相等仅是文件检查，不代表 PG 执行验证。
+
+最终 `uv run pytest tests/unit/digital_workers/test_goal_mutation.py -q` 为 **17 passed**，
+前端 `GoalStatusAction.test.tsx` 为 **8 passed**；测试文件 Ruff 与 diff 检查通过。
+原失败为过时夹具，已修正。正常目标完成与异常恢复未发现需要新增功能代码的问题。
+后端含真实 SQLite 跨连接竞争与 ASGI 请求，但认证依赖由测试替身提供；前端为
+jsdom，没有真实浏览器多角色验收。真实模型、堡垒机、AKB、Mattermost 与部署仍待
+授权测试条件，不能凭本轮测试声明企业 1.0 完整验收。

@@ -420,18 +420,57 @@ async def test_old_page_and_legacy_client_cannot_overwrite_or_delete(goal_env):
         assert len(audit_rows(db, goal_id)) == 3
 
 
-def test_version_migration_preserves_existing_goal_and_is_repeatable(goal_env):
-    from octop.infra.db.migrate import run_migrations, schema_baseline_version
+def test_version_migration_preserves_existing_goal_and_is_repeatable(
+    goal_env, tmp_path, monkeypatch
+):
+    from octop.infra.db import migrate
 
-    db, repos, _, goal_id = goal_env
+    source, repos, _, goal_id = goal_env
     before = repos.digital_worker_repo.get_goal(goal_id)
     before.pop("version")
-    # Reconstruct the exact v41 goal layout with existing rows, then upgrade.
-    with db.transaction() as conn:
-        conn.execute("ALTER TABLE digital_worker_goals DROP COLUMN version")
-        conn.execute("UPDATE _schema_version SET version=41")
-    run_migrations(db)
-    assert repos.digital_worker_repo.get_goal(goal_id) == {**before, "version": 1}
-    run_migrations(db)
-    assert repos.digital_worker_repo.get_goal(goal_id) == {**before, "version": 1}
-    assert schema_baseline_version("sqlite") == schema_baseline_version("postgresql") == 42
+    # Build an actual pre-version schema; never downgrade a current database or
+    # remove its storage guards merely to make a historical fixture convenient.
+    old = SqlitePool(tmp_path / "goals-v41.db")
+    try:
+        discover = migrate._discover
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                migrate,
+                "_discover",
+                lambda dialect: [(v, p) for v, p in discover(dialect) if v <= 41],
+            )
+            migrate.run_migrations(old)
+        with old.transaction() as dest, source.connect() as current:
+            assert dest.execute("SELECT version FROM _schema_version").fetchone()[0] == 41
+            for table in (
+                "users",
+                "agents",
+                "organizations",
+                "organization_positions",
+                "digital_workers",
+                "digital_worker_goals",
+            ):
+                columns = [row["name"] for row in dest.execute(f"PRAGMA table_info({table})")]
+                names = ",".join(columns)
+                placeholders = ",".join("?" for _ in columns)
+                rows = current.execute(f"SELECT {names} FROM {table}").fetchall()
+                dest.executemany(
+                    f"INSERT INTO {table} ({names}) VALUES ({placeholders})",
+                    [tuple(row) for row in rows],
+                )
+        repo = DigitalWorkerRepo(old)
+        assert repo.get_goal(goal_id) == before
+        migrate.run_migrations(old)
+        assert repo.get_goal(goal_id) == {**before, "version": 1}
+        migrate.run_migrations(old)
+        assert repo.get_goal(goal_id) == {**before, "version": 1}
+        with old.connect() as conn:
+            assert conn.execute("SELECT version FROM _schema_version").fetchone()[
+                0
+            ] == migrate.schema_baseline_version("sqlite")
+            assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert migrate.schema_baseline_version("sqlite") == migrate.schema_baseline_version(
+            "postgresql"
+        )
+    finally:
+        old.close()
