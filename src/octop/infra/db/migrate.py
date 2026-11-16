@@ -13,6 +13,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from octop.infra.db.migration_lock import sqlite_migration_lock
 from octop.infra.db.pool import DatabasePool
 from octop.infra.utils.ulid import new_ulid
 
@@ -2289,6 +2290,13 @@ def run_migrations(db: DatabasePool) -> None:
         with db.connect() as conn:
             if conn.in_transaction:
                 raise RuntimeError("DATABASE_MIGRATION_TRANSACTION_ACTIVE")
+            with sqlite_migration_lock(conn):
+                _run_migrations(db)
+        return
+    _run_migrations(db)
+
+
+def _run_migrations(db: DatabasePool) -> None:
     # Unknown newer schemas must not be repaired or clamped by this binary.
     current = _current_version(db)
     if current > schema_baseline_version(db.dialect):

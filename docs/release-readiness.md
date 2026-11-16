@@ -10,10 +10,14 @@
 
 **AI-TAgent 企业场景仍处于开发阶段，尚不满足 1.0 发布条件。**
 当前开发分支为 `feature/akb-octop-litellm-dev`；本轮开始核对的远端提交为
-`b5421e3f791b20b3f7c74fdf7c2f3a8e27be7429`。后续提交以 Git 实际记录为准，
+`bc4da5bd5db85e40ba7a41dbf8f8185d9880ee19`。后续提交以 Git 实际记录为准，
 本文件不是发布批准，也不授权生产操作、合并、部署或外部消息发送。
 
-本轮补齐 SQLite 迁移外层事务拒绝：在修复及 executescript 前检查已有事务，
+本轮补齐 SQLite 迁移跨进程互斥：固定伴随文件上的 SQLite 排他锁覆盖版本读取及迁移，
+竞争超时失败关闭，进程终止后释放。仅协调采用同协议的迁移入口，不替代停写或抵御旧程序。
+详见 [升级原子性与跨进程边界](ai-tagent/sqlite-upgrade-atomicity.md)。
+
+前一阶段补齐 SQLite 迁移外层事务拒绝：在修复及 executescript 前检查已有事务，
 拒绝执行且不提交/回滚调用方写入；不支持嵌套或整个升级单一事务。
 
 前一阶段修复[SQLite 升级部分提交](ai-tagent/sqlite-upgrade-atomicity.md)：032–049 纯 SQL 脚本
