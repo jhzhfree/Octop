@@ -141,6 +141,10 @@ class MattermostIngressRepo:
             for k in ("broker_id", "organization_id", "worker_id", "actor_id", "binding_json")
         ):
             raise IntakeError(403, "INTAKE_SCOPE_CHANGED")
+        if conn.execute(
+            "SELECT 1 FROM mattermost_retired_intakes WHERE delivery_key=?", (key,)
+        ).fetchone():
+            raise IntakeError(410, "INTAKE_RETIRED")
         return result
 
     def inspect(self, mapping: dict[str, Any], key: str) -> dict[str, Any]:

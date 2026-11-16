@@ -44,3 +44,5 @@ PostgreSQL 有配对 SQL 并使用已有迁移事务，但本轮未运行真实 
 没有真实 Mattermost 双服务、生产 TLS/密钥注册、真实 PG 或真实外发验收。
 现有 nonce/intake 容量仍有硬上限且无安全回收流程，本轮未新增管理诊断界面。
 这项修复不构成 1.0 发布批准。
+
+后续提供可选的[人工放弃旧投递迁移路径](mattermost-legacy-migration.md)，不重建未知高水位。

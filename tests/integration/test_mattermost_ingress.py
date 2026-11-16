@@ -618,6 +618,7 @@ async def test_schema_46_fences_unrecoverable_legacy_observation_history(ingress
     e = ingress
     assert (await send(e)).status_code == 201
     with e.db.transaction() as conn:
+        conn.execute("DROP TABLE mattermost_retired_intakes")
         conn.execute("ALTER TABLE mattermost_intakes DROP COLUMN observed_source_version")
         conn.execute("UPDATE mattermost_intakes SET source_version=3")
         conn.execute("UPDATE _schema_version SET version=45")
@@ -640,6 +641,7 @@ async def test_schema_46_failure_rolls_back_column_fence_and_version(ingress):
     e = ingress
     assert (await send(e)).status_code == 201
     with e.db.transaction() as conn:
+        conn.execute("DROP TABLE mattermost_retired_intakes")
         conn.execute("ALTER TABLE mattermost_intakes DROP COLUMN observed_source_version")
         conn.execute("UPDATE _schema_version SET version=45")
         conn.execute(
@@ -658,7 +660,7 @@ async def test_schema_46_failure_rolls_back_column_fence_and_version(ingress):
         conn.execute("DROP TRIGGER fail_watermark_migration")
     run_migrations(e.db)
     with e.db.connect() as conn:
-        assert conn.execute("SELECT version FROM _schema_version").fetchone()[0] == 46
+        assert conn.execute("SELECT version FROM _schema_version").fetchone()[0] == 47
         assert conn.execute("SELECT enabled FROM mattermost_brokers").fetchone()[0] == 0
 
 

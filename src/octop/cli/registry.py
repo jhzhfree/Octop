@@ -4,6 +4,11 @@ from __future__ import annotations
 
 # command name -> (relative module path, attribute name, short help)
 COMMANDS: dict[str, tuple[str, str, str]] = {
+    "mattermost-ingress": (
+        ".commands.mattermost_ingress",
+        "mattermost_ingress",
+        "Retire legacy SQLite intake identities before new-only admission.",
+    ),
     "mattermost-instance": (
         ".commands.mattermost_instance",
         "mattermost_instance",
