@@ -248,9 +248,12 @@ class UserManager:
         provider_id: int,
         subject: str,
         claims: dict[str, Any],
+        allow_create: bool = True,
     ) -> User:
         async with self._lock:
             row = self._services.user_repo.get_by_sso(provider_id, subject)
+            if row is None and not allow_create:
+                raise ValueError("SSO identity has no approved account binding")
             email = _normalized_claim_email(claims)
             display_name = _claim_display_name(claims)
 

@@ -53,12 +53,19 @@ class SsoService:
         self._discovery = DiscoveryCache()
         self._adapters: dict[str, IdentityProvider] = build_adapters(self)
 
+    def _provider_allowed(self, provider: SsoProviderRow) -> bool:
+        config = self._services.config
+        return config.user_authentication_mode == "legacy" or (
+            provider.kind == "oidc" and provider.issuer == config.unified_oidc_issuer
+        )
+
     def status(self) -> dict[str, bool | str]:
         provider = self._services.sso_repo.get_provider()
         adapter = self._adapters["oidc"]
         enabled = bool(
             provider
             and provider.enabled
+            and self._provider_allowed(provider)
             and adapter.is_configured(provider)
             and self._user_manager.count() > 0
         )
@@ -67,7 +74,7 @@ class SsoService:
             "display_name": provider.display_name if provider is not None else "",
         }
 
-    def providers_status(self) -> dict[str, list[dict[str, bool | str]]]:
+    def providers_status(self) -> dict[str, Any]:
         rows = {row.kind: row for row in self._services.sso_repo.list()}
         users_exist = self._user_manager.count() > 0
         providers: list[dict[str, bool | str]] = []
@@ -75,7 +82,11 @@ class SsoService:
             adapter = self._adapters[kind]
             row = rows.get(kind)
             enabled = bool(
-                row is not None and row.enabled and adapter.is_configured(row) and users_exist
+                row is not None
+                and row.enabled
+                and self._provider_allowed(row)
+                and adapter.is_configured(row)
+                and users_exist
             )
             providers.append(
                 {
@@ -84,12 +95,15 @@ class SsoService:
                     "enabled": enabled,
                 }
             )
-        return {"providers": providers}
+        return {
+            "providers": providers,
+            "password_login_enabled": self._services.config.user_authentication_mode == "legacy",
+        }
 
     def get_config_for_admin(self, *, public_base: str) -> dict[str, Any]:
         config = self.get_config_for_kind("oidc", public_base=public_base)
         config.pop("kind", None)
-        config.pop("extra", None)
+        config["approved_only"] = config.pop("extra", {}).get("approved_only") is True
         return config
 
     def get_config_for_kind(self, kind: str, *, public_base: str) -> dict[str, Any]:
@@ -134,7 +148,7 @@ class SsoService:
             "oidc", body, secret_repo=secret_repo, public_base=public_base
         )
         result.pop("kind", None)
-        result.pop("extra", None)
+        result["approved_only"] = result.pop("extra", {}).get("approved_only") is True
         return result
 
     def put_config_for_kind(
@@ -156,6 +170,11 @@ class SsoService:
         raw_extra = body.get("extra")
         if isinstance(raw_extra, Mapping):
             extra.update({str(key): value for key, value in raw_extra.items()})
+        if kind == "oidc":
+            if "approved_only" in body:
+                extra["approved_only"] = body["approved_only"]
+            if "approved_only" in extra and not isinstance(extra["approved_only"], bool):
+                raise ValueError("OIDC approved_only must be a boolean")
         if kind == "feishu":
             region = extra.get("region", "feishu")
             extra = {"region": "lark" if region == "lark" else "feishu"}
@@ -273,7 +292,7 @@ class SsoService:
         if login_state is None:
             return self._error_redirect(frontend, "state")
         provider = self._services.sso_repo.get_by_id(login_state.provider_id)
-        if provider is None or not provider.enabled:
+        if provider is None or not provider.enabled or not self._provider_allowed(provider):
             return self._error_redirect(frontend, "disabled")
         try:
             adapter = self._adapter(provider.kind)
@@ -315,7 +334,13 @@ class SsoService:
                 )
             else:
                 user = await self._user_manager.resolve_or_create_sso_user(
-                    provider_id=provider.id, subject=subject, claims=claims
+                    provider_id=provider.id,
+                    subject=subject,
+                    claims=claims,
+                    allow_create=(
+                        self._services.config.user_authentication_mode == "legacy"
+                        and provider.extra.get("approved_only") is not True
+                    ),
                 )
         except OctopError as exc:
             if exc.code is ErrorCode.USER_DISABLED:
@@ -339,11 +364,15 @@ class SsoService:
         return RedirectResult(f"{frontend}/login/oidc/complete#{urlencode(params)}")
 
     async def exchange_login_code(self, code: str) -> User:
-        consumed = self._services.sso_repo.consume_login_code(code)
+        provider_id = None
+        if self._services.config.user_authentication_mode == "unified_oidc":
+            provider_id = self._enabled_provider().id
+        consumed = self._services.sso_repo.consume_login_code(code, provider_id=provider_id)
         if consumed is None:
             raise ValueError("invalid or expired SSO login code")
+        row = self._user_manager.get_row(consumed["user_id"])
         user = self._user_manager.get_by_id(consumed["user_id"])
-        if user is None:
+        if user is None or row is None or row.disabled:
             raise ValueError("SSO user is unavailable")
         self._services.audit_repo.write(
             actor=user.username, action="auth.oidc_login", target=user.username
@@ -362,7 +391,12 @@ class SsoService:
     def _enabled_provider_for_kind(self, kind: str) -> SsoProviderRow:
         adapter = self._adapter(kind)
         provider = self._services.sso_repo.get_by_kind(kind)
-        if provider is None or not provider.enabled or self._user_manager.count() == 0:
+        if (
+            provider is None
+            or not provider.enabled
+            or not self._provider_allowed(provider)
+            or self._user_manager.count() == 0
+        ):
             raise ValueError("SSO is disabled")
         if not adapter.is_configured(provider):
             raise ValueError("SSO is misconfigured")
@@ -450,7 +484,11 @@ class SsoService:
             return verify_id_token(
                 id_token,
                 jwks_uri=jwks_uri,
-                issuer=self._endpoint(discovery, "issuer"),
+                issuer=(
+                    self._services.config.unified_oidc_issuer
+                    if self._services.config.user_authentication_mode == "unified_oidc"
+                    else self._endpoint(discovery, "issuer")
+                ),
                 client_id=provider.client_id,
                 nonce=nonce,
                 httpx=client,

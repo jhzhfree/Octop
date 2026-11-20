@@ -102,9 +102,9 @@ does not set these headers itself.
 | `GET`    | `/auth/oidc/callback` | public | Identity-provider callback; redirects to dashboard login completion |
 | `POST`   | `/auth/oidc/exchange` | public | body `{code}` → same JWT response as `/auth/login` |
 | `GET`    | `/auth/oidc/config` | admin | OIDC provider configuration and callback URL; client secret is omitted |
-| `PUT`    | `/auth/oidc/config` | admin | Write OIDC provider configuration; `client_secret` is write-only |
+| `PUT`    | `/auth/oidc/config` | admin | Write OIDC provider configuration; `client_secret` is write-only; `approved_only: true` requires an existing local identity binding |
 | `POST`   | `/auth/oidc/config/test` | admin | Verify configured discovery metadata and JWKS endpoint |
-| `GET`    | `/auth/oauth/status` | public | `{providers:[{kind, display_name, enabled}]}` |
+| `GET`    | `/auth/oauth/status` | public | `{password_login_enabled, providers:[{kind, display_name, enabled}]}` |
 | `POST`   | `/auth/oauth/start` | public | body `{kind, redirect_after?}` → authorization URL |
 | `GET`    | `/auth/oauth/callback` | public | App OAuth callback (`code` or DingTalk `authCode`); same completion page as OIDC |
 | `POST`   | `/auth/oauth/exchange` | public | Same one-time code exchange as `/auth/oidc/exchange` |

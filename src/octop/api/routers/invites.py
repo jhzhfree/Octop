@@ -155,6 +155,8 @@ async def redeem_invite(
     wizard (auto-allocated agent id; setup pins ``main`` for the first admin).
     """
     check_invite_rate_limit(_client_id(request))
+    if server.services.config.user_authentication_mode == "unified_oidc":
+        raise OctopError(ErrorCode.FORBIDDEN, "Invite redemption is disabled in unified OIDC mode")
     locale = resolve_request_locale(request)
     user = await server.user_manager.create_from_invite(
         code=body.code,

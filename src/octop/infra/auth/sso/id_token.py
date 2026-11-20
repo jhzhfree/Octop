@@ -53,6 +53,12 @@ def verify_id_token(
         leeway=60,
         options={"require": ["exp", "iat"]},
     )
+    authorized_party = claims.get("azp")
+    audience = claims["aud"]
+    if ("azp" in claims or (isinstance(audience, list) and len(audience) > 1)) and (
+        authorized_party != client_id
+    ):
+        raise jwt.InvalidTokenError("ID token authorized party does not match")
     if claims.get("nonce") != nonce:
         raise jwt.InvalidTokenError("ID token nonce does not match")
     return claims

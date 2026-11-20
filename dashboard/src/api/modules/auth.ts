@@ -123,6 +123,7 @@ export interface OauthProviderStatus {
 
 export interface OauthStatus {
   providers: OauthProviderStatus[];
+  password_login_enabled?: boolean;
 }
 
 /** Public LDAP login availability probe (no auth required). */

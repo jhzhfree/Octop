@@ -41,6 +41,7 @@ class OidcConfigBody(BaseModel):
     client_secret: str | None = None
     scopes: str | None = None
     dashboard_origin: str | None = None
+    approved_only: bool = False
 
 
 def _service(server: Any) -> SsoService:
@@ -163,10 +164,13 @@ async def put_oidc_config(
     server: Any = Depends(get_server),
 ) -> dict[str, Any]:
     """Create or update OIDC provider settings; the client secret is write-only."""
-    return _service(server).put_config(
-        body.model_dump(exclude_unset=True),
-        public_base=_public_base(request),
-    )
+    try:
+        return _service(server).put_config(
+            body.model_dump(exclude_unset=True),
+            public_base=_public_base(request),
+        )
+    except ValueError as exc:
+        raise _bad_request(exc) from exc
 
 
 @router.post("/oidc/config/test", summary="Test OIDC discovery")

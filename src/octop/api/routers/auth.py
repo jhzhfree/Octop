@@ -194,6 +194,8 @@ async def login(
     """
     if server.user_manager.count() == 0:
         raise OctopError(ErrorCode.SETUP_REQUIRED, "initial admin not created")
+    if server.services.config.user_authentication_mode == "unified_oidc":
+        raise OctopError(ErrorCode.FORBIDDEN, "Password login is disabled in unified OIDC mode")
     server.user_manager.raise_if_login_locked(body.username)
     effective = load_effective(
         server.services.settings_repo,

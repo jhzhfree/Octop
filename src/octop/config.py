@@ -139,6 +139,8 @@ class OctopConfig:
     enable_api_docs: bool = False
     history_v2_enabled: bool = False
     require_setup_password: bool = True
+    user_authentication_mode: str = "legacy"
+    unified_oidc_issuer: str = ""
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
     # False when config.json omits ``database`` (use PathLayout.db unless env overrides).
     database_in_file: bool = False
@@ -149,6 +151,23 @@ class OctopConfig:
     browser_idle_timeout_minutes: int = DEFAULT_BROWSER_IDLE_TIMEOUT_MINUTES
 
     def __post_init__(self) -> None:
+        if self.user_authentication_mode not in {"legacy", "unified_oidc"}:
+            raise ValueError("user_authentication_mode must be legacy or unified_oidc")
+        if self.user_authentication_mode == "unified_oidc":
+            issuer = urlparse(self.unified_oidc_issuer)
+            loopback_http = issuer.scheme == "http" and issuer.hostname in {
+                "localhost",
+                "127.0.0.1",
+                "::1",
+            }
+            if (
+                not issuer.hostname
+                or issuer.username is not None
+                or issuer.query
+                or issuer.fragment
+                or (issuer.scheme != "https" and not loopback_http)
+            ):
+                raise ValueError("unified_oidc requires a trusted HTTPS unified_oidc_issuer")
         if self.session_idle_timeout_seconds != 0 and self.session_idle_timeout_seconds < 120:
             raise ValueError("session_idle_timeout_seconds must be 0 or at least 120 seconds")
         if self.session_absolute_timeout_seconds < 0:
@@ -717,6 +736,12 @@ def load_config(path: Path) -> OctopConfig:
             False,
         ),
         require_setup_password=bool(merged["require_setup_password"]),
+        user_authentication_mode=os.environ.get(
+            "OCTOP_USER_AUTHENTICATION_MODE", str(merged["user_authentication_mode"])
+        ),
+        unified_oidc_issuer=os.environ.get(
+            "OCTOP_UNIFIED_OIDC_ISSUER", str(merged["unified_oidc_issuer"])
+        ),
         database=parse_database_config(merged_db),
         database_in_file=database_in_file,
         tls=_parse_tls_section(raw.get("tls")),

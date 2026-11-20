@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 from unittest.mock import patch
 
 import httpx
@@ -104,6 +105,62 @@ def test_status_is_disabled_without_usable_provider_or_users(
         assert service.status()["enabled"] is False
 
 
+@pytest.mark.asyncio
+async def test_unified_oidc_restricts_login_to_pinned_provider_and_existing_bindings(
+    service: SsoService,
+) -> None:
+    provider = configure_provider(service)
+    other = service._services.sso_repo.upsert_by_kind(
+        "feishu",
+        enabled=True,
+        display_name="Feishu",
+        issuer="",
+        client_id="other-client",
+        client_secret_enc=None,
+        scopes="",
+        dashboard_origin=None,
+    )
+    user = await service._user_manager.resolve_or_create_sso_user(
+        provider_id=provider.id, subject="approved", claims={"preferred_username": "member"}
+    )
+    unified = SsoService(
+        replace(
+            service._services,
+            config=OctopConfig(
+                user_authentication_mode="unified_oidc", unified_oidc_issuer=provider.issuer
+            ),
+        ),
+        service._user_manager,
+    )
+    status = unified.providers_status()
+    assert not status["password_login_enabled"]
+    assert [p["kind"] for p in status["providers"] if p["enabled"]] == ["oidc"]
+    with pytest.raises(ValueError, match="disabled"):
+        unified.start_login_for_kind(
+            "feishu", redirect_after=None, public_base="https://octop.example"
+        )
+    add_login_state(service, other.id, state="old-provider")
+    service._services.sso_repo.attach_login_code(
+        "old-provider", "other-login-code", user.id, int(time.time()) + 60
+    )
+    with pytest.raises(ValueError, match="invalid or expired"):
+        await unified.exchange_login_code("other-login-code")
+    for subject in ("unknown", "approved"):
+        add_login_state(service, provider.id, state=subject)
+        with patch.object(unified._adapters["oidc"], "complete_login", return_value=(subject, {})):
+            result = await unified.handle_callback(
+                code="code", state=subject, error=None, public_base="https://octop.example"
+            )
+        if subject == "approved":
+            login_code = httpx.QueryParams(result.url.split("#", 1)[1])["code"]
+            assert (await unified.exchange_login_code(login_code)).id == user.id
+        else:
+            assert result.url.endswith("/login?oidc_error=generic")
+    assert service._user_manager.count() == 1
+    with pytest.raises(ValueError, match="bindings before changing"):
+        service.put_config({"issuer": "https://different.example"})
+
+
 def test_status_returns_enabled_provider_display_name(service: SsoService) -> None:
     configure_provider(service, display_name="Company Login")
     with patch.object(service._user_manager, "count", return_value=1):
@@ -138,6 +195,7 @@ def test_put_config_encrypts_with_supplied_secret_repo_and_redacts_for_admin(
         "dashboard_origin": None,
         "has_client_secret": True,
         "redirect_uri": "https://octop.example/api/auth/oidc/callback",
+        "approved_only": False,
     }
     assert "client_secret" not in result
     assert service._services.sso_repo.get_provider().client_secret_enc == b"ciphertext"
@@ -285,6 +343,34 @@ async def test_callback_exchanges_code_and_attaches_login_code(service: SsoServi
 
 
 @pytest.mark.asyncio
+async def test_approved_only_oidc_requires_existing_binding(service: SsoService) -> None:
+    provider = configure_provider(service)
+    claims = {"sub": "approved-subject", "preferred_username": "member"}
+    await service._user_manager.resolve_or_create_sso_user(
+        provider_id=provider.id, subject=claims["sub"], claims=claims
+    )
+    service.put_config({"approved_only": True})
+    assert service.get_config_for_admin(public_base="https://octop.example")["approved_only"]
+
+    for subject in ("unknown-subject", claims["sub"]):
+        add_login_state(service, provider.id, state=subject)
+        with patch.object(
+            service._adapters["oidc"], "complete_login", return_value=(subject, claims)
+        ):
+            result = await service.handle_callback(
+                code="authorization-code",
+                state=subject,
+                error=None,
+                public_base="https://octop.example",
+            )
+        if subject == claims["sub"]:
+            assert result.url.startswith("https://octop.example/login/oidc/complete#code=")
+        else:
+            assert result.url == "https://octop.example/login?oidc_error=generic"
+    assert service._user_manager.count() == 1
+
+
+@pytest.mark.asyncio
 async def test_callback_verifies_id_token_against_discovery_issuer(
     service: SsoService,
 ) -> None:
@@ -328,7 +414,8 @@ async def test_callback_verifies_id_token_against_discovery_issuer(
 
 @pytest.mark.asyncio
 async def test_exchange_login_code_is_one_shot_and_writes_audit(service: SsoService) -> None:
-    user = User(id=42, username="member", role=Role.USER, display_name=None)
+    user_id = service._services.user_repo.create(username="member", role="user")
+    user = User(id=user_id, username="member", role=Role.USER, display_name=None)
     provider = configure_provider(service)
     add_login_state(service, provider.id)
     service._services.sso_repo.attach_login_code(

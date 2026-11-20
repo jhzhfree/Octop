@@ -271,10 +271,14 @@ class SsoRepo:
         if client_secret_enc is not None:
             fields.insert(4, "client_secret_enc = ?")
             params.insert(4, client_secret_enc)
-        conn.execute(
-            f"UPDATE sso_providers SET {', '.join(fields)} WHERE id = ?",
-            (*params, provider_id),
+        updated = conn.execute(
+            f"UPDATE sso_providers SET {', '.join(fields)} WHERE id = ? "
+            "AND (kind <> 'oidc' OR issuer = ? OR NOT EXISTS "
+            "(SELECT 1 FROM user_sso_identities WHERE provider_id = ?))",
+            (*params, provider_id, issuer, provider_id),
         )
+        if updated.rowcount != 1:
+            raise ValueError("Remove existing OIDC account bindings before changing the issuer")
         return provider_id
 
     def create_login_state(
@@ -329,13 +333,19 @@ class SsoRepo:
                 (login_code, user_id, expires_at, state),
             )
 
-    def consume_login_code(self, login_code: str) -> dict[str, int] | None:
+    def consume_login_code(
+        self, login_code: str, *, provider_id: int | None = None
+    ) -> dict[str, int] | None:
+        provider_filter = " AND provider_id = ?" if provider_id is not None else ""
+        params = (now_ts(), login_code, now_ts())
+        if provider_id is not None:
+            params = (*params, provider_id)
         with self._db.transaction() as conn:
             row = conn.execute(
                 "UPDATE sso_login_states SET consumed_at = ? "
                 "WHERE login_code = ? AND consumed_at IS NULL AND expires_at > ? "
-                "AND user_id IS NOT NULL RETURNING user_id",
-                (now_ts(), login_code, now_ts()),
+                f"AND user_id IS NOT NULL{provider_filter} RETURNING user_id",
+                params,
             ).fetchone()
         return {"user_id": int(row["user_id"])} if row else None
 

@@ -31,13 +31,18 @@ def jwks_client(signing_key: rsa.RSAPrivateKey) -> httpx.Client:
 
 
 def _token(
-    signing_key: rsa.RSAPrivateKey, *, issuer: str = "https://issuer.example", nonce: str = "nonce"
+    signing_key: rsa.RSAPrivateKey,
+    *,
+    issuer: str = "https://issuer.example",
+    nonce: str = "nonce",
+    authorized_party: str = "octop-client",
 ) -> str:
     now = int(time.time())
     return jwt.encode(
         {
             "iss": issuer,
             "aud": ["octop-client", "other-client"],
+            "azp": authorized_party,
             "exp": now + 300,
             "iat": now,
             "nonce": nonce,
@@ -84,6 +89,20 @@ def test_verify_id_token_rejects_wrong_issuer(
     with pytest.raises(jwt.InvalidIssuerError):
         verify_id_token(
             _token(signing_key, issuer="https://other-issuer.example"),
+            jwks_uri="https://issuer.example/jwks",
+            issuer="https://issuer.example",
+            client_id="octop-client",
+            nonce="nonce",
+            httpx=jwks_client,
+        )
+
+
+def test_verify_id_token_rejects_wrong_authorized_party(
+    signing_key: rsa.RSAPrivateKey, jwks_client: httpx.Client
+) -> None:
+    with pytest.raises(jwt.InvalidTokenError, match="authorized party"):
+        verify_id_token(
+            _token(signing_key, authorized_party="other-client"),
             jwks_uri="https://issuer.example/jwks",
             issuer="https://issuer.example",
             client_id="octop-client",

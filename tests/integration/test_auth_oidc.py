@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -132,3 +133,30 @@ async def test_oidc_config_requires_admin_and_returns_public_callback_url(
     tested = await c.post("/api/auth/oidc/config/test", headers=bearer(token))
     assert tested.status_code == 200
     assert tested.json() == {"ok": True, "detail": "reachable"}
+
+
+async def test_unified_oidc_http_rejects_legacy_login_and_rolls_back(client) -> None:
+    c, srv, home = client
+    await bootstrap_admin(c, home, username="alice", password="TestPass12")
+    original = srv.services
+    srv.services = replace(
+        original,
+        config=replace(
+            original.config,
+            user_authentication_mode="unified_oidc",
+            unified_oidc_issuer="https://identity.example/realms/company",
+        ),
+    )
+
+    status = await c.get("/api/auth/oauth/status")
+    assert status.status_code == 200
+    assert status.json()["password_login_enabled"] is False
+    credentials = {"username": "alice", "password": "TestPass12"}
+    assert (await c.post("/api/auth/login", json=credentials)).status_code == 403
+    assert (
+        await c.post("/api/auth/invite/redeem", json={**credentials, "code": "unused"})
+    ).status_code == 403
+
+    srv.services = original
+    assert (await c.get("/api/auth/oauth/status")).json()["password_login_enabled"] is True
+    assert (await c.post("/api/auth/login", json=credentials)).status_code == 200
