@@ -1,6 +1,6 @@
 {
   "app": {
-    "pageTitle": "AI-TAgent · Lightweight Agent System"
+    "pageTitle": "WorkAssistant"
   },
   "layout": {
     "collapsePanel": "Collapse panel",
@@ -5290,10 +5290,9 @@
     "brandPointAgents": "Organize agents around roles and work objectives",
     "brandDescription": "Connect enterprise knowledge and model capabilities through agents. Organize everyday work into trackable, collaborative tasks.",
     "brandHeadline": "Make agents your work partners",
-    "brandEyebrow": "PERSONAL ASSISTANCE. TEAM COLLABORATION.",
-    "productName": "Lightweight Agent System",
+    "productName": "WorkAssistant",
     "title": "Welcome back",
-    "subtitle": "Sign in to AI-TAgent and enter your agent workspace",
+    "subtitle": "Sign in to access your workspace.",
     "username": "Username or email",
     "password": "Password",
     "remember": "Remember me",

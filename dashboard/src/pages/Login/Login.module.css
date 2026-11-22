@@ -1,107 +1,104 @@
 .page {
   display: grid;
-  grid-template-columns: 1.05fr 0.95fr;
+  grid-template-columns: minmax(0, 0.96fr) minmax(0, 1.04fr);
   min-height: 100dvh;
   background: var(--fn-bg-layout);
 }
+
 .brand {
   position: relative;
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  gap: 56px;
-  padding: 48px clamp(28px, 5vw, 80px);
+  padding: 48px clamp(32px, 5vw, 88px);
   color: #fff;
-  background: radial-gradient(ellipse at 90% 8%, #2357ac88, transparent 58%),
-    radial-gradient(ellipse at 8% 100%, #18b8c838, transparent 55%),
-    linear-gradient(158deg, #071227, #0b1d3e 44%, #12306b);
+  background: radial-gradient(ellipse at 0% 105%, #154b689c, transparent 66%),
+    radial-gradient(ellipse at 95% 0%, #2f56ae75, transparent 56%), #101e38;
 }
+
 .brand::before {
   content: "";
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background-image: linear-gradient(#ffffff09 1px, transparent 1px),
-    linear-gradient(90deg, #ffffff09 1px, transparent 1px);
-  background-size: 46px 46px;
-  mask-image: radial-gradient(ellipse at center, #000, transparent 80%);
+  background-image: radial-gradient(#a2c7fa40 1px, transparent 1px);
+  background-size: 24px 24px;
+  mask-image: linear-gradient(135deg, transparent 35%, #000);
 }
+
 .brandName,
-.brandBody,
-.brandFooter {
+.brandBody {
   position: relative;
 }
+
 .brandName {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
 }
-.brandMark {
-  display: grid;
-  place-items: center;
-  width: 44px;
-  height: 44px;
-  border-radius: 13px;
-  background: #ffffff16;
-  border: 1px solid #ffffff30;
-  font-size: 26px;
-  font-weight: 700;
-}
-.brandName strong {
-  display: block;
-  font-size: 23px;
-  letter-spacing: -0.02em;
-}
-.brandName div > span {
-  display: block;
-  margin-top: 3px;
-  color: #c4d7f3;
-  font-size: 12px;
-}
-.brandBody {
-  margin-block: auto;
-  max-width: 490px;
-}
-.eyebrow {
-  font-size: 12px;
-  font-weight: 600;
-  color: #94c7ff;
-  letter-spacing: 0.1em;
-}
-.brandBody h1 {
-  margin: 16px 0;
-  font-size: clamp(28px, 3vw, 42px);
-  line-height: 1.35;
+
+.brandName h1 {
+  margin: 0;
+  font-size: clamp(16px, 1.5vw, 21px);
+  line-height: 1.45;
   font-weight: 650;
 }
-.description {
-  color: #d1dff2;
-  font-size: 14px;
-  line-height: 1.9;
+
+.brandMark {
+  display: grid;
+  flex: 0 0 40px;
+  place-items: center;
+  height: 40px;
+  border: 1px solid #a2c7fa65;
+  border-radius: 11px;
+  background: #a2c7fa1c;
+  color: #bfddff;
 }
+
+.brandBody {
+  margin-block: auto;
+  max-width: 440px;
+  padding-block: 64px;
+}
+
+.brandBody h2 {
+  margin: 0;
+  font-size: clamp(29px, 3vw, 44px);
+  line-height: 1.3;
+  letter-spacing: -0.025em;
+  font-weight: 650;
+}
+
+.description {
+  margin: 16px 0 0;
+  color: #c1d2e9;
+  font-size: 15px;
+  line-height: 1.8;
+}
+
 .points {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
+  display: grid;
+  gap: 14px;
   margin: 28px 0 0;
   padding: 0;
   list-style: none;
 }
+
 .points li {
   display: flex;
   align-items: flex-start;
   gap: 10px;
+  color: #e4edfa;
   font-size: 13px;
   line-height: 1.6;
 }
-.points li > span {
-  color: #9ad4ff;
+
+.points svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: #8bdced;
 }
-.brandFooter {
-  color: #afc4e2;
-  font-size: 12px;
-  margin: 0;
-}
+
 .panel {
   display: grid;
   place-items: center;
@@ -110,67 +107,54 @@
     max(24px, env(safe-area-inset-right)) max(40px, env(safe-area-inset-bottom))
     max(24px, env(safe-area-inset-left));
 }
+
 .card {
   box-sizing: border-box;
   width: 100%;
-  max-width: 420px;
-  padding: 32px;
+  max-width: 432px;
+  padding: clamp(24px, 4vw, 38px);
   background: var(--fn-bg-elevated);
   border: 1px solid var(--fn-border-primary);
-  border-radius: 16px;
-  box-shadow: 0 10px 40px #0712270a;
+  border-radius: 20px;
+  box-shadow: 0 24px 56px -28px #09193265;
   display: flex;
   flex-direction: column;
   gap: 20px;
 }
-.cardHeader {
-  margin-bottom: 4px;
-}
+
 .cardHeader h2 {
   margin: 0;
   color: var(--fn-text-primary);
-  font-size: 24px;
+  font-size: 26px;
   font-weight: 650;
 }
+
 .cardHeader p {
-  margin: 8px 0 0;
+  margin: 6px 0 0;
   color: var(--fn-text-secondary);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.6;
 }
+
 @media (max-width: 900px) {
   .page {
     grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
   }
+
   .brand {
-    padding: max(24px, env(safe-area-inset-top)) 24px 28px;
-    gap: 24px;
+    padding: max(20px, env(safe-area-inset-top))
+      max(20px, env(safe-area-inset-right)) 20px
+      max(20px, env(safe-area-inset-left));
   }
-  .brandBody h1 {
-    font-size: 26px;
-  }
+
   .brandBody {
-    max-width: 640px;
-  }
-  .points,
-  .brandFooter {
     display: none;
   }
-  .description {
-    margin-bottom: 0;
-  }
+
   .panel {
-    padding-top: 28px;
-  }
-}
-@media (max-width: 420px) {
-  .brand {
-    padding-inline: 20px;
-  }
-  .card {
-    padding: 24px;
-  }
-  .panel {
-    padding-inline: 16px;
+    padding: 24px max(16px, env(safe-area-inset-right))
+      max(24px, env(safe-area-inset-bottom))
+      max(16px, env(safe-area-inset-left));
   }
 }

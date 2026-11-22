@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { Input, Button, Checkbox } from "antd";
 import { message } from "@/utils/antdMessage";
 
-import { KeyRound, Lock, User } from "lucide-react";
+import { BriefcaseBusiness, Check, KeyRound, Lock, User } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
   clearAuthToken,
@@ -245,16 +245,12 @@ export default function LoginPage() {
       <section className={styles.brand} aria-label={t("login.productName")}>
         <div className={styles.brandName}>
           <span className={styles.brandMark} aria-hidden="true">
-            A
+            <BriefcaseBusiness size={21} strokeWidth={1.8} />
           </span>
-          <div>
-            <strong>AI-TAgent</strong>
-            <span>{t("login.productName")}</span>
-          </div>
+          <h1>{t("login.productName")}</h1>
         </div>
         <div className={styles.brandBody}>
-          <p className={styles.eyebrow}>{t("login.brandEyebrow")}</p>
-          <h1>{t("login.brandHeadline")}</h1>
+          <h2>{t("login.brandHeadline")}</h2>
           <p className={styles.description}>{t("login.brandDescription")}</p>
           <ul className={styles.points}>
             {[
@@ -263,15 +259,12 @@ export default function LoginPage() {
               "brandPointControl",
             ].map((key) => (
               <li key={key}>
-                <span aria-hidden="true">✓</span>
+                <Check size={16} aria-hidden="true" />
                 {t(`login.${key}`)}
               </li>
             ))}
           </ul>
         </div>
-        <p className={styles.brandFooter}>
-          AI-TAgent · {t("login.productName")}
-        </p>
       </section>
       <section className={styles.panel} aria-labelledby="login-heading">
         <div className={styles.card}>

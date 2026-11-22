@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 const login = vi.fn();
 const setAuthToken = vi.fn();
+const getOauthStatus = vi.fn();
 vi.mock("../../api", () => ({
   clearAuthToken: vi.fn(),
   setAuthToken: (...args: unknown[]) => setAuthToken(...args),
@@ -13,7 +14,7 @@ vi.mock("../../api", () => ({
 vi.mock("../../api/modules/auth", () => ({
   authApi: {
     getAuthStatus: () => Promise.resolve({ setup_required: false }),
-    getOauthStatus: () => Promise.resolve({ providers: [] }),
+    getOauthStatus: () => getOauthStatus(),
     getLdapStatus: () => Promise.resolve({ enabled: false }),
     getCaptcha: () => Promise.resolve({ provider: "none" }),
     login: (...args: unknown[]) => login(...args),
@@ -41,8 +42,9 @@ vi.mock("./CaptchaField", async () => {
 });
 import LoginPage from "./index";
 
-describe("AI-TAgent login layout", () => {
+describe("WorkAssistant login layout", () => {
   it("shows the brand and accessible credentials while preserving login", async () => {
+    getOauthStatus.mockResolvedValue({ providers: [] });
     login.mockResolvedValue({
       access_token: "test-token",
       user: { locale: "en" },
@@ -54,9 +56,8 @@ describe("AI-TAgent login layout", () => {
     );
     expect(screen.getByRole("main")).toBeInTheDocument();
     expect(
-      screen.getByRole("heading", { level: 1, name: "login.brandHeadline" }),
+      screen.getByRole("heading", { level: 1, name: "login.productName" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("AI-TAgent", { exact: true })).toBeInTheDocument();
     expect(screen.queryByAltText("Octop")).not.toBeInTheDocument();
     const username = screen.getByRole("textbox", { name: "login.username" });
     const password = screen.getByLabelText("login.password");
@@ -79,5 +80,24 @@ describe("AI-TAgent login layout", () => {
       ),
     );
     expect(setAuthToken).toHaveBeenCalledWith("test-token", true);
+  });
+
+  it("keeps unified identity visible without showing the password form", async () => {
+    getOauthStatus.mockResolvedValue({
+      password_login_enabled: false,
+      providers: [{ kind: "oidc", display_name: "Company SSO", enabled: true }],
+    });
+    render(
+      <MemoryRouter>
+        <LoginPage />
+      </MemoryRouter>,
+    );
+    expect(
+      await screen.findByRole("button", { name: "login.oidcWith" }),
+    ).toBeEnabled();
+    expect(
+      screen.queryByRole("textbox", { name: "login.username" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("login.password")).not.toBeInTheDocument();
   });
 });

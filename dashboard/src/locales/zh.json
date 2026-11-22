@@ -1,6 +1,6 @@
 {
   "app": {
-    "pageTitle": "AI-TAgent · 轻智能体系统"
+    "pageTitle": "智能工作助手（WorkAssistant）"
   },
   "layout": {
     "collapsePanel": "收起面板",
@@ -5290,10 +5290,9 @@
     "brandPointAgents": "按角色组织智能体，聚焦岗位与工作目标",
     "brandDescription": "以智能体为入口，连接企业知识与模型能力，把日常工作组织成可追踪、可协作的任务。",
     "brandHeadline": "让智能体成为你的工作伙伴",
-    "brandEyebrow": "从个人助理，到团队协作",
-    "productName": "轻智能体系统",
+    "productName": "智能工作助手（WorkAssistant）",
     "title": "欢迎回来",
-    "subtitle": "登录 AI-TAgent，进入你的智能体工作空间",
+    "subtitle": "登录后进入你的工作空间",
     "username": "用户名或邮箱",
     "password": "密码",
     "remember": "记住登录状态",
